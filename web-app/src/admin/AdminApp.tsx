@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { App as AntdApp, ConfigProvider } from 'antd'
 import { Refine } from '@refinedev/core'
 import routerProvider from '@refinedev/react-router'
@@ -6,10 +7,22 @@ import { authProvider } from './providers/authProvider'
 import { accessControlProvider } from './providers/accessControlProvider'
 import { dataProvider } from './providers/dataProvider'
 import { resourcesResolved } from './resources/resources'
+import { applySeo } from '../seo.js'
 
 import 'antd/dist/reset.css'
 
 export default function AdminApp() {
+  useEffect(() => {
+    applySeo({
+      title: 'RainbowPaw Admin | 管理后台',
+      description: 'RainbowPaw 管理后台：运营配置、订单、商家与风控管理。',
+      robots: 'noindex, nofollow',
+      canonicalPath: '/admin/',
+      ogType: 'website',
+      ogImagePath: '/logo.png',
+    })
+  }, [])
+
   return (
     <ConfigProvider>
       <AntdApp>

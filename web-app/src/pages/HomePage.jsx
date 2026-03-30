@@ -14,11 +14,12 @@ import {
 
 import { apiFetch } from '../api/client.js'
 import SafeImage from '../components/SafeImage.jsx'
+import { applySeo } from '../seo.js'
 
 const TELEGRAM_URL = 'https://t.me/RainbowPawBot'
 const SERVICE_CITY = 'Phnom Penh'
 const LANGUAGES = ['EN', 'KH', 'ZH']
-const LOGO_SRC = '/rainbowpaw-logo.png'
+const LOGO_SRC = '/logo.png'
 
 const PACKAGES = [
   {
@@ -68,6 +69,17 @@ export default function HomePage() {
   const [telegramUser, setTelegramUser] = useState({ telegram_id: '', role: 'owner', name: '' })
   const [authInfo, setAuthInfo] = useState(null)
   const [submitting, setSubmitting] = useState(false)
+
+  useEffect(() => {
+    applySeo({
+      title: 'RainbowPaw | Pet Memorial & Cremation Services',
+      description: 'RainbowPaw provides respectful pet memorial and cremation services. We help families say goodbye with dignity and love.',
+      keywords: 'RainbowPaw, pet memorial, pet cremation, memorial keepsakes, Phnom Penh, Cambodia, 宠物善终, 宠物火化, 宠物纪念, 金边',
+      canonicalPath: '/',
+      ogType: 'website',
+      ogImagePath: '/logo.png',
+    })
+  }, [])
 
   useEffect(() => {
     const handleScroll = () => setScrolled(window.scrollY > 24)

@@ -26,6 +26,7 @@ import {
   Clock
 } from 'lucide-react';
 import { api } from './api';
+import { applySeo } from './seo.js'
 
 // --- Mock Data ---
 const DROPS = [
@@ -1273,6 +1274,17 @@ export default function App() {
   const [shippingModalOpen, setShippingModalOpen] = useState(false)
   const [buyPlaysModalOpen, setBuyPlaysModalOpen] = useState(false)
   const [toast, setToast] = useState('');
+
+  useEffect(() => {
+    applySeo({
+      title: 'RainbowPaw Claw | 抽奖 & 盲盒',
+      description: 'RainbowPaw Claw 抽奖入口：盲盒抽奖、团购玩法与积分系统。',
+      keywords: 'RainbowPaw Claw, 抽奖, 盲盒, 团购, 积分, Telegram WebApp',
+      canonicalPath: '/rainbowpawclaw',
+      ogType: 'website',
+      ogImagePath: '/logo.png',
+    })
+  }, [])
 
   useEffect(() => {
     api.me().then(setMe).catch(() => {})
