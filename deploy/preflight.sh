@@ -40,6 +40,7 @@ INTERNAL_TOKEN_VAL="$(trim "$(get_kv INTERNAL_TOKEN)")"
 AI_MOCK_MODE_VAL="$(trim "$(get_kv AI_MOCK_MODE)")"
 AI_BASE_URL_VAL="$(trim "$(get_kv AI_BASE_URL)")"
 AI_API_KEY_VAL="$(trim "$(get_kv AI_API_KEY)")"
+DOMAIN_VAL="$(trim "$(get_kv DOMAIN)")"
 
 if [ -z "$INTERNAL_TOKEN_VAL" ] || [ "$INTERNAL_TOKEN_VAL" = "change-me" ]; then
   fail "INTERNAL_TOKEN 未配置或仍为 change-me：请在 $env_file 中填写一个随机长 token"
@@ -52,6 +53,10 @@ if [ "$AI_MOCK_MODE_VAL" != "true" ]; then
   if [ -z "$AI_API_KEY_VAL" ]; then
     fail "AI_MOCK_MODE=false 时必须配置 AI_API_KEY"
   fi
+fi
+
+if [ -z "$DOMAIN_VAL" ] || [ "$DOMAIN_VAL" = "your-domain.com" ]; then
+  printf '%s\n' "WARN: DOMAIN 未配置或仍为 your-domain.com；使用 HTTPS(Caddy) 时需要把 DOMAIN 改成你的真实域名（例如 rainbowpaw.org）" >&2
 fi
 
 printf '%s\n' "预检通过：Docker daemon 可用，关键环境变量满足启动条件"

@@ -47,6 +47,7 @@ $internalToken = Get-EnvValue 'INTERNAL_TOKEN'
 $aiMockMode = Get-EnvValue 'AI_MOCK_MODE'
 $aiBaseUrl = Get-EnvValue 'AI_BASE_URL'
 $aiApiKey = Get-EnvValue 'AI_API_KEY'
+$domain = Get-EnvValue 'DOMAIN'
 
 if ([string]::IsNullOrWhiteSpace($internalToken) -or $internalToken -eq 'change-me') {
   Fail "INTERNAL_TOKEN is missing or still 'change-me' in $envFile"
@@ -59,6 +60,10 @@ if ($aiMockMode -ne 'true') {
   if ([string]::IsNullOrWhiteSpace($aiApiKey)) {
     Fail 'AI_API_KEY required when AI_MOCK_MODE=false'
   }
+}
+
+if ([string]::IsNullOrWhiteSpace($domain) -or $domain -eq 'your-domain.com') {
+  Write-Warning "DOMAIN not set or still 'your-domain.com'. For HTTPS(Caddy), set DOMAIN to your real domain (e.g. rainbowpaw.org)"
 }
 
 Write-Output 'OK: Docker daemon ready; required env vars look good'

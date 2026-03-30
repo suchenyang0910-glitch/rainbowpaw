@@ -83,6 +83,8 @@ powershell -ExecutionPolicy Bypass -File deploy\server-up-https.ps1
 
 并在 `deploy/.env.server` 里配置 `DOMAIN=你的域名`（需要域名 A 记录已指向服务器公网 IP）。
 
+注意：如果 `DOMAIN` 仍是示例里的 `your-domain.com`，Caddy 会尝试给错误的域名签发证书并失败。
+
 ## 4. 健康检查
 
 - Web：`http://<你的域名>/`
@@ -96,6 +98,28 @@ curl -s http://<你的域名>/api/admin/ai/ops/daily | head
 ```
 
 如需临时直连 `api-gateway` 做调试，可在 `deploy/docker-compose.server.yml` 里给 `api-gateway` 加 `ports: - "3012:3012"`。
+
+## 常见问题
+
+### 1) Docker build 卡在 `npm ci` 并提示 lock file 不一致
+
+现象：构建某个 service 的镜像时失败，日志包含：
+
+- `npm ci can only install packages when your package.json and package-lock.json are in sync`
+
+处理：在仓库里把对应 service 的 `package-lock.json` 重新生成后再 `up --build`。
+
+如果服务器没有安装 Node/npm，可直接用 Docker 跑一次（以 bridge-service 为例）：
+
+```bash
+docker run --rm -v "$PWD/services/bridge-service:/app" -w /app node:22-alpine sh -lc "npm install --package-lock-only"
+```
+
+然后重新启动：
+
+```bash
+sh deploy/server-up.sh
+```
 
 ## 5. 真实 NVIDIA 模型
 
