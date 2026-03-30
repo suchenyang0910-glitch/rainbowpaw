@@ -49,6 +49,11 @@ powershell -ExecutionPolicy Bypass -File deploy\preflight.ps1
 - `VITE_API_BASE_URL`（你的域名）
 - `PUBLIC_WEB_BASE_URL`（你的域名，用于 Bot 菜单跳转）
 
+如果 Web 页面出现 `Failed to fetch`，优先检查是否仍使用了示例域名（如 `your-domain.com`）：
+
+- `VITE_API_BASE_URL=https://rainbowpaw.org`
+- `PUBLIC_WEB_BASE_URL=https://rainbowpaw.org`
+
 ## 3. 启动
 
 在仓库根目录执行：

@@ -48,6 +48,8 @@ $aiMockMode = Get-EnvValue 'AI_MOCK_MODE'
 $aiBaseUrl = Get-EnvValue 'AI_BASE_URL'
 $aiApiKey = Get-EnvValue 'AI_API_KEY'
 $domain = Get-EnvValue 'DOMAIN'
+$publicWebBaseUrl = Get-EnvValue 'PUBLIC_WEB_BASE_URL'
+$viteApiBaseUrl = Get-EnvValue 'VITE_API_BASE_URL'
 
 if ([string]::IsNullOrWhiteSpace($internalToken) -or $internalToken -eq 'change-me') {
   Fail "INTERNAL_TOKEN is missing or still 'change-me' in $envFile"
@@ -64,6 +66,14 @@ if ($aiMockMode -ne 'true') {
 
 if ([string]::IsNullOrWhiteSpace($domain) -or $domain -eq 'your-domain.com') {
   Write-Warning "DOMAIN not set or still 'your-domain.com'. For HTTPS(Caddy), set DOMAIN to your real domain (e.g. rainbowpaw.org)"
+}
+
+if (-not [string]::IsNullOrWhiteSpace($publicWebBaseUrl) -and $publicWebBaseUrl -match 'your-domain\.com') {
+  Write-Warning "PUBLIC_WEB_BASE_URL still contains 'your-domain.com'. Set it to your real domain (e.g. https://rainbowpaw.org)"
+}
+
+if (-not [string]::IsNullOrWhiteSpace($viteApiBaseUrl) -and $viteApiBaseUrl -match 'your-domain\.com') {
+  Write-Warning "VITE_API_BASE_URL still contains 'your-domain.com'. Set it to your real domain (e.g. https://rainbowpaw.org)"
 }
 
 Write-Output 'OK: Docker daemon ready; required env vars look good'

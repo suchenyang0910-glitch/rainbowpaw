@@ -41,6 +41,8 @@ AI_MOCK_MODE_VAL="$(trim "$(get_kv AI_MOCK_MODE)")"
 AI_BASE_URL_VAL="$(trim "$(get_kv AI_BASE_URL)")"
 AI_API_KEY_VAL="$(trim "$(get_kv AI_API_KEY)")"
 DOMAIN_VAL="$(trim "$(get_kv DOMAIN)")"
+PUBLIC_WEB_BASE_URL_VAL="$(trim "$(get_kv PUBLIC_WEB_BASE_URL)")"
+VITE_API_BASE_URL_VAL="$(trim "$(get_kv VITE_API_BASE_URL)")"
 
 if [ -z "$INTERNAL_TOKEN_VAL" ] || [ "$INTERNAL_TOKEN_VAL" = "change-me" ]; then
   fail "INTERNAL_TOKEN 未配置或仍为 change-me：请在 $env_file 中填写一个随机长 token"
@@ -57,6 +59,14 @@ fi
 
 if [ -z "$DOMAIN_VAL" ] || [ "$DOMAIN_VAL" = "your-domain.com" ]; then
   printf '%s\n' "WARN: DOMAIN 未配置或仍为 your-domain.com；使用 HTTPS(Caddy) 时需要把 DOMAIN 改成你的真实域名（例如 rainbowpaw.org）" >&2
+fi
+
+if [ -n "$PUBLIC_WEB_BASE_URL_VAL" ] && printf '%s' "$PUBLIC_WEB_BASE_URL_VAL" | grep -q 'your-domain.com'; then
+  printf '%s\n' "WARN: PUBLIC_WEB_BASE_URL 仍包含 your-domain.com；建议改成你的真实域名（例如 https://rainbowpaw.org）" >&2
+fi
+
+if [ -n "$VITE_API_BASE_URL_VAL" ] && printf '%s' "$VITE_API_BASE_URL_VAL" | grep -q 'your-domain.com'; then
+  printf '%s\n' "WARN: VITE_API_BASE_URL 仍包含 your-domain.com；建议改成你的真实域名（例如 https://rainbowpaw.org）" >&2
 fi
 
 printf '%s\n' "预检通过：Docker daemon 可用，关键环境变量满足启动条件"
