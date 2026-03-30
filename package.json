@@ -1,0 +1,26 @@
+{
+  "name": "rainbowpaw_new",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "bots",
+    "web-app",
+    "services/*"
+  ],
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  },
+  "scripts": {
+    "dev:bots": "npm --prefix bots run dev",
+    "dev:web": "npm --prefix web-app run dev -- --port 5173 --strictPort",
+    "dev:identity": "npm --prefix services/identity-service run start:dev",
+    "dev:wallet": "npm --prefix services/wallet-service run start:dev",
+    "dev:bridge": "npm --prefix services/bridge-service run start:dev",
+    "dev:gateway": "npm --prefix services/api-gateway run start:dev",
+    "dev:ai": "npm --prefix services/ai-orchestrator run start:dev",
+    "dev:services": "concurrently -k -n identity,wallet,bridge,ai,gateway -c blue,magenta,cyan,green,yellow \"npm --prefix services/identity-service run start:dev\" \"npm --prefix services/wallet-service run start:dev\" \"npm --prefix services/bridge-service run start:dev\" \"npm --prefix services/ai-orchestrator run start:dev\" \"npm --prefix services/api-gateway run start:dev\"",
+    "dev": "concurrently -k -n services,bots,web -c cyan,green,yellow \"npm run dev:services\" \"npm run dev:bots\" \"npm run dev:web\"",
+    "infra:up": "docker compose up -d",
+    "infra:down": "docker compose down"
+  }
+}

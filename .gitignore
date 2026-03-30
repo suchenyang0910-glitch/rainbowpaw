@@ -1,0 +1,15 @@
+.env
+deploy/.env.server
+deploy/.env.server.local
+node_modules/
+dist/
+.DS_Store
+
+bots/node_modules/
+bots/dist/
+
+web-app/node_modules/
+web-app/dist/
+
+services/**/node_modules/
+services/**/dist/
