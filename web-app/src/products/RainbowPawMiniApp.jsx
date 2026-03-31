@@ -27,7 +27,7 @@ import {
   Trash2,
   PawPrint,
 } from 'lucide-react'
-import { RP_MINIAPP_LANGS, rpMiniAppGetLangLabel, rpMiniAppT } from '../i18n/rpMiniApp.js'
+import { RP_MINIAPP_LANGS, rpMiniAppGetLangLabel, rpMiniAppLangToLocale, rpMiniAppT } from '../i18n/rpMiniApp.js'
 import { apiFetch } from '../api/client.js'
 import SafeImage from '../components/SafeImage.jsx'
 
@@ -892,7 +892,7 @@ const PaymentPage = ({ onBack, total, method, setMethod, onConfirm, t }) => {
   )
 }
 
-const MerchantPortal = ({ onBackToUser }) => {
+const MerchantPortal = ({ onBackToUser, lang, t }) => {
   const [merchantTab, setMerchantTab] = useState('orders')
   const [merchantToken, setMerchantToken] = useState(() => {
     try {
@@ -915,6 +915,7 @@ const MerchantPortal = ({ onBackToUser }) => {
   const [merchantProducts, setMerchantProducts] = useState([])
   const [productDraft, setProductDraft] = useState(null)
   const [productSaving, setProductSaving] = useState(false)
+  const [productEditLocale, setProductEditLocale] = useState(() => rpMiniAppLangToLocale(lang))
 
   const [merchantRevenue, setMerchantRevenue] = useState(null)
   const [settlementRequests, setSettlementRequests] = useState([])
@@ -934,7 +935,15 @@ const MerchantPortal = ({ onBackToUser }) => {
   const merchantFetch = async (path, opts = {}) => {
     const headers = merchantHeaders()
     if (!headers) throw new Error('缺少 Merchant Token')
-    return apiFetch(path, { ...opts, headers: { ...(opts.headers || {}), ...headers } })
+    const locale = rpMiniAppLangToLocale(lang)
+    const withLang = (p) => {
+      const s = String(p || '')
+      if (!locale) return s
+      if (s.includes('lang=')) return s
+      const sep = s.includes('?') ? '&' : '?'
+      return `${s}${sep}lang=${encodeURIComponent(locale)}`
+    }
+    return apiFetch(withLang(path), { ...opts, headers: { ...(opts.headers || {}), ...headers } })
   }
 
   const loadMerchantMe = async () => {
@@ -1125,20 +1134,40 @@ const MerchantPortal = ({ onBackToUser }) => {
     }
   }
 
+  const ensureI18nShape = (i18n) => {
+    const next = i18n && typeof i18n === 'object' ? { ...i18n } : {}
+    const ensure = (k) => {
+      if (!next[k] || typeof next[k] !== 'object') next[k] = {}
+      next[k] = {
+        name: next[k].name || '',
+        category_label: next[k].category_label || '',
+        description: next[k].description || '',
+      }
+    }
+    ensure('zh-CN')
+    ensure('en')
+    ensure('km')
+    return next
+  }
+
   const saveProductDraft = async () => {
     if (!ensureMerchantReady()) return
     const d = productDraft && typeof productDraft === 'object' ? productDraft : null
     if (!d) return
     const isNew = !d.id
+    const defaultLang = d.default_lang || rpMiniAppLangToLocale(lang)
+    const i18n = ensureI18nShape(d.i18n)
+    const name = String(i18n?.[defaultLang]?.name || '').trim()
+    const categoryLabel = String(i18n?.[defaultLang]?.category_label || '').trim()
     const payload = {
-      name: String(d.name || '').trim(),
-      description: d.description != null ? String(d.description) : null,
       category: String(d.category || '').trim(),
       price_cents: Math.round(Number(d.price_usd || 0) * 100),
       stock: d.stock == null || d.stock === '' ? null : Math.max(0, Math.floor(Number(d.stock || 0))),
+      default_lang: defaultLang,
+      i18n,
     }
-    if (!payload.name || !payload.category || !Number.isFinite(payload.price_cents)) {
-      showToast('请完整填写商品名称/类目/价格')
+    if (!name || !categoryLabel || !payload.category || !Number.isFinite(payload.price_cents)) {
+      showToast(t ? t('merchant.productDraft.required') : '请完整填写默认语言的名称/分类、以及类目/价格')
       return
     }
     setProductSaving(true)
@@ -1419,7 +1448,7 @@ const MerchantPortal = ({ onBackToUser }) => {
         <div className="p-4">
           <div className="flex items-center justify-between mb-4">
             <h3 className="font-bold text-gray-800">商品管理</h3>
-            <button type="button" className="px-3 py-2 rounded-lg text-xs font-bold bg-indigo-600 text-white border-0 active:bg-indigo-700" onClick={() => setProductDraft({ name: '', category: 'jewelry', description: '', price_usd: 0, stock: 0 })}>
+            <button type="button" className="px-3 py-2 rounded-lg text-xs font-bold bg-indigo-600 text-white border-0 active:bg-indigo-700" onClick={() => setProductDraft({ category: 'jewelry', price_usd: 0, stock: 0, default_lang: rpMiniAppLangToLocale(lang), i18n: ensureI18nShape(null) })}>
               新增商品
             </button>
           </div>
@@ -1427,12 +1456,66 @@ const MerchantPortal = ({ onBackToUser }) => {
           {productDraft ? (
             <div className="bg-white rounded-2xl p-4 border shadow-sm mb-4">
               <div className="text-sm font-black text-gray-900 mb-3">{productDraft.id ? '编辑商品' : '新增商品'}</div>
+              <div className="flex items-center gap-2 mb-3">
+                <div className="text-[11px] font-bold text-gray-600">默认语言</div>
+                {['zh-CN', 'en', 'km'].map((lc) => (
+                  <button
+                    key={lc}
+                    type="button"
+                    className={`px-2 py-1 rounded-lg text-[11px] font-bold border ${String(productDraft.default_lang || rpMiniAppLangToLocale(lang)) === lc ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-gray-700 border-gray-200'}`}
+                    onClick={() => setProductDraft({ ...productDraft, default_lang: lc })}
+                  >
+                    {lc === 'zh-CN' ? '中文' : lc === 'en' ? 'English' : 'ខ្មែរ'}
+                  </button>
+                ))}
+              </div>
+              <div className="flex items-center gap-2 mb-2">
+                <div className="text-[11px] font-bold text-gray-600">编辑语言</div>
+                {['zh-CN', 'en', 'km'].map((lc) => (
+                  <button
+                    key={lc}
+                    type="button"
+                    className={`px-2 py-1 rounded-lg text-[11px] font-bold border ${productEditLocale === lc ? 'bg-gray-900 text-white border-gray-900' : 'bg-white text-gray-700 border-gray-200'}`}
+                    onClick={() => setProductEditLocale(lc)}
+                  >
+                    {lc === 'zh-CN' ? '中文' : lc === 'en' ? 'English' : 'ខ្មែរ'}
+                  </button>
+                ))}
+              </div>
               <div className="space-y-2">
-                <input className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-indigo-400 bg-white" placeholder="商品名称" value={productDraft.name || ''} onChange={(e) => setProductDraft({ ...productDraft, name: e.target.value })} />
-                <input className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-indigo-400 bg-white" placeholder="类目（例如：jewelry）" value={productDraft.category || ''} onChange={(e) => setProductDraft({ ...productDraft, category: e.target.value })} />
+                <input className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-indigo-400 bg-white" placeholder="类目代码（例如：jewelry）" value={productDraft.category || ''} onChange={(e) => setProductDraft({ ...productDraft, category: e.target.value })} />
                 <input className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-indigo-400 bg-white" placeholder="价格（USD）" value={String(productDraft.price_usd ?? '')} onChange={(e) => setProductDraft({ ...productDraft, price_usd: e.target.value })} />
                 <input className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-indigo-400 bg-white" placeholder="库存（空=不限）" value={productDraft.stock ?? ''} onChange={(e) => setProductDraft({ ...productDraft, stock: e.target.value })} />
-                <textarea className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-indigo-400 bg-white min-h-[90px]" placeholder="描述（可选）" value={productDraft.description || ''} onChange={(e) => setProductDraft({ ...productDraft, description: e.target.value })} />
+                <input
+                  className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-indigo-400 bg-white"
+                  placeholder="商品名称"
+                  value={(productDraft.i18n && productDraft.i18n[productEditLocale] ? productDraft.i18n[productEditLocale].name : '') || ''}
+                  onChange={(e) => {
+                    const nextI18n = ensureI18nShape(productDraft.i18n)
+                    nextI18n[productEditLocale].name = e.target.value
+                    setProductDraft({ ...productDraft, i18n: nextI18n })
+                  }}
+                />
+                <input
+                  className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-indigo-400 bg-white"
+                  placeholder="分类显示名"
+                  value={(productDraft.i18n && productDraft.i18n[productEditLocale] ? productDraft.i18n[productEditLocale].category_label : '') || ''}
+                  onChange={(e) => {
+                    const nextI18n = ensureI18nShape(productDraft.i18n)
+                    nextI18n[productEditLocale].category_label = e.target.value
+                    setProductDraft({ ...productDraft, i18n: nextI18n })
+                  }}
+                />
+                <textarea
+                  className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-indigo-400 bg-white min-h-[90px]"
+                  placeholder="详情/描述"
+                  value={(productDraft.i18n && productDraft.i18n[productEditLocale] ? productDraft.i18n[productEditLocale].description : '') || ''}
+                  onChange={(e) => {
+                    const nextI18n = ensureI18nShape(productDraft.i18n)
+                    nextI18n[productEditLocale].description = e.target.value
+                    setProductDraft({ ...productDraft, i18n: nextI18n })
+                  }}
+                />
               </div>
               <div className="flex gap-2 mt-3">
                 <button type="button" disabled={productSaving} className={`flex-1 py-3 rounded-xl text-sm font-black border-0 ${productSaving ? 'bg-gray-200 text-gray-500' : 'bg-indigo-600 text-white'}`} onClick={saveProductDraft}>
@@ -1478,11 +1561,11 @@ const MerchantPortal = ({ onBackToUser }) => {
                       onClick={() =>
                         setProductDraft({
                           id: p.id,
-                          name: p.name,
                           category: p.category,
-                          description: p.description || '',
                           price_usd: ((Number(p.price_cents || 0) || 0) / 100).toFixed(2),
                           stock: p.stock == null ? '' : String(p.stock),
+                          default_lang: p.default_lang || rpMiniAppLangToLocale(lang),
+                          i18n: ensureI18nShape(p.i18n),
                         })
                       }
                     >
@@ -4584,7 +4667,7 @@ export default function RainbowPawMiniApp() {
     if (page === 'order_detail') return <OrderDetailPage />
     if (page === 'pay_success') return <PaySuccessPage />
     if (page === 'cemetery') return <CemeteryDetailPage />
-    if (view === 'merchant') return <MerchantPortal onBackToUser={() => setView('user')} />
+    if (view === 'merchant') return <MerchantPortal lang={lang} t={t} onBackToUser={() => setView('user')} />
     if (selectedProduct)
       return (
         <ProductDetailPage

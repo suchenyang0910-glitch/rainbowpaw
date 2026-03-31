@@ -176,3 +176,43 @@ CREATE TABLE IF NOT EXISTS ai.call_logs (
 CREATE INDEX IF NOT EXISTS idx_ai_call_logs_global_user_id ON ai.call_logs(global_user_id);
 CREATE INDEX IF NOT EXISTS idx_ai_call_logs_role ON ai.call_logs(role);
 CREATE INDEX IF NOT EXISTS idx_ai_call_logs_created_at ON ai.call_logs(created_at);
+
+
+-- 5. marketplace schema
+CREATE SCHEMA IF NOT EXISTS marketplace;
+
+CREATE TABLE IF NOT EXISTS marketplace.products (
+  id BIGSERIAL PRIMARY KEY,
+  merchant_id VARCHAR(64) NOT NULL,
+  merchant_name VARCHAR(128) NOT NULL,
+  category_code VARCHAR(64) NOT NULL,
+  default_lang VARCHAR(16) NOT NULL DEFAULT 'zh-CN',
+  price_cents INT NOT NULL DEFAULT 0,
+  currency VARCHAR(16) NOT NULL DEFAULT 'USD',
+  production_time_days INT NOT NULL DEFAULT 0,
+  delivery_type VARCHAR(32) NOT NULL DEFAULT 'shipment',
+  stock INT,
+  status VARCHAR(16) NOT NULL DEFAULT 'draft',
+  images JSONB NOT NULL DEFAULT '[]'::jsonb,
+  extra JSONB,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_marketplace_products_merchant_id ON marketplace.products(merchant_id);
+CREATE INDEX IF NOT EXISTS idx_marketplace_products_category_code ON marketplace.products(category_code);
+CREATE INDEX IF NOT EXISTS idx_marketplace_products_status ON marketplace.products(status);
+
+CREATE TABLE IF NOT EXISTS marketplace.product_i18n (
+  id BIGSERIAL PRIMARY KEY,
+  product_id BIGINT NOT NULL,
+  lang VARCHAR(16) NOT NULL,
+  name TEXT,
+  category_label TEXT,
+  description TEXT,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE (product_id, lang)
+);
+
+CREATE INDEX IF NOT EXISTS idx_marketplace_product_i18n_product_id ON marketplace.product_i18n(product_id);
+CREATE INDEX IF NOT EXISTS idx_marketplace_product_i18n_lang ON marketplace.product_i18n(lang);

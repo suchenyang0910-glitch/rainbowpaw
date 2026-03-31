@@ -27,6 +27,7 @@ import {
 } from 'lucide-react';
 import { api } from './api';
 import { applySeo } from './seo.js'
+import { CLAW_MINIAPP_LANGS, clawMiniAppGetLangLabel, clawMiniAppT } from './i18n/clawMiniApp.js'
 
 // --- Mock Data ---
 const DROPS = [
@@ -359,7 +360,7 @@ const ShippingModal = ({ open, initial, onClose, onSubmit }) => {
   )
 }
 
-const PlayResultModal = ({ data, onClose, onGoOrders, onOpenShipping, needShipping }) => {
+const PlayResultModal = ({ data, onClose, onGoOrders, onOpenShipping, needShipping, t }) => {
   const plays = Array.isArray(data && data.plays) ? data.plays : []
   const total = plays.length
   const title = total > 1 ? `🎉 连抽结果 (${total}x)` : '🎉 抽奖结果'
@@ -577,7 +578,7 @@ const PlayResultModal = ({ data, onClose, onGoOrders, onOpenShipping, needShippi
                         }}
                         className="relative mt-3 w-full bg-gray-100 text-gray-700 py-2 rounded-xl text-[10px] font-bold"
                       >
-                        复制订单号
+                        {t ? t('order.copyId') : '复制订单号'}
                       </button>
                       {isLegendary ? <div className="legendary-shine" /> : null}
                     </div>
@@ -592,13 +593,13 @@ const PlayResultModal = ({ data, onClose, onGoOrders, onOpenShipping, needShippi
   )
 }
 
-const BottomTabNav = ({ activeTab, setActiveTab }) => {
+const BottomTabNav = ({ activeTab, setActiveTab, t }) => {
   const tabs = [
-    { id: 'home', label: '首页', icon: Home },
-    { id: 'store', label: '商城', icon: ShoppingBag },
-    { id: 'earn', label: '赚钱', icon: TrendingUp },
-    { id: 'wallet', label: '钱包', icon: Wallet },
-    { id: 'profile', label: '我的', icon: User },
+    { id: 'home', label: t ? t('tabs.home') : '首页', icon: Home },
+    { id: 'store', label: t ? t('tabs.store') : '商城', icon: ShoppingBag },
+    { id: 'earn', label: t ? t('tabs.earn') : '赚钱', icon: TrendingUp },
+    { id: 'wallet', label: t ? t('tabs.wallet') : '钱包', icon: Wallet },
+    { id: 'profile', label: t ? t('tabs.profile') : '我的', icon: User },
   ];
 
   return (
@@ -1036,7 +1037,7 @@ const EarnPage = ({ me, activeGroups, discoverGroups, onCopyReferral, onForwardR
 };
 
 // 4. Wallet Page (Updated with History)
-const WalletPage = ({ wallet, logs, pricing, pay, onBuyPlays, onSubmitProof }) => {
+const WalletPage = ({ wallet, logs, pricing, pay, onBuyPlays, onSubmitProof, t }) => {
   const [copyStatus, setCopyStatus] = useState(false);
   const [manualId, setManualId] = useState('');
   const [manualTx, setManualTx] = useState('');
@@ -1161,14 +1162,14 @@ const WalletPage = ({ wallet, logs, pricing, pay, onBuyPlays, onSubmitProof }) =
         </div>
       </div>
       {copyStatus && (
-        <div className="fixed bottom-24 left-1/2 -translate-x-1/2 bg-gray-800 text-white text-xs px-4 py-2 rounded-full animate-in fade-in slide-in-from-bottom duration-300">已复制</div>
+        <div className="fixed bottom-24 left-1/2 -translate-x-1/2 bg-gray-800 text-white text-xs px-4 py-2 rounded-full animate-in fade-in slide-in-from-bottom duration-300">{t ? t('common.copied') : '已复制'}</div>
       )}
     </div>
   );
 };
 
 // 5. Profile Page
-const ProfilePage = ({ me, orders, onPayOrder, onEditShipping, onSupport }) => {
+const ProfilePage = ({ me, orders, onPayOrder, onEditShipping, onSupport, lang, setLang, t }) => {
   const [activeOrderTab, setActiveOrderTab] = useState('Pending');
   const telegram = me && me.telegram ? me.telegram : null;
   const shipping = me && me.shipping ? me.shipping : null;
@@ -1189,33 +1190,49 @@ const ProfilePage = ({ me, orders, onPayOrder, onEditShipping, onSupport }) => {
 
       <div className="p-4 space-y-6">
         <section>
-          <h3 className="text-xs font-black text-gray-400 uppercase tracking-widest mb-3">默认收货地址 (Shipping)</h3>
+          <h3 className="text-xs font-black text-gray-400 uppercase tracking-widest mb-3">{t ? t('lang.title') : '语言'}</h3>
+          <div className="bg-white rounded-2xl p-4 border border-gray-100 shadow-sm flex gap-2">
+            {CLAW_MINIAPP_LANGS.map((l) => (
+              <button
+                key={l.id}
+                type="button"
+                onClick={() => setLang && setLang(l.id)}
+                className={`flex-1 py-2 rounded-xl text-[11px] font-bold border ${String(lang || '').toUpperCase() === String(l.id).toUpperCase() ? 'bg-blue-500 text-white border-blue-500' : 'bg-white text-gray-700 border-gray-200'}`}
+              >
+                {clawMiniAppGetLangLabel(l.id)}
+              </button>
+            ))}
+          </div>
+        </section>
+
+        <section>
+          <h3 className="text-xs font-black text-gray-400 uppercase tracking-widest mb-3">{t ? t('profile.shippingTitle') : '默认收货地址 (Shipping)'}</h3>
           <div className="bg-white rounded-2xl p-4 border border-gray-100 shadow-sm">
             <div className="flex justify-between items-start mb-2">
                <div className="flex items-center gap-2 text-gray-700">
                  <MapPin size={16} className="text-red-500" />
-                 <span className="text-sm font-bold">{shipping ? `${shipping.name} ${shipping.phone}` : '未设置'}</span>
+                 <span className="text-sm font-bold">{shipping ? `${shipping.name} ${shipping.phone}` : t ? t('profile.notSet') : '未设置'}</span>
                </div>
-               <button onClick={() => onEditShipping && onEditShipping()} className="text-blue-500 text-xs font-bold">修改</button>
+               <button onClick={() => onEditShipping && onEditShipping()} className="text-blue-500 text-xs font-bold">{t ? t('profile.edit') : '修改'}</button>
             </div>
             <p className="text-xs text-gray-500">{shipping ? shipping.address : ''}</p>
           </div>
         </section>
 
         <section>
-          <h3 className="text-xs font-black text-gray-400 uppercase tracking-widest mb-3">订单追踪 (Orders)</h3>
+          <h3 className="text-xs font-black text-gray-400 uppercase tracking-widest mb-3">{t ? t('profile.ordersTitle') : '订单追踪 (Orders)'}</h3>
           <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
             <div className="flex border-b border-gray-100">
               {['Pending', 'To Ship', 'Shipped'].map(tab => (
                 <button key={tab} onClick={() => setActiveOrderTab(tab)} className={`flex-1 py-3 text-[10px] font-bold transition-colors ${activeOrderTab === tab ? 'text-blue-500 border-b-2 border-blue-500' : 'text-gray-400'}`}>
-                  {tab === 'Pending' ? '待支付' : tab === 'To Ship' ? '待发货' : '已发货'}
+                  {tab === 'Pending' ? (t ? t('profile.orderTabs.pending') : '待支付') : tab === 'To Ship' ? (t ? t('profile.orderTabs.toShip') : '待发货') : (t ? t('profile.orderTabs.shipped') : '已发货')}
                 </button>
               ))}
             </div>
             {filtered.length === 0 ? (
               <div className="p-4 flex flex-col items-center justify-center py-12 text-gray-300">
                 <Package size={40} strokeWidth={1} />
-                <p className="text-[10px] mt-2 font-medium uppercase tracking-widest">No active orders</p>
+                <p className="text-[10px] mt-2 font-medium uppercase tracking-widest">{t ? t('profile.noActiveOrders') : 'No active orders'}</p>
               </div>
             ) : (
               <div className="p-4 space-y-3">
@@ -1232,10 +1249,10 @@ const ProfilePage = ({ me, orders, onPayOrder, onEditShipping, onSupport }) => {
                     {o.payment_status === 'pending' && Number(o.amount || 0) > 0 ? (
                       <div className="mt-3 flex items-center justify-between">
                         <p className="text-[10px] text-gray-400">
-                          {o.payment_proof_text || o.payment_has_proof_file ? '已提交凭证' : '未提交凭证'}
+                          {o.payment_proof_text || o.payment_has_proof_file ? (t ? t('profile.proofSubmitted') : '已提交凭证') : (t ? t('profile.proofMissing') : '未提交凭证')}
                         </p>
                         <button onClick={() => onPayOrder && onPayOrder(o)} className="bg-blue-500 text-white px-3 py-2 rounded-xl text-[10px] font-bold">
-                          继续支付
+                          {t ? t('profile.continuePay') : '继续支付'}
                         </button>
                       </div>
                     ) : null}
@@ -1250,7 +1267,7 @@ const ProfilePage = ({ me, orders, onPayOrder, onEditShipping, onSupport }) => {
           onClick={() => onSupport && onSupport()}
           className="w-full bg-white border border-gray-100 py-4 rounded-2xl font-bold text-sm text-gray-600 flex items-center justify-center gap-2"
         >
-          <ExternalLink size={16}/> 联系客服 (Support)
+          <ExternalLink size={16}/> {t ? t('profile.support') : '联系客服 (Support)'}
         </button>
       </div>
     </div>
@@ -1260,6 +1277,13 @@ const ProfilePage = ({ me, orders, onPayOrder, onEditShipping, onSupport }) => {
 // --- Main App ---
 
 export default function App() {
+  const [lang, setLang] = useState(() => {
+    try {
+      return localStorage.getItem('claw_miniapp_lang') || 'ZH'
+    } catch {
+      return 'ZH'
+    }
+  })
   const [activeTab, setActiveTab] = useState('home');
   const [me, setMe] = useState(null);
   const [products, setProducts] = useState([]);
@@ -1274,6 +1298,16 @@ export default function App() {
   const [shippingModalOpen, setShippingModalOpen] = useState(false)
   const [buyPlaysModalOpen, setBuyPlaysModalOpen] = useState(false)
   const [toast, setToast] = useState('');
+
+  const t = (key, vars) => clawMiniAppT(lang, key, vars)
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('claw_miniapp_lang', String(lang || 'ZH'))
+    } catch {
+      void 0
+    }
+  }, [lang])
 
   useEffect(() => {
     applySeo({
@@ -1521,11 +1555,11 @@ export default function App() {
         {activeTab === 'home' && <HomePage me={me} onPlay={onPlay} products={products} onDirectBuy={directBuy} orders={orders} activeGroups={activeGroups} onPayOrder={payOrder} onInviteGroup={inviteGroup} onGoTab={setActiveTab} onOpenShipping={openShippingModal} playBusy={playBusy} />}
         {activeTab === 'store' && <StorePage products={products} onDirectBuy={directBuy} onGroupBuy={groupBuy} />}
         {activeTab === 'earn' && <EarnPage me={me} activeGroups={activeGroups} discoverGroups={discoverGroups} onCopyReferral={copyReferral} onForwardReferral={forwardReferral} onInviteGroup={inviteGroup} onJoinGroupPay={joinGroupPay} />}
-        {activeTab === 'wallet' && <WalletPage wallet={wallet} logs={walletLogs} pricing={me ? me.pricing : null} pay={me ? me.pay : null} onBuyPlays={buyPlays} onSubmitProof={submitProof} />}
-        {activeTab === 'profile' && <ProfilePage me={me} orders={orders} onPayOrder={payOrder} onEditShipping={openShippingModal} onSupport={openSupport} />}
+        {activeTab === 'wallet' && <WalletPage t={t} wallet={wallet} logs={walletLogs} pricing={me ? me.pricing : null} pay={me ? me.pay : null} onBuyPlays={buyPlays} onSubmitProof={submitProof} />}
+        {activeTab === 'profile' && <ProfilePage t={t} lang={lang} setLang={setLang} me={me} orders={orders} onPayOrder={payOrder} onEditShipping={openShippingModal} onSupport={openSupport} />}
       </main>
       
-      <BottomTabNav activeTab={activeTab} setActiveTab={setActiveTab} />
+      <BottomTabNav t={t} activeTab={activeTab} setActiveTab={setActiveTab} />
       <PaymentModal data={paymentModal} onClose={() => setPaymentModal(null)} onSubmitProof={submitProof} onSubmitProofFile={submitProofFile} onShareLink={shareLink} onPreviewProof={previewProof} />
       <ShippingModal open={shippingModalOpen} initial={me && me.shipping ? me.shipping : null} onClose={() => setShippingModalOpen(false)} onSubmit={submitShipping} />
       <BuyPlaysModal
@@ -1537,7 +1571,7 @@ export default function App() {
           buyPlays(bundle)
         }}
       />
-      <PlayResultModal data={playResultModal} onClose={() => setPlayResultModal(null)} onGoOrders={() => { setPlayResultModal(null); setActiveTab('profile') }} onOpenShipping={openShippingModal} needShipping={needShipping} />
+      <PlayResultModal t={t} data={playResultModal} onClose={() => setPlayResultModal(null)} onGoOrders={() => { setPlayResultModal(null); setActiveTab('profile') }} onOpenShipping={openShippingModal} needShipping={needShipping} />
       {toast ? (
         <div className="fixed bottom-24 left-1/2 -translate-x-1/2 bg-gray-800 text-white text-xs px-4 py-2 rounded-full animate-in fade-in slide-in-from-bottom duration-300">{toast}</div>
       ) : null}

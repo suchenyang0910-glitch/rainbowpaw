@@ -1,7 +1,7 @@
 export const RP_MINIAPP_LANGS = [
-  { id: 'ZH', label: '中文' },
-  { id: 'EN', label: 'English' },
-  { id: 'KM', label: 'ខ្មែរ' },
+  { id: 'ZH', label: '中文', locale: 'zh-CN' },
+  { id: 'EN', label: 'English', locale: 'en' },
+  { id: 'KM', label: 'ខ្មែរ', locale: 'km' },
 ]
 
 export function rpMiniAppGetLangLabel(id) {
@@ -9,6 +9,21 @@ export function rpMiniAppGetLangLabel(id) {
   const hit = RP_MINIAPP_LANGS.find((x) => x.id === langId)
   if (hit) return hit.label
   return langId || 'EN'
+}
+
+export function rpMiniAppLangToLocale(id) {
+  const langId = String(id || '').toUpperCase()
+  const hit = RP_MINIAPP_LANGS.find((x) => x.id === langId)
+  return hit ? hit.locale : 'en'
+}
+
+export function rpMiniAppLocaleToLang(locale) {
+  const raw = String(locale || '').trim().toLowerCase()
+  if (!raw) return 'EN'
+  if (raw === 'zh' || raw === 'zh-cn') return 'ZH'
+  if (raw === 'en' || raw === 'en-us') return 'EN'
+  if (raw === 'km' || raw === 'km-kh') return 'KM'
+  return 'EN'
 }
 
 const DICT = {

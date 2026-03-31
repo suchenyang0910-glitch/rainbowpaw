@@ -1,8 +1,16 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { apiFetch } from '../api/client'
 import SafeImage from '../components/SafeImage.jsx'
+import { RP_MINIAPP_LANGS, rpMiniAppGetLangLabel, rpMiniAppLangToLocale } from '../i18n/rpMiniApp.js'
 
 export default function MerchantPortalPage() {
+  const [lang, setLang] = useState(() => {
+    try {
+      return localStorage.getItem('rp_miniapp_lang') || 'ZH'
+    } catch {
+      return 'ZH'
+    }
+  })
   const [telegramId, setTelegramId] = useState('')
   const [authToken, setAuthToken] = useState('')
   const [merchant, setMerchant] = useState(null)
@@ -12,19 +20,63 @@ export default function MerchantPortalPage() {
   const [notifications, setNotifications] = useState([])
   const [reviewHistoryByProduct, setReviewHistoryByProduct] = useState({})
   const [activeTab, setActiveTab] = useState('orders')
-  const [form, setForm] = useState({
-    name: '',
+  const [editLocale, setEditLocale] = useState(() => rpMiniAppLangToLocale(lang))
+  const ensureI18nShape = (i18n) => {
+    const next = i18n && typeof i18n === 'object' ? { ...i18n } : {}
+    const ensure = (k) => {
+      if (!next[k] || typeof next[k] !== 'object') next[k] = {}
+      next[k] = {
+        name: next[k].name || '',
+        category_label: next[k].category_label || '',
+        description: next[k].description || '',
+      }
+    }
+    ensure('zh-CN')
+    ensure('en')
+    ensure('km')
+    return next
+  }
+
+  const [form, setForm] = useState(() => ({
     category: 'urn',
     price_cents: 0,
     stock: 0,
-    description: '',
-  })
+    default_lang: rpMiniAppLangToLocale(lang),
+    i18n: ensureI18nShape(null),
+  }))
   const [error, setError] = useState('')
   const [ok, setOk] = useState('')
   const [loading, setLoading] = useState(false)
   const [imageUrlDrafts, setImageUrlDrafts] = useState({})
 
   const loggedIn = useMemo(() => Boolean(authToken), [authToken])
+  useEffect(() => {
+    try {
+      localStorage.setItem('rp_miniapp_lang', String(lang || 'ZH'))
+    } catch {
+      void 0
+    }
+  }, [lang])
+
+  useEffect(() => {
+    setEditLocale(rpMiniAppLangToLocale(lang))
+    setForm((prev) => ({
+      ...(prev || {}),
+      default_lang: prev && prev.default_lang ? prev.default_lang : rpMiniAppLangToLocale(lang),
+      i18n: ensureI18nShape(prev && prev.i18n ? prev.i18n : null),
+    }))
+  }, [lang])
+
+  const withLang = (path) => {
+    const locale = rpMiniAppLangToLocale(lang)
+    const s = String(path || '')
+    if (!locale) return s
+    if (s.includes('lang=')) return s
+    const sep = s.includes('?') ? '&' : '?'
+    return `${s}${sep}lang=${encodeURIComponent(locale)}`
+  }
+
+  const merchantApiFetch = (path, opts) => apiFetch(withLang(path), opts)
 
   const loginWithTelegram = async () => {
     setError('')
@@ -57,7 +109,7 @@ export default function MerchantPortalPage() {
     setError('')
     setLoading(true)
     try {
-      const data = await apiFetch('/api/v1/merchant/orders', {
+      const data = await merchantApiFetch('/api/v1/merchant/orders', {
         headers: { authorization: `Bearer ${authToken}` },
       })
       setOrders(Array.isArray(data?.items) ? data.items : [])
@@ -73,7 +125,7 @@ export default function MerchantPortalPage() {
     setError('')
     setLoading(true)
     try {
-      const data = await apiFetch('/api/v1/merchant/products', {
+      const data = await merchantApiFetch('/api/v1/merchant/products', {
         headers: { authorization: `Bearer ${authToken}` },
       })
       setProducts(Array.isArray(data?.items) ? data.items : [])
@@ -90,13 +142,13 @@ export default function MerchantPortalPage() {
     setOk('')
     setLoading(true)
     try {
-      await apiFetch('/api/v1/merchant/products', {
+      await merchantApiFetch('/api/v1/merchant/products', {
         method: 'POST',
         headers: { authorization: `Bearer ${authToken}` },
         body: {
-          name: form.name,
           category: form.category,
-          description: form.description || null,
+          default_lang: form.default_lang,
+          i18n: form.i18n,
           price_cents: Number(form.price_cents || 0),
           stock: Number(form.stock || 0),
           currency: 'USD',
@@ -106,7 +158,7 @@ export default function MerchantPortalPage() {
         },
       })
       setOk('商品创建成功')
-      setForm({ name: '', category: 'urn', price_cents: 0, stock: 0, description: '' })
+      setForm({ category: 'urn', price_cents: 0, stock: 0, default_lang: rpMiniAppLangToLocale(lang), i18n: ensureI18nShape(null) })
       await loadProducts()
     } catch (e) {
       setError(e?.message || '创建商品失败')
@@ -120,7 +172,7 @@ export default function MerchantPortalPage() {
     setError('')
     setLoading(true)
     try {
-      const data = await apiFetch('/api/v1/merchant/revenue', {
+      const data = await merchantApiFetch('/api/v1/merchant/revenue', {
         headers: { authorization: `Bearer ${authToken}` },
       })
       setRevenue(data || { total_amount_cents: 0, platform_fee_cents: 0, merchant_payout_cents: 0, items: [] })
@@ -136,7 +188,7 @@ export default function MerchantPortalPage() {
     setError('')
     setLoading(true)
     try {
-      const data = await apiFetch('/api/v1/merchant/notifications?limit=100', {
+      const data = await merchantApiFetch('/api/v1/merchant/notifications?limit=100', {
         headers: { authorization: `Bearer ${authToken}` },
       })
       setNotifications(Array.isArray(data?.items) ? data.items : [])
@@ -151,7 +203,7 @@ export default function MerchantPortalPage() {
     if (!authToken) return
     setError('')
     try {
-      const data = await apiFetch(`/api/v1/merchant/products/${productId}/review-history`, {
+      const data = await merchantApiFetch(`/api/v1/merchant/products/${productId}/review-history`, {
         headers: { authorization: `Bearer ${authToken}` },
       })
       setReviewHistoryByProduct((prev) => ({ ...prev, [productId]: Array.isArray(data?.items) ? data.items : [] }))
@@ -164,7 +216,7 @@ export default function MerchantPortalPage() {
     if (!authToken) return
     setError('')
     try {
-      await apiFetch(`/api/v1/merchant/products/${productId}/status`, {
+      await merchantApiFetch(`/api/v1/merchant/products/${productId}/status`, {
         method: 'POST',
         headers: { authorization: `Bearer ${authToken}` },
         body: { status },
@@ -179,7 +231,7 @@ export default function MerchantPortalPage() {
     if (!authToken) return
     setError('')
     try {
-      await apiFetch(`/api/v1/merchant/products/${productId}/stock`, {
+      await merchantApiFetch(`/api/v1/merchant/products/${productId}/stock`, {
         method: 'POST',
         headers: { authorization: `Bearer ${authToken}` },
         body: { stock: Number(stock || 0) },
@@ -194,7 +246,7 @@ export default function MerchantPortalPage() {
     if (!authToken) return
     setError('')
     try {
-      await apiFetch(`/api/v1/merchant/products/${productId}`, {
+      await merchantApiFetch(`/api/v1/merchant/products/${productId}`, {
         method: 'PATCH',
         headers: { authorization: `Bearer ${authToken}` },
         body: { price_cents: Math.max(0, Number(priceCents || 0)) },
@@ -211,7 +263,7 @@ export default function MerchantPortalPage() {
     setError('')
     setOk('')
     try {
-      await apiFetch(`/api/v1/merchant/products/${productId}/images`, {
+      await merchantApiFetch(`/api/v1/merchant/products/${productId}/images`, {
         method: 'POST',
         headers: { authorization: `Bearer ${authToken}` },
         body: { image_url },
@@ -232,7 +284,7 @@ export default function MerchantPortalPage() {
     if (!authToken) return
     setError('')
     try {
-      await apiFetch(`/api/v1/merchant/products/${productId}/images/sort`, {
+      await merchantApiFetch(`/api/v1/merchant/products/${productId}/images/sort`, {
         method: 'PATCH',
         headers: { authorization: `Bearer ${authToken}` },
         body: { image_ids: list.map((x) => x.id) },
@@ -263,6 +315,18 @@ export default function MerchantPortalPage() {
         <div className="container">
           <h1 className="section-title">商家端（Telegram 授权）</h1>
           <p className="section-sub">先用 Telegram 授权进入商家端，再查看待处理订单。</p>
+          <div className="tags" style={{ marginBottom: '0.75rem' }}>
+            {RP_MINIAPP_LANGS.map((l) => (
+              <button
+                key={l.id}
+                type="button"
+                onClick={() => setLang(l.id)}
+                className={`tag ${String(lang || '').toUpperCase() === String(l.id || '').toUpperCase() ? 'on' : ''}`}
+              >
+                {rpMiniAppGetLangLabel(l.id)}
+              </button>
+            ))}
+          </div>
           <div className="card" style={{ maxWidth: '680px', margin: '0 auto' }}>
             <div className="shop-form">
               <input className="shop-input" placeholder="输入 Telegram ID" value={telegramId} onChange={(e) => setTelegramId(e.target.value)} />
@@ -325,7 +389,6 @@ export default function MerchantPortalPage() {
             {activeTab === 'products' && (
               <div style={{ marginTop: '1rem' }}>
                 <div className="shop-form">
-                  <input className="shop-input" placeholder="商品名称" value={form.name} onChange={(e) => setForm((v) => ({ ...v, name: e.target.value }))} />
                   <select className="shop-input" value={form.category} onChange={(e) => setForm((v) => ({ ...v, category: e.target.value }))}>
                     <option value="urn">骨灰盒</option>
                     <option value="jewelry">纪念首饰</option>
@@ -333,10 +396,71 @@ export default function MerchantPortalPage() {
                     <option value="art">纪念艺术</option>
                     <option value="service">服务</option>
                   </select>
+                  <select className="shop-input" value={form.default_lang} onChange={(e) => setForm((v) => ({ ...v, default_lang: e.target.value }))}>
+                    <option value="zh-CN">默认：中文</option>
+                    <option value="en">默认：English</option>
+                    <option value="km">默认：ខ្មែរ</option>
+                  </select>
+                  <div className="shop-actions" style={{ margin: 0 }}>
+                    {['zh-CN', 'en', 'km'].map((lc) => (
+                      <button
+                        key={lc}
+                        type="button"
+                        className={`btn btn-outline ${editLocale === lc ? 'on' : ''}`}
+                        onClick={() => setEditLocale(lc)}
+                      >
+                        {lc === 'zh-CN' ? '中文' : lc === 'en' ? 'English' : 'ខ្មែរ'}
+                      </button>
+                    ))}
+                  </div>
+                  <input
+                    className="shop-input"
+                    placeholder="名称"
+                    value={form.i18n && form.i18n[editLocale] ? form.i18n[editLocale].name : ''}
+                    onChange={(e) =>
+                      setForm((v) => {
+                        const nextI18n = ensureI18nShape(v.i18n)
+                        nextI18n[editLocale].name = e.target.value
+                        return { ...v, i18n: nextI18n }
+                      })
+                    }
+                  />
+                  <input
+                    className="shop-input"
+                    placeholder="分类显示名"
+                    value={form.i18n && form.i18n[editLocale] ? form.i18n[editLocale].category_label : ''}
+                    onChange={(e) =>
+                      setForm((v) => {
+                        const nextI18n = ensureI18nShape(v.i18n)
+                        nextI18n[editLocale].category_label = e.target.value
+                        return { ...v, i18n: nextI18n }
+                      })
+                    }
+                  />
                   <input className="shop-input" placeholder="价格(分)" type="number" value={form.price_cents} onChange={(e) => setForm((v) => ({ ...v, price_cents: Number(e.target.value || 0) }))} />
                   <input className="shop-input" placeholder="库存" type="number" value={form.stock} onChange={(e) => setForm((v) => ({ ...v, stock: Number(e.target.value || 0) }))} />
-                  <input className="shop-input" placeholder="描述" value={form.description} onChange={(e) => setForm((v) => ({ ...v, description: e.target.value }))} />
-                  <button className="btn btn-dark" onClick={createProduct} disabled={loading || !form.name.trim()}>
+                  <input
+                    className="shop-input"
+                    placeholder="详情/描述"
+                    value={form.i18n && form.i18n[editLocale] ? form.i18n[editLocale].description : ''}
+                    onChange={(e) =>
+                      setForm((v) => {
+                        const nextI18n = ensureI18nShape(v.i18n)
+                        nextI18n[editLocale].description = e.target.value
+                        return { ...v, i18n: nextI18n }
+                      })
+                    }
+                  />
+                  <button
+                    className="btn btn-dark"
+                    onClick={createProduct}
+                    disabled={
+                      loading ||
+                      !String(form.category || '').trim() ||
+                      !String(form.i18n?.[form.default_lang]?.name || '').trim() ||
+                      !String(form.i18n?.[form.default_lang]?.category_label || '').trim()
+                    }
+                  >
                     新增商品
                   </button>
                 </div>

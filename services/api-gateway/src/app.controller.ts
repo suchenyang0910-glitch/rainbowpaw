@@ -72,13 +72,16 @@ export class AppController {
   }
 
   @Get('marketplace/products')
-  marketplaceProducts(@Query('category') category?: string) {
-    return this.appService.marketplaceProducts({ category });
+  marketplaceProducts(
+    @Query('category') category?: string,
+    @Query('lang') lang?: string,
+  ) {
+    return this.appService.marketplaceProducts({ category, lang });
   }
 
   @Get('marketplace/products/:id')
-  marketplaceProduct(@Param('id') id: string) {
-    return this.appService.marketplaceProduct({ id });
+  marketplaceProduct(@Param('id') id: string, @Query('lang') lang?: string) {
+    return this.appService.marketplaceProduct({ id, lang });
   }
 
   @Get('marketplace/services')

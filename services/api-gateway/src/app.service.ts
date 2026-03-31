@@ -721,23 +721,33 @@ export class AppService {
     };
   }
 
-  async marketplaceProducts(opts: { category?: string }) {
-    const category = String(opts?.category || '').trim();
-    const list = category
-      ? this.marketplaceProductsStore.filter(
-          (p) => String(p.category) === category,
-        )
-      : this.marketplaceProductsStore;
-    return { code: 0, message: 'ok', data: { items: list } };
+  async marketplaceProducts(opts: { category?: string; lang?: any }) {
+    try {
+      const items = await this.marketplaceDbListProducts(opts || {});
+      return { code: 0, message: 'ok', data: { items } };
+    } catch {
+      const category = String(opts?.category || '').trim();
+      const list = category
+        ? this.marketplaceProductsStore.filter(
+            (p) => String(p.category) === category,
+          )
+        : this.marketplaceProductsStore;
+      return { code: 0, message: 'ok', data: { items: list } };
+    }
   }
 
-  async marketplaceProduct(opts: { id: string }) {
-    const id = Number(opts?.id);
-    if (!Number.isFinite(id))
-      throw new BadRequestException('invalid product id');
-    const p = this.marketplaceProductsStore.find((x) => Number(x.id) === id);
-    if (!p) throw new BadRequestException('product not found');
-    return { code: 0, message: 'ok', data: p };
+  async marketplaceProduct(opts: { id: string; lang?: any }) {
+    try {
+      const p = await this.marketplaceDbGetProduct(opts || ({} as any));
+      return { code: 0, message: 'ok', data: p };
+    } catch {
+      const id = Number(opts?.id);
+      if (!Number.isFinite(id))
+        throw new BadRequestException('invalid product id');
+      const p = this.marketplaceProductsStore.find((x) => Number(x.id) === id);
+      if (!p) throw new BadRequestException('product not found');
+      return { code: 0, message: 'ok', data: p };
+    }
   }
 
   async marketplaceServices(opts: { city?: string; category?: string }) {
@@ -2321,119 +2331,393 @@ export class AppService {
 
   async v1MerchantProducts(req: any) {
     const m = this.v1MerchantFromReq(req);
-    const items = this.marketplaceProductsStore
-      .filter((p: any) => String(p?.merchant?.id || '') === String(m.id))
-      .map((p: any) => ({
-        id: p.id,
-        name: p.name,
-        category: p.category,
-        description: p.description,
-        price_cents: p.price_cents,
-        currency: p.currency,
-        stock: p.stock ?? 0,
-        status: p.status || 'published',
-        images: p.images || [],
+    const lang = this.normalizeLocaleOrNull(req?.query?.lang);
+    try {
+      const q = await this.opsQuery(
+        `SELECT
+          p.id,
+          p.category_code AS category,
+          p.default_lang,
+          p.price_cents,
+          p.currency,
+          p.production_time_days,
+          p.delivery_type,
+          p.stock,
+          p.status,
+          p.images,
+          COALESCE(t1.name, t2.name) AS name,
+          COALESCE(t1.category_label, t2.category_label) AS category_label,
+          COALESCE(t1.description, t2.description) AS description
+        FROM marketplace.products p
+        LEFT JOIN marketplace.product_i18n t1
+          ON t1.product_id = p.id AND ($1::text IS NOT NULL) AND t1.lang = $1
+        LEFT JOIN marketplace.product_i18n t2
+          ON t2.product_id = p.id AND t2.lang = p.default_lang
+        WHERE p.merchant_id = $2
+        ORDER BY p.id DESC
+        LIMIT 200`,
+        [lang, String(m.id)],
+      );
+      const ids = (q.rows || [])
+        .map((r: any) => Number(r.id))
+        .filter((x) => Number.isFinite(x));
+      const i18nById: Record<string, any> = {};
+      if (ids.length) {
+        const iq = await this.opsQuery(
+          `SELECT product_id, lang, name, category_label, description
+           FROM marketplace.product_i18n
+           WHERE product_id = ANY($1)`,
+          [ids],
+        );
+        for (const row of iq.rows || []) {
+          const pid = String(row.product_id);
+          const l = this.normalizeLocaleOrNull(row.lang);
+          if (!pid || !l) continue;
+          if (!i18nById[pid]) i18nById[pid] = {};
+          i18nById[pid][l] = {
+            name: row.name != null ? String(row.name) : null,
+            category_label:
+              row.category_label != null ? String(row.category_label) : null,
+            description:
+              row.description != null ? String(row.description) : null,
+          };
+        }
+      }
+      const items = (q.rows || []).map((r: any) => ({
+        id: Number(r.id),
+        name: r.name != null ? String(r.name) : '',
+        category: String(r.category || ''),
+        category_label:
+          r.category_label != null ? String(r.category_label) : null,
+        description: r.description != null ? String(r.description) : null,
+        price_cents: Number(r.price_cents || 0),
+        currency: String(r.currency || 'USD'),
+        stock: r.stock == null ? null : Number(r.stock),
+        status: String(r.status || 'draft'),
+        images: Array.isArray(r.images) ? r.images : r.images || [],
+        default_lang: String(r.default_lang || 'zh-CN'),
+        i18n: i18nById[String(r.id)] || {},
       }));
-    return { code: 0, message: 'ok', data: { items } };
+      return { code: 0, message: 'ok', data: { items } };
+    } catch {
+      const items = this.marketplaceProductsStore
+        .filter((p: any) => String(p?.merchant?.id || '') === String(m.id))
+        .map((p: any) => ({
+          id: p.id,
+          name: p.name,
+          category: p.category,
+          description: p.description,
+          price_cents: p.price_cents,
+          currency: p.currency,
+          stock: p.stock ?? 0,
+          status: p.status || 'published',
+          images: p.images || [],
+          i18n: {},
+        }));
+      return { code: 0, message: 'ok', data: { items } };
+    }
   }
 
   async v1MerchantCreateProduct(req: any, body: any) {
     const m = this.v1MerchantFromReq(req);
-    const id = Number(Date.now());
-    const next: any = {
-      id,
-      category: String(body?.category || 'urn'),
-      name: String(body?.name || '').trim() || `商品_${id}`,
-      description: body?.description ? String(body.description) : null,
-      price_cents: Math.max(0, Math.floor(Number(body?.price_cents || 0))),
-      currency: String(body?.currency || 'USD'),
-      images: [],
-      merchant: { id: m.id, name: m.name },
-      production_time_days: Math.max(
-        0,
-        Math.floor(Number(body?.production_time_days || 3)),
-      ),
-      delivery_type: String(body?.delivery_type || 'shipment'),
-      stock: Math.max(0, Math.floor(Number(body?.stock || 0))),
-      status: 'draft',
-      sales_7d: 0,
-    };
-    this.marketplaceProductsStore.unshift(next);
-    return { code: 0, message: 'ok', data: next };
+    const defaultLang = this.normalizeLocale(
+      body?.default_lang || req?.query?.lang,
+    );
+    const category = String(
+      body?.category || body?.category_code || 'urn',
+    ).trim();
+    const priceCents = Math.max(0, Math.floor(Number(body?.price_cents || 0)));
+    const stock =
+      body?.stock === null || typeof body?.stock === 'undefined'
+        ? null
+        : Math.max(0, Math.floor(Number(body?.stock || 0)));
+    const productionTimeDays = Math.max(
+      0,
+      Math.floor(Number(body?.production_time_days || 3)),
+    );
+    const deliveryType = String(body?.delivery_type || 'shipment');
+    const currency = String(body?.currency || 'USD');
+
+    const i18nFromBody = this.parseProductI18nFromBody(body);
+    const fallbackName = String(body?.name || '').trim();
+    const fallbackCategoryLabel = body?.category_label
+      ? String(body.category_label)
+      : null;
+    const fallbackDesc =
+      typeof body?.description === 'string' || body?.description === null
+        ? body.description
+        : null;
+
+    const i18n =
+      i18nFromBody ||
+      (fallbackName || fallbackCategoryLabel || fallbackDesc != null
+        ? {
+            [defaultLang]: {
+              name: fallbackName || null,
+              category_label: fallbackCategoryLabel,
+              description: fallbackDesc != null ? String(fallbackDesc) : null,
+            },
+          }
+        : null);
+
+    const mustName = i18n?.[defaultLang]?.name
+      ? String(i18n[defaultLang].name).trim()
+      : '';
+    if (!category || !Number.isFinite(priceCents) || !mustName) {
+      throw new BadRequestException('missing name/category/price');
+    }
+
+    try {
+      const q = await this.opsQuery<{ id: number }>(
+        `INSERT INTO marketplace.products(merchant_id, merchant_name, category_code, default_lang, price_cents, currency, production_time_days, delivery_type, stock, status, images)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'draft','[]'::jsonb)
+         RETURNING id`,
+        [
+          String(m.id),
+          String(m.name),
+          category,
+          defaultLang,
+          priceCents,
+          currency,
+          productionTimeDays,
+          deliveryType,
+          stock,
+        ],
+      );
+      const id = Number(q.rows && q.rows[0] ? (q.rows[0] as any).id : NaN);
+      if (!Number.isFinite(id)) throw new BadRequestException('create failed');
+      if (i18n) await this.marketplaceDbUpsertI18n(id, i18n);
+      const data = await this.marketplaceDbGetProduct({ id: String(id) });
+      return { code: 0, message: 'ok', data };
+    } catch {
+      const id = Number(Date.now());
+      const next: any = {
+        id,
+        category,
+        name: mustName || `商品_${id}`,
+        description: i18n?.[defaultLang]?.description || null,
+        price_cents: priceCents,
+        currency,
+        images: [],
+        merchant: { id: m.id, name: m.name },
+        production_time_days: productionTimeDays,
+        delivery_type: deliveryType,
+        stock: stock ?? 0,
+        status: 'draft',
+        sales_7d: 0,
+      };
+      this.marketplaceProductsStore.unshift(next);
+      return { code: 0, message: 'ok', data: next };
+    }
   }
 
   async v1MerchantUpdateProduct(req: any, opts: { id: string; body: any }) {
     const m = this.v1MerchantFromReq(req);
     const id = Number(opts.id);
-    const idx = this.marketplaceProductsStore.findIndex(
-      (p: any) => Number(p.id) === id,
-    );
-    if (idx < 0) throw new BadRequestException('product not found');
-    const existed: any = this.marketplaceProductsStore[idx];
-    if (String(existed?.merchant?.id || '') !== String(m.id))
-      throw new BadRequestException('forbidden');
-    const next: any = { ...existed };
-    if (typeof opts.body?.price_cents !== 'undefined')
-      next.price_cents = Math.max(
-        0,
-        Math.floor(Number(opts.body.price_cents || 0)),
+    if (!Number.isFinite(id))
+      throw new BadRequestException('invalid product id');
+    const body = opts.body || {};
+    try {
+      const owner = await this.opsQuery(
+        `SELECT id, merchant_id FROM marketplace.products WHERE id = $1 LIMIT 1`,
+        [id],
       );
-    if (typeof opts.body?.name === 'string') next.name = String(opts.body.name);
-    if (
-      typeof opts.body?.description === 'string' ||
-      opts.body?.description === null
-    )
-      next.description = opts.body.description;
-    this.marketplaceProductsStore[idx] = next;
-    return { code: 0, message: 'ok', data: next };
+      const r: any = owner.rows && owner.rows[0] ? owner.rows[0] : null;
+      if (!r) throw new BadRequestException('product not found');
+      if (String(r.merchant_id || '') !== String(m.id))
+        throw new BadRequestException('forbidden');
+
+      const sets: string[] = [];
+      const params: any[] = [id];
+      let idx = 2;
+      if (typeof body.price_cents !== 'undefined') {
+        sets.push(`price_cents = $${idx++}`);
+        params.push(Math.max(0, Math.floor(Number(body.price_cents || 0))));
+      }
+      if (
+        typeof body.category === 'string' ||
+        typeof body.category_code === 'string'
+      ) {
+        const cat = String(body.category || body.category_code || '').trim();
+        if (cat) {
+          sets.push(`category_code = $${idx++}`);
+          params.push(cat);
+        }
+      }
+      if (typeof body.currency === 'string') {
+        sets.push(`currency = $${idx++}`);
+        params.push(String(body.currency || 'USD'));
+      }
+      if (typeof body.production_time_days !== 'undefined') {
+        sets.push(`production_time_days = $${idx++}`);
+        params.push(
+          Math.max(0, Math.floor(Number(body.production_time_days || 0))),
+        );
+      }
+      if (typeof body.delivery_type === 'string') {
+        sets.push(`delivery_type = $${idx++}`);
+        params.push(String(body.delivery_type || 'shipment'));
+      }
+      if (body.stock === null || typeof body.stock === 'undefined') {
+        if (body.stock === null) {
+          sets.push(`stock = NULL`);
+        }
+      } else if (typeof body.stock !== 'undefined') {
+        sets.push(`stock = $${idx++}`);
+        params.push(Math.max(0, Math.floor(Number(body.stock || 0))));
+      }
+      if (typeof body.default_lang !== 'undefined') {
+        sets.push(`default_lang = $${idx++}`);
+        params.push(this.normalizeLocale(body.default_lang));
+      }
+      if (sets.length) {
+        await this.opsQuery(
+          `UPDATE marketplace.products SET ${sets.join(
+            ', ',
+          )}, updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
+          params,
+        );
+      }
+
+      const i18nFromBody = this.parseProductI18nFromBody(body);
+      const maybeDefaultLang = this.normalizeLocale(
+        body?.default_lang || req?.query?.lang,
+      );
+      const fallbackName =
+        typeof body.name === 'string' ? String(body.name).trim() : '';
+      const fallbackCategoryLabel =
+        typeof body.category_label === 'string'
+          ? String(body.category_label)
+          : null;
+      const fallbackDesc =
+        typeof body.description === 'string' || body.description === null
+          ? body.description
+          : null;
+      const fallbackI18n =
+        fallbackName || fallbackCategoryLabel || fallbackDesc != null
+          ? {
+              [maybeDefaultLang]: {
+                name: fallbackName || null,
+                category_label: fallbackCategoryLabel,
+                description: fallbackDesc != null ? String(fallbackDesc) : null,
+              },
+            }
+          : null;
+      const i18n = i18nFromBody || fallbackI18n;
+      if (i18n) await this.marketplaceDbUpsertI18n(id, i18n);
+
+      const data = await this.marketplaceDbGetProduct({
+        id: String(id),
+        lang: req?.query?.lang,
+      });
+      return { code: 0, message: 'ok', data };
+    } catch {
+      const idx = this.marketplaceProductsStore.findIndex(
+        (p: any) => Number(p.id) === id,
+      );
+      if (idx < 0) throw new BadRequestException('product not found');
+      const existed: any = this.marketplaceProductsStore[idx];
+      if (String(existed?.merchant?.id || '') !== String(m.id))
+        throw new BadRequestException('forbidden');
+      const next: any = { ...existed };
+      if (typeof body?.price_cents !== 'undefined')
+        next.price_cents = Math.max(
+          0,
+          Math.floor(Number(body.price_cents || 0)),
+        );
+      if (typeof body?.name === 'string') next.name = String(body.name);
+      if (typeof body?.category === 'string')
+        next.category = String(body.category);
+      if (typeof body?.description === 'string' || body?.description === null)
+        next.description = body.description;
+      this.marketplaceProductsStore[idx] = next;
+      return { code: 0, message: 'ok', data: next };
+    }
   }
 
   async v1MerchantSetStatus(req: any, opts: { id: string; status: string }) {
     const m = this.v1MerchantFromReq(req);
     const id = Number(opts.id);
-    const idx = this.marketplaceProductsStore.findIndex(
-      (p: any) => Number(p.id) === id,
-    );
-    if (idx < 0) throw new BadRequestException('product not found');
-    const existed: any = this.marketplaceProductsStore[idx];
-    if (String(existed?.merchant?.id || '') !== String(m.id))
-      throw new BadRequestException('forbidden');
-    existed.status = String(opts.status || 'draft');
-    this.marketplaceProductsStore[idx] = existed;
-    return { code: 0, message: 'ok', data: { id, status: existed.status } };
+    const status = String(opts.status || 'draft');
+    try {
+      const r = await this.opsQuery(
+        `UPDATE marketplace.products
+         SET status = $1, updated_at = CURRENT_TIMESTAMP
+         WHERE id = $2 AND merchant_id = $3`,
+        [status, id, String(m.id)],
+      );
+      if (!r.rowCount) throw new BadRequestException('product not found');
+      return { code: 0, message: 'ok', data: { id, status } };
+    } catch {
+      const idx = this.marketplaceProductsStore.findIndex(
+        (p: any) => Number(p.id) === id,
+      );
+      if (idx < 0) throw new BadRequestException('product not found');
+      const existed: any = this.marketplaceProductsStore[idx];
+      if (String(existed?.merchant?.id || '') !== String(m.id))
+        throw new BadRequestException('forbidden');
+      existed.status = status;
+      this.marketplaceProductsStore[idx] = existed;
+      return { code: 0, message: 'ok', data: { id, status: existed.status } };
+    }
   }
 
   async v1MerchantSetStock(req: any, opts: { id: string; stock: number }) {
     const m = this.v1MerchantFromReq(req);
     const id = Number(opts.id);
-    const idx = this.marketplaceProductsStore.findIndex(
-      (p: any) => Number(p.id) === id,
-    );
-    if (idx < 0) throw new BadRequestException('product not found');
-    const existed: any = this.marketplaceProductsStore[idx];
-    if (String(existed?.merchant?.id || '') !== String(m.id))
-      throw new BadRequestException('forbidden');
-    existed.stock = Math.max(0, Math.floor(Number(opts.stock || 0)));
-    this.marketplaceProductsStore[idx] = existed;
-    return { code: 0, message: 'ok', data: { id, stock: existed.stock } };
+    const stock = Math.max(0, Math.floor(Number(opts.stock || 0)));
+    try {
+      const r = await this.opsQuery(
+        `UPDATE marketplace.products
+         SET stock = $1, updated_at = CURRENT_TIMESTAMP
+         WHERE id = $2 AND merchant_id = $3`,
+        [stock, id, String(m.id)],
+      );
+      if (!r.rowCount) throw new BadRequestException('product not found');
+      return { code: 0, message: 'ok', data: { id, stock } };
+    } catch {
+      const idx = this.marketplaceProductsStore.findIndex(
+        (p: any) => Number(p.id) === id,
+      );
+      if (idx < 0) throw new BadRequestException('product not found');
+      const existed: any = this.marketplaceProductsStore[idx];
+      if (String(existed?.merchant?.id || '') !== String(m.id))
+        throw new BadRequestException('forbidden');
+      existed.stock = stock;
+      this.marketplaceProductsStore[idx] = existed;
+      return { code: 0, message: 'ok', data: { id, stock: existed.stock } };
+    }
   }
 
   async v1MerchantAddImage(req: any, opts: { id: string; image_url: string }) {
     const m = this.v1MerchantFromReq(req);
     const id = Number(opts.id);
-    const idx = this.marketplaceProductsStore.findIndex(
-      (p: any) => Number(p.id) === id,
-    );
-    if (idx < 0) throw new BadRequestException('product not found');
-    const existed: any = this.marketplaceProductsStore[idx];
-    if (String(existed?.merchant?.id || '') !== String(m.id))
-      throw new BadRequestException('forbidden');
     const url = String(opts.image_url || '').trim();
     if (!url) throw new BadRequestException('image_url required');
-    if (!Array.isArray(existed.images)) existed.images = [];
-    existed.images.push({ id: this.v1RandomId('img'), image_url: url });
-    this.marketplaceProductsStore[idx] = existed;
-    return { code: 0, message: 'ok', data: { ok: true } };
+    const imgId = this.v1RandomId('img');
+    try {
+      const r = await this.opsQuery(
+        `UPDATE marketplace.products
+         SET images = COALESCE(images, '[]'::jsonb) || jsonb_build_array(jsonb_build_object('id',$1,'image_url',$2)),
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = $3 AND merchant_id = $4`,
+        [imgId, url, id, String(m.id)],
+      );
+      if (!r.rowCount) throw new BadRequestException('product not found');
+      return { code: 0, message: 'ok', data: { ok: true } };
+    } catch {
+      const idx = this.marketplaceProductsStore.findIndex(
+        (p: any) => Number(p.id) === id,
+      );
+      if (idx < 0) throw new BadRequestException('product not found');
+      const existed: any = this.marketplaceProductsStore[idx];
+      if (String(existed?.merchant?.id || '') !== String(m.id))
+        throw new BadRequestException('forbidden');
+      if (!Array.isArray(existed.images)) existed.images = [];
+      existed.images.push({ id: imgId, image_url: url });
+      this.marketplaceProductsStore[idx] = existed;
+      return { code: 0, message: 'ok', data: { ok: true } };
+    }
   }
 
   async v1MerchantSortImages(
@@ -2442,38 +2726,72 @@ export class AppService {
   ) {
     const m = this.v1MerchantFromReq(req);
     const id = Number(opts.id);
-    const idx = this.marketplaceProductsStore.findIndex(
-      (p: any) => Number(p.id) === id,
-    );
-    if (idx < 0) throw new BadRequestException('product not found');
-    const existed: any = this.marketplaceProductsStore[idx];
-    if (String(existed?.merchant?.id || '') !== String(m.id))
-      throw new BadRequestException('forbidden');
     const ids = Array.isArray(opts.image_ids) ? opts.image_ids.map(String) : [];
-    const current = Array.isArray(existed.images) ? existed.images : [];
-    const byId = new Map(current.map((x: any) => [String(x.id || ''), x]));
-    const next = ids.map((i) => byId.get(String(i))).filter(Boolean);
-    existed.images = next.length ? next : current;
-    this.marketplaceProductsStore[idx] = existed;
-    return { code: 0, message: 'ok', data: { ok: true } };
+    try {
+      const q = await this.opsQuery(
+        `SELECT images FROM marketplace.products WHERE id = $1 AND merchant_id = $2 LIMIT 1`,
+        [id, String(m.id)],
+      );
+      const row: any = q.rows && q.rows[0] ? q.rows[0] : null;
+      if (!row) throw new BadRequestException('product not found');
+      const current = Array.isArray(row.images) ? row.images : [];
+      const byId = new Map(current.map((x: any) => [String(x.id || ''), x]));
+      const next = ids.map((i) => byId.get(String(i))).filter(Boolean);
+      const finalImages = next.length ? next : current;
+      await this.opsQuery(
+        `UPDATE marketplace.products SET images = $1::jsonb, updated_at = CURRENT_TIMESTAMP WHERE id = $2 AND merchant_id = $3`,
+        [JSON.stringify(finalImages), id, String(m.id)],
+      );
+      return { code: 0, message: 'ok', data: { ok: true } };
+    } catch {
+      const idx = this.marketplaceProductsStore.findIndex(
+        (p: any) => Number(p.id) === id,
+      );
+      if (idx < 0) throw new BadRequestException('product not found');
+      const existed: any = this.marketplaceProductsStore[idx];
+      if (String(existed?.merchant?.id || '') !== String(m.id))
+        throw new BadRequestException('forbidden');
+      const current = Array.isArray(existed.images) ? existed.images : [];
+      const byId = new Map(current.map((x: any) => [String(x.id || ''), x]));
+      const next = ids.map((i) => byId.get(String(i))).filter(Boolean);
+      existed.images = next.length ? next : current;
+      this.marketplaceProductsStore[idx] = existed;
+      return { code: 0, message: 'ok', data: { ok: true } };
+    }
   }
 
   async v1MerchantDeleteImage(req: any, opts: { id: string; imageId: string }) {
     const m = this.v1MerchantFromReq(req);
     const id = Number(opts.id);
-    const idx = this.marketplaceProductsStore.findIndex(
-      (p: any) => Number(p.id) === id,
-    );
-    if (idx < 0) throw new BadRequestException('product not found');
-    const existed: any = this.marketplaceProductsStore[idx];
-    if (String(existed?.merchant?.id || '') !== String(m.id))
-      throw new BadRequestException('forbidden');
     const imageId = String(opts.imageId || '').trim();
-    existed.images = (
-      Array.isArray(existed.images) ? existed.images : []
-    ).filter((x: any) => String(x.id || '') !== imageId);
-    this.marketplaceProductsStore[idx] = existed;
-    return { code: 0, message: 'ok', data: { ok: true } };
+    try {
+      const q = await this.opsQuery(
+        `SELECT images FROM marketplace.products WHERE id = $1 AND merchant_id = $2 LIMIT 1`,
+        [id, String(m.id)],
+      );
+      const row: any = q.rows && q.rows[0] ? q.rows[0] : null;
+      if (!row) throw new BadRequestException('product not found');
+      const current = Array.isArray(row.images) ? row.images : [];
+      const next = current.filter((x: any) => String(x.id || '') !== imageId);
+      await this.opsQuery(
+        `UPDATE marketplace.products SET images = $1::jsonb, updated_at = CURRENT_TIMESTAMP WHERE id = $2 AND merchant_id = $3`,
+        [JSON.stringify(next), id, String(m.id)],
+      );
+      return { code: 0, message: 'ok', data: { ok: true } };
+    } catch {
+      const idx = this.marketplaceProductsStore.findIndex(
+        (p: any) => Number(p.id) === id,
+      );
+      if (idx < 0) throw new BadRequestException('product not found');
+      const existed: any = this.marketplaceProductsStore[idx];
+      if (String(existed?.merchant?.id || '') !== String(m.id))
+        throw new BadRequestException('forbidden');
+      existed.images = (
+        Array.isArray(existed.images) ? existed.images : []
+      ).filter((x: any) => String(x.id || '') !== imageId);
+      this.marketplaceProductsStore[idx] = existed;
+      return { code: 0, message: 'ok', data: { ok: true } };
+    }
   }
 
   async v1MerchantRevenue(_req: any) {
@@ -2530,6 +2848,174 @@ export class AppService {
     if (!host || !db || !user) return null;
     this.opsPg = new Pool({ host, port, database: db, user, password, max: 5 });
     return this.opsPg;
+  }
+
+  private normalizeLocale(input: any): 'zh-CN' | 'en' | 'km' {
+    const raw = String(input || '').trim();
+    if (!raw) return 'zh-CN';
+    const v = raw.toLowerCase();
+    if (v === 'zh' || v === 'zh-cn' || v === 'zh_hans' || v === 'zh-hans')
+      return 'zh-CN';
+    if (v === 'en' || v === 'en-us' || v === 'en_us') return 'en';
+    if (v === 'km' || v === 'kh' || v === 'km-kh' || v === 'km_kh') return 'km';
+    const up = raw.toUpperCase();
+    if (up === 'ZH') return 'zh-CN';
+    if (up === 'EN') return 'en';
+    if (up === 'KM') return 'km';
+    return 'zh-CN';
+  }
+
+  private normalizeLocaleOrNull(input: any): 'zh-CN' | 'en' | 'km' | null {
+    const raw = String(input || '').trim();
+    if (!raw) return null;
+    return this.normalizeLocale(raw);
+  }
+
+  private async marketplaceDbListProducts(opts: {
+    category?: string;
+    lang?: any;
+  }) {
+    const lang = this.normalizeLocaleOrNull(opts?.lang);
+    const category = String(opts?.category || '').trim();
+    const q = await this.opsQuery(
+      `SELECT
+        p.id,
+        p.category_code AS category,
+        p.default_lang,
+        p.price_cents,
+        p.currency,
+        p.production_time_days,
+        p.delivery_type,
+        p.stock,
+        p.status,
+        p.images,
+        p.merchant_id,
+        p.merchant_name,
+        COALESCE(t1.name, t2.name) AS name,
+        COALESCE(t1.category_label, t2.category_label) AS category_label,
+        COALESCE(t1.description, t2.description) AS description
+      FROM marketplace.products p
+      LEFT JOIN marketplace.product_i18n t1
+        ON t1.product_id = p.id AND ($1::text IS NOT NULL) AND t1.lang = $1
+      LEFT JOIN marketplace.product_i18n t2
+        ON t2.product_id = p.id AND t2.lang = p.default_lang
+      WHERE ($2::text = '' OR p.category_code = $2)
+      ORDER BY p.id DESC
+      LIMIT 200`,
+      [lang, category],
+    );
+    const items = (q.rows || []).map((r: any) => ({
+      id: Number(r.id),
+      category: String(r.category || ''),
+      category_label:
+        r.category_label != null ? String(r.category_label) : null,
+      name: r.name != null ? String(r.name) : '',
+      description: r.description != null ? String(r.description) : null,
+      price_cents: Number(r.price_cents || 0),
+      currency: String(r.currency || 'USD'),
+      images: Array.isArray(r.images) ? r.images : r.images || [],
+      merchant: {
+        id: String(r.merchant_id || ''),
+        name: String(r.merchant_name || ''),
+      },
+      production_time_days: Number(r.production_time_days || 0),
+      delivery_type: String(r.delivery_type || 'shipment'),
+      stock: r.stock == null ? null : Number(r.stock),
+      status: String(r.status || 'draft'),
+      default_lang: String(r.default_lang || 'zh-CN'),
+    }));
+    return items;
+  }
+
+  private async marketplaceDbGetProduct(opts: { id: string; lang?: any }) {
+    const id = Number(opts?.id);
+    if (!Number.isFinite(id))
+      throw new BadRequestException('invalid product id');
+    const lang = this.normalizeLocaleOrNull(opts?.lang);
+    const q = await this.opsQuery(
+      `SELECT
+        p.id,
+        p.category_code AS category,
+        p.default_lang,
+        p.price_cents,
+        p.currency,
+        p.production_time_days,
+        p.delivery_type,
+        p.stock,
+        p.status,
+        p.images,
+        p.merchant_id,
+        p.merchant_name,
+        COALESCE(t1.name, t2.name) AS name,
+        COALESCE(t1.category_label, t2.category_label) AS category_label,
+        COALESCE(t1.description, t2.description) AS description
+      FROM marketplace.products p
+      LEFT JOIN marketplace.product_i18n t1
+        ON t1.product_id = p.id AND ($1::text IS NOT NULL) AND t1.lang = $1
+      LEFT JOIN marketplace.product_i18n t2
+        ON t2.product_id = p.id AND t2.lang = p.default_lang
+      WHERE p.id = $2
+      LIMIT 1`,
+      [lang, id],
+    );
+    const r: any = q.rows && q.rows[0] ? q.rows[0] : null;
+    if (!r) throw new BadRequestException('product not found');
+    return {
+      id: Number(r.id),
+      category: String(r.category || ''),
+      category_label:
+        r.category_label != null ? String(r.category_label) : null,
+      name: r.name != null ? String(r.name) : '',
+      description: r.description != null ? String(r.description) : null,
+      price_cents: Number(r.price_cents || 0),
+      currency: String(r.currency || 'USD'),
+      images: Array.isArray(r.images) ? r.images : r.images || [],
+      merchant: {
+        id: String(r.merchant_id || ''),
+        name: String(r.merchant_name || ''),
+      },
+      production_time_days: Number(r.production_time_days || 0),
+      delivery_type: String(r.delivery_type || 'shipment'),
+      stock: r.stock == null ? null : Number(r.stock),
+      status: String(r.status || 'draft'),
+      default_lang: String(r.default_lang || 'zh-CN'),
+    };
+  }
+
+  private parseProductI18nFromBody(body: any) {
+    const raw = body?.i18n && typeof body.i18n === 'object' ? body.i18n : null;
+    if (!raw) return null;
+    const out: Record<string, any> = {};
+    for (const [k, v] of Object.entries(raw)) {
+      const lang = this.normalizeLocaleOrNull(k);
+      if (!lang) continue;
+      const obj: any = v && typeof v === 'object' ? v : {};
+      out[lang] = {
+        name: obj.name != null ? String(obj.name) : null,
+        category_label:
+          obj.category_label != null ? String(obj.category_label) : null,
+        description: obj.description != null ? String(obj.description) : null,
+      };
+    }
+    return Object.keys(out).length ? out : null;
+  }
+
+  private async marketplaceDbUpsertI18n(
+    productId: number,
+    i18n: Record<string, any>,
+  ) {
+    const langs = Object.keys(i18n || {});
+    if (!langs.length) return;
+    for (const lang of langs) {
+      const v: any = i18n[lang] || {};
+      await this.opsQuery(
+        `INSERT INTO marketplace.product_i18n(product_id, lang, name, category_label, description, updated_at)
+         VALUES ($1,$2,$3,$4,$5,CURRENT_TIMESTAMP)
+         ON CONFLICT (product_id, lang)
+         DO UPDATE SET name = EXCLUDED.name, category_label = EXCLUDED.category_label, description = EXCLUDED.description, updated_at = CURRENT_TIMESTAMP`,
+        [productId, lang, v.name, v.category_label, v.description],
+      );
+    }
   }
 
   private async opsQuery<T extends QueryResultRow = any>(
