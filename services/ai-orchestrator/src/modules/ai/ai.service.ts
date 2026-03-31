@@ -150,7 +150,10 @@ export class AiService {
       user_profile: dto.user_profile ?? {},
       context: dto.context ?? {},
     });
-    return this.runRole('support_ai', prompt, { global_user_id: this.extractGlobalUserId(req), input: dto });
+    return this.runRole('support_ai', prompt, {
+      global_user_id: this.extractGlobalUserId(req),
+      input: dto,
+    });
   }
 
   async growthGenerate(dto: GrowthGenerateDto, req: any) {
@@ -159,7 +162,10 @@ export class AiService {
       metrics: dto.metrics ?? {},
       goal: dto.goal ?? '',
     });
-    return this.runRole('growth_ai', prompt, { global_user_id: this.extractGlobalUserId(req), input: dto });
+    return this.runRole('growth_ai', prompt, {
+      global_user_id: this.extractGlobalUserId(req),
+      input: dto,
+    });
   }
 
   async productOptimize(dto: ProductOptimizeDto, req: any) {
@@ -169,14 +175,20 @@ export class AiService {
       current_pool: dto.current_pool ?? {},
       user_preference: dto.user_preference ?? {},
     });
-    return this.runRole('product_ai', prompt, { global_user_id: this.extractGlobalUserId(req), input: dto });
+    return this.runRole('product_ai', prompt, {
+      global_user_id: this.extractGlobalUserId(req),
+      input: dto,
+    });
   }
 
   async opsAnalyze(dto: OpsAnalyzeDto, req: any) {
     const prompt = renderTemplate(OPS_PROMPT, {
       report: dto.report ?? {},
     });
-    return this.runRole('ops_ai', prompt, { global_user_id: this.extractGlobalUserId(req), input: dto });
+    return this.runRole('ops_ai', prompt, {
+      global_user_id: this.extractGlobalUserId(req),
+      input: dto,
+    });
   }
 
   async riskAnalyze(dto: RiskAnalyzeDto, req: any) {
@@ -186,7 +198,10 @@ export class AiService {
       wallet_logs: redacted.wallet_logs,
       claw_plays: redacted.claw_plays,
     });
-    return this.runRole('risk_ai', prompt, { global_user_id: this.extractGlobalUserId(req), input: dto });
+    return this.runRole('risk_ai', prompt, {
+      global_user_id: this.extractGlobalUserId(req),
+      input: dto,
+    });
   }
 
   async recommendNext(dto: RecommendNextDto, req: any) {
@@ -194,12 +209,26 @@ export class AiService {
     const userProfile = dto.user_profile ?? {};
     const recentActions = dto.recent_actions ?? [];
     const lastResult = dto.last_result ?? {};
-    const candidateProducts = Array.isArray((dto as any).candidate_products) ? (dto as any).candidate_products : [];
-    const candidateEntries = Array.isArray((dto as any).candidate_entries) ? (dto as any).candidate_entries : [];
+    const candidateProducts = Array.isArray((dto as any).candidate_products)
+      ? (dto as any).candidate_products
+      : [];
+    const candidateEntries = Array.isArray((dto as any).candidate_entries)
+      ? (dto as any).candidate_entries
+      : [];
 
-    if (supportsRetrieval && (candidateProducts.length || candidateEntries.length)) {
-      const query = this.buildRecommendQuery({ userProfile, recentActions, lastResult });
-      const docs = this.buildRecommendDocuments({ candidateProducts, candidateEntries });
+    if (
+      supportsRetrieval &&
+      (candidateProducts.length || candidateEntries.length)
+    ) {
+      const query = this.buildRecommendQuery({
+        userProfile,
+        recentActions,
+        lastResult,
+      });
+      const docs = this.buildRecommendDocuments({
+        candidateProducts,
+        candidateEntries,
+      });
       const ranked = await this.rankCandidates({ query, docs, req });
 
       const prompt = renderTemplate(RECOMMEND_PROMPT, {
@@ -224,7 +253,10 @@ export class AiService {
       recent_actions: recentActions,
       last_result: lastResult,
     });
-    return this.runRole('recommend_ai', prompt, { global_user_id: this.extractGlobalUserId(req), input: dto });
+    return this.runRole('recommend_ai', prompt, {
+      global_user_id: this.extractGlobalUserId(req),
+      input: dto,
+    });
   }
 
   async visionAnalyze(dto: VisionAnalyzeDto, req: any) {
@@ -259,7 +291,9 @@ export class AiService {
     }
 
     const apiKey = String(process.env.AI_API_KEY || '').trim();
-    const chatPath = String(process.env.AI_CHAT_COMPLETIONS_PATH || '/v1/chat/completions').trim();
+    const chatPath = String(
+      process.env.AI_CHAT_COMPLETIONS_PATH || '/v1/chat/completions',
+    ).trim();
     if (!apiKey) throw new BadRequestException('AI_API_KEY 未配置');
     if (!baseUrl) throw new BadRequestException('AI_BASE_URL 未配置');
 
@@ -267,7 +301,10 @@ export class AiService {
 
     const messages: ChatMessage[] = [
       { role: 'system', content: GENERAL_RULES },
-      { role: 'system', content: '严格只输出一个 JSON 对象，不要输出任何额外文本。' },
+      {
+        role: 'system',
+        content: '严格只输出一个 JSON 对象，不要输出任何额外文本。',
+      },
       {
         role: 'user',
         content: [
@@ -289,13 +326,27 @@ export class AiService {
     });
     const latencyMs = Date.now() - t0;
 
-    const assistantText = String(res?.choices?.[0]?.message?.content || '').trim();
-    const parsed = await this.parseJsonWithRetry({ baseUrl, chatPath, apiKey, model, messages, assistantText });
+    const assistantText = String(
+      res?.choices?.[0]?.message?.content || '',
+    ).trim();
+    const parsed = await this.parseJsonWithRetry({
+      baseUrl,
+      chatPath,
+      apiKey,
+      model,
+      messages,
+      assistantText,
+    });
 
     const usage = res?.usage || null;
-    const promptTokens = typeof usage?.prompt_tokens === 'number' ? usage.prompt_tokens : null;
-    const completionTokens = typeof usage?.completion_tokens === 'number' ? usage.completion_tokens : null;
-    const totalTokens = typeof usage?.total_tokens === 'number' ? usage.total_tokens : null;
+    const promptTokens =
+      typeof usage?.prompt_tokens === 'number' ? usage.prompt_tokens : null;
+    const completionTokens =
+      typeof usage?.completion_tokens === 'number'
+        ? usage.completion_tokens
+        : null;
+    const totalTokens =
+      typeof usage?.total_tokens === 'number' ? usage.total_tokens : null;
     const costUsd = computeCostUsd({
       promptTokens,
       completionTokens,
@@ -314,7 +365,7 @@ export class AiService {
       cost_usd: costUsd,
       latency_ms: latencyMs,
       request_json: dto as any,
-      response_json: parsed as any,
+      response_json: parsed,
       status: 'ok',
     });
 
@@ -326,7 +377,11 @@ export class AiService {
     return v || null;
   }
 
-  private async runRole(role: string, rolePrompt: string, meta: { global_user_id: string | null; input: any }) {
+  private async runRole(
+    role: string,
+    rolePrompt: string,
+    meta: { global_user_id: string | null; input: any },
+  ) {
     const mockMode = String(process.env.AI_MOCK_MODE || '').trim() === 'true';
     const model = this.resolveModelForRole(role);
     const baseUrl = String(process.env.AI_BASE_URL || '').trim() || null;
@@ -338,7 +393,7 @@ export class AiService {
         role,
         model: model || 'mock',
         provider_base_url: baseUrl,
-        request_json: meta.input as any,
+        request_json: meta.input,
         response_json: out as any,
         status: 'mock',
       });
@@ -346,7 +401,9 @@ export class AiService {
     }
 
     const apiKey = String(process.env.AI_API_KEY || '').trim();
-    const chatPath = String(process.env.AI_CHAT_COMPLETIONS_PATH || '/v1/chat/completions').trim();
+    const chatPath = String(
+      process.env.AI_CHAT_COMPLETIONS_PATH || '/v1/chat/completions',
+    ).trim();
     if (!apiKey) throw new BadRequestException('AI_API_KEY 未配置');
     if (!baseUrl) throw new BadRequestException('AI_BASE_URL 未配置');
 
@@ -357,7 +414,10 @@ export class AiService {
 
     const messages: ChatMessage[] = [
       { role: 'system', content: GENERAL_RULES },
-      { role: 'system', content: '严格只输出一个 JSON 对象，不要输出任何额外文本。' },
+      {
+        role: 'system',
+        content: '严格只输出一个 JSON 对象，不要输出任何额外文本。',
+      },
       { role: 'user', content: rolePrompt },
     ];
 
@@ -373,13 +433,27 @@ export class AiService {
     });
     const latencyMs = Date.now() - t0;
 
-    const assistantText = String(res?.choices?.[0]?.message?.content || '').trim();
-    const parsed = await this.parseJsonWithRetry({ baseUrl, chatPath, apiKey, model, messages, assistantText });
+    const assistantText = String(
+      res?.choices?.[0]?.message?.content || '',
+    ).trim();
+    const parsed = await this.parseJsonWithRetry({
+      baseUrl,
+      chatPath,
+      apiKey,
+      model,
+      messages,
+      assistantText,
+    });
 
     const usage = res?.usage || null;
-    const promptTokens = typeof usage?.prompt_tokens === 'number' ? usage.prompt_tokens : null;
-    const completionTokens = typeof usage?.completion_tokens === 'number' ? usage.completion_tokens : null;
-    const totalTokens = typeof usage?.total_tokens === 'number' ? usage.total_tokens : null;
+    const promptTokens =
+      typeof usage?.prompt_tokens === 'number' ? usage.prompt_tokens : null;
+    const completionTokens =
+      typeof usage?.completion_tokens === 'number'
+        ? usage.completion_tokens
+        : null;
+    const totalTokens =
+      typeof usage?.total_tokens === 'number' ? usage.total_tokens : null;
     const costUsd = computeCostUsd({
       promptTokens,
       completionTokens,
@@ -397,8 +471,8 @@ export class AiService {
       total_tokens: totalTokens,
       cost_usd: costUsd,
       latency_ms: latencyMs,
-      request_json: meta.input as any,
-      response_json: parsed as any,
+      request_json: meta.input,
+      response_json: parsed,
       status: 'ok',
     });
 
@@ -430,11 +504,19 @@ export class AiService {
     );
   }
 
-  private buildRecommendQuery(params: { userProfile: any; recentActions: any; lastResult: any }) {
+  private buildRecommendQuery(params: {
+    userProfile: any;
+    recentActions: any;
+    lastResult: any;
+  }) {
     const pet = String(params.userProfile?.pet_type || '').trim();
     const spend = String(params.userProfile?.spend_level || '').trim();
-    const tags = Array.isArray(params.userProfile?.tags) ? params.userProfile.tags : [];
-    const acts = Array.isArray(params.recentActions) ? params.recentActions : [];
+    const tags = Array.isArray(params.userProfile?.tags)
+      ? params.userProfile.tags
+      : [];
+    const acts = Array.isArray(params.recentActions)
+      ? params.recentActions
+      : [];
     const last = params.lastResult ?? {};
     const parts = [
       pet ? `pet_type=${pet}` : null,
@@ -446,10 +528,16 @@ export class AiService {
     return parts.join('\n');
   }
 
-  private buildRecommendDocuments(params: { candidateProducts: any[]; candidateEntries: any[] }) {
-    const docs: Array<{ id: string; type: string; text: string; raw: any }> = [];
+  private buildRecommendDocuments(params: {
+    candidateProducts: any[];
+    candidateEntries: any[];
+  }) {
+    const docs: Array<{ id: string; type: string; text: string; raw: any }> =
+      [];
     for (const p of params.candidateProducts) {
-      const id = String(p?.id || p?.sku || p?.product_id || '').trim() || `p_${docs.length}`;
+      const id =
+        String(p?.id || p?.sku || p?.product_id || '').trim() ||
+        `p_${docs.length}`;
       const title = String(p?.title || p?.name || '').trim();
       const category = String(p?.category || '').trim();
       const price = p?.price != null ? String(p.price) : '';
@@ -458,7 +546,9 @@ export class AiService {
     }
     for (const e of params.candidateEntries) {
       const raw = typeof e === 'string' ? { action: e } : e;
-      const action = String(raw?.action || raw?.id || raw?.key || '').trim() || String(e).trim();
+      const action =
+        String(raw?.action || raw?.id || raw?.key || '').trim() ||
+        String(e).trim();
       const id = action || `entry_${docs.length}`;
       const text = `type=entry\naction=${action}\nraw=${toJsonString(raw)}`;
       docs.push({ id, type: 'entry', text, raw });
@@ -471,16 +561,30 @@ export class AiService {
     docs: Array<{ id: string; type: string; text: string; raw: any }>;
     req: any;
   }) {
-    const topK = Math.min(200, Math.max(5, Number(process.env.AI_RECOMMEND_TOPK || 20)));
-    const batchSize = Math.min(64, Math.max(4, Number(process.env.AI_EMBED_BATCH_SIZE || 32)));
+    const topK = Math.min(
+      200,
+      Math.max(5, Number(process.env.AI_RECOMMEND_TOPK || 20)),
+    );
+    const batchSize = Math.min(
+      64,
+      Math.max(4, Number(process.env.AI_EMBED_BATCH_SIZE || 32)),
+    );
 
-    const queryEmb = await this.embedTexts([params.query], params.req, 'recommend_embed_query');
+    const queryEmb = await this.embedTexts(
+      [params.query],
+      params.req,
+      'recommend_embed_query',
+    );
     const qv = queryEmb[0] || [];
 
     const docVecs: number[][] = [];
     for (let i = 0; i < params.docs.length; i += batchSize) {
       const batch = params.docs.slice(i, i + batchSize).map((d) => d.text);
-      const vecs = await this.embedTexts(batch, params.req, 'recommend_embed_docs');
+      const vecs = await this.embedTexts(
+        batch,
+        params.req,
+        'recommend_embed_docs',
+      );
       for (const v of vecs) docVecs.push(v);
     }
 
@@ -521,11 +625,15 @@ export class AiService {
   private async embedTexts(texts: string[], req: any, role: string) {
     const baseUrl = String(process.env.AI_BASE_URL || '').trim();
     const apiKey = String(process.env.AI_API_KEY || '').trim();
-    const path = String(process.env.AI_EMBEDDINGS_PATH || '/v1/embeddings').trim();
+    const path = String(
+      process.env.AI_EMBEDDINGS_PATH || '/v1/embeddings',
+    ).trim();
     const model = String(process.env.AI_EMBED_MODEL || '').trim();
-    if (!baseUrl || !apiKey || !model) throw new BadRequestException('Embedding 配置不完整');
+    if (!baseUrl || !apiKey || !model)
+      throw new BadRequestException('Embedding 配置不完整');
 
-    const url = baseUrl.replace(/\/$/, '') + (path.startsWith('/') ? path : `/${path}`);
+    const url =
+      baseUrl.replace(/\/$/, '') + (path.startsWith('/') ? path : `/${path}`);
     const t0 = Date.now();
     const response = await axios.post(
       url,
@@ -541,7 +649,9 @@ export class AiService {
     const latencyMs = Date.now() - t0;
     const data = response.data;
     const arr = Array.isArray(data?.data) ? data.data : [];
-    const vecs = arr.map((x: any) => (Array.isArray(x?.embedding) ? x.embedding.map((n: any) => Number(n)) : []));
+    const vecs = arr.map((x: any) =>
+      Array.isArray(x?.embedding) ? x.embedding.map((n: any) => Number(n)) : [],
+    );
 
     await this.callLogStore.insert({
       global_user_id: this.extractGlobalUserId(req),
@@ -557,19 +667,28 @@ export class AiService {
     return vecs;
   }
 
-  private async rerank(params: { query: string; documents: string[]; req: any }) {
+  private async rerank(params: {
+    query: string;
+    documents: string[];
+    req: any;
+  }) {
     const baseUrl = String(process.env.AI_BASE_URL || '').trim();
     const apiKey = String(process.env.AI_API_KEY || '').trim();
     const path = String(process.env.AI_RERANK_PATH || '').trim();
     const model = String(process.env.AI_RERANK_MODEL || '').trim();
-    if (!baseUrl || !apiKey || !path || !model) throw new BadRequestException('Rerank 配置不完整');
+    if (!baseUrl || !apiKey || !path || !model)
+      throw new BadRequestException('Rerank 配置不完整');
 
     const topN = Math.min(
       params.documents.length,
-      Math.max(1, Number(process.env.AI_RERANK_TOP_N || params.documents.length)),
+      Math.max(
+        1,
+        Number(process.env.AI_RERANK_TOP_N || params.documents.length),
+      ),
     );
 
-    const url = baseUrl.replace(/\/$/, '') + (path.startsWith('/') ? path : `/${path}`);
+    const url =
+      baseUrl.replace(/\/$/, '') + (path.startsWith('/') ? path : `/${path}`);
     const t0 = Date.now();
     const response = await axios.post(
       url,
@@ -585,13 +704,22 @@ export class AiService {
     const latencyMs = Date.now() - t0;
     const data = response.data;
 
-    const resultsRaw =
-      Array.isArray(data?.data) ? data.data : Array.isArray(data?.results) ? data.results : Array.isArray(data) ? data : [];
+    const resultsRaw = Array.isArray(data?.data)
+      ? data.data
+      : Array.isArray(data?.results)
+        ? data.results
+        : Array.isArray(data)
+          ? data
+          : [];
     const results = resultsRaw
       .map((x: any) => {
         const index = Number(x?.index ?? x?.document_index ?? x?.documentIndex);
-        const score = Number(x?.relevance_score ?? x?.score ?? x?.relevanceScore);
-        return Number.isFinite(index) ? { index, score: Number.isFinite(score) ? score : 0 } : null;
+        const score = Number(
+          x?.relevance_score ?? x?.score ?? x?.relevanceScore,
+        );
+        return Number.isFinite(index)
+          ? { index, score: Number.isFinite(score) ? score : 0 }
+          : null;
       })
       .filter(Boolean) as Array<{ index: number; score: number }>;
 
@@ -617,15 +745,27 @@ export class AiService {
     const userBehavior = dto.user_behavior ?? {};
     const walletLogs = dto.wallet_logs ?? [];
     const clawPlays = dto.claw_plays ?? [];
-    const enable = String(process.env.AI_ENABLE_PII_REDACTION || '').trim() !== 'false';
-    if (!enable) return { user_behavior: userBehavior, wallet_logs: walletLogs, claw_plays: clawPlays };
+    const enable =
+      String(process.env.AI_ENABLE_PII_REDACTION || '').trim() !== 'false';
+    if (!enable)
+      return {
+        user_behavior: userBehavior,
+        wallet_logs: walletLogs,
+        claw_plays: clawPlays,
+      };
 
-    const raw = toJsonString({ user_behavior: userBehavior, wallet_logs: walletLogs, claw_plays: clawPlays });
+    const raw = toJsonString({
+      user_behavior: userBehavior,
+      wallet_logs: walletLogs,
+      claw_plays: clawPlays,
+    });
     const redactedText = redactTextBasic(raw);
     await this.callLogStore.insert({
       global_user_id: this.extractGlobalUserId(req),
       role: 'pii_redact',
-      model: String(process.env.AI_PII_MODEL || 'basic_redact').trim() || 'basic_redact',
+      model:
+        String(process.env.AI_PII_MODEL || 'basic_redact').trim() ||
+        'basic_redact',
       provider_base_url: String(process.env.AI_BASE_URL || '').trim() || null,
       request_json: { size: raw.length },
       response_json: { size: redactedText.length },
@@ -650,7 +790,9 @@ export class AiService {
     maxTokens: number;
     temperature: number;
   }) {
-    const url = params.baseUrl.replace(/\/$/, '') + (params.path.startsWith('/') ? params.path : `/${params.path}`);
+    const url =
+      params.baseUrl.replace(/\/$/, '') +
+      (params.path.startsWith('/') ? params.path : `/${params.path}`);
     const response = await axios.post(
       url,
       {
@@ -696,7 +838,8 @@ export class AiService {
       },
       {
         role: 'user',
-        content: '把上面的输出修复成一个可被 JSON.parse 解析的 JSON 对象，只输出 JSON。',
+        content:
+          '把上面的输出修复成一个可被 JSON.parse 解析的 JSON 对象，只输出 JSON。',
       },
     ];
 
@@ -724,7 +867,8 @@ export class AiService {
   private mock(role: string, input: any) {
     if (role === 'support_ai') {
       return {
-        reply_text: '🎁 抽奖只需3积分（约$1.5）。你现在最优动作：继续抽奖提高中奖概率。',
+        reply_text:
+          '🎁 抽奖只需3积分（约$1.5）。你现在最优动作：继续抽奖提高中奖概率。',
         buttons: [
           { text: '继续抽奖', action: 'claw' },
           { text: '查看商城', action: 'shop' },
@@ -737,7 +881,11 @@ export class AiService {
 
     if (role === 'growth_ai') {
       return {
-        video_script: { hook: '1.5美元抽到50美元宠物用品？', content: '展示中奖+低成本+限时', cta: '点进Bot马上抽', },
+        video_script: {
+          hook: '1.5美元抽到50美元宠物用品？',
+          content: '展示中奖+低成本+限时',
+          cta: '点进Bot马上抽',
+        },
         viral_copy: '1.5美元抽盲盒，真的能中宠物用品。拉1个好友一起试试！',
         push_message: '你的3积分还没用掉：点这里继续抽一次，中奖概率更高。',
         strategy: '用低门槛中奖案例驱动点击与进入Bot。',
@@ -752,8 +900,17 @@ export class AiService {
           { level: 'epic', ratio: 0.09, avg_cost: 2 },
           { level: 'legendary', ratio: 0.01, avg_cost: 3 },
         ],
-        probability_config: { common: 0.6, rare: 0.3, epic: 0.09, legendary: 0.01 },
-        profit_estimate: { cost_per_draw: 0.93, revenue_per_draw: 1.5, profit_rate: 0.38 },
+        probability_config: {
+          common: 0.6,
+          rare: 0.3,
+          epic: 0.09,
+          legendary: 0.01,
+        },
+        profit_estimate: {
+          cost_per_draw: 0.93,
+          revenue_per_draw: 1.5,
+          profit_rate: 0.38,
+        },
         risk_notes: '需要限制 legendary 连续出奖；注意库存低时降权。',
         adjustment: '把 epic 上限控制在 10% 内，legendary <= 1%。',
       };
@@ -768,7 +925,10 @@ export class AiService {
           { action: 'legendary 概率下调 2%', priority: 'high' },
           { action: '回收比例上调 5%', priority: 'high' },
         ],
-        parameter_adjustment: { claw_probability_adjustment: '↓', recycle_ratio_adjustment: '↑' },
+        parameter_adjustment: {
+          claw_probability_adjustment: '↓',
+          recycle_ratio_adjustment: '↑',
+        },
       };
     }
 
@@ -786,10 +946,15 @@ export class AiService {
       return {
         next_action: 'claw',
         recommendations: [
-          { type: 'product', reason: '与最近奖品品类匹配，提升客单', priority: 'high' },
+          {
+            type: 'product',
+            reason: '与最近奖品品类匹配，提升客单',
+            priority: 'high',
+          },
           { type: 'service', reason: '高情绪场景时提升转化', priority: 'mid' },
         ],
-        message: '你刚抽到了相关奖品，建议继续抽一次提高出奖档位，同时看看匹配的商品。',
+        message:
+          '你刚抽到了相关奖品，建议继续抽一次提高出奖档位，同时看看匹配的商品。',
       };
     }
 

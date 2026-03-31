@@ -9,14 +9,14 @@ export function UserShowPage() {
   const navigate = useNavigate()
   const userId = String(id || '')
 
-  const { data, isLoading, refetch } = useCustom({
+  const { result, query } = useCustom({
     url: `/users/${encodeURIComponent(userId)}`,
     method: 'get',
-  })
+  } as any)
 
   const { mutateAsync } = useCustomMutation()
 
-  const user = useMemo(() => (data as any)?.data || null, [data])
+  const user = useMemo(() => (result as any)?.data || null, [result])
 
   const toggle = async (next: 'freeze' | 'unfreeze') => {
     const ok = await new Promise<boolean>((resolve) => {
@@ -32,7 +32,7 @@ export function UserShowPage() {
     if (!ok) return
     await mutateAsync({ url: `/users/${encodeURIComponent(userId)}/${next}`, method: 'post', values: {} })
     message.success(next === 'freeze' ? '已冻结' : '已解冻')
-    await refetch()
+    await query.refetch()
   }
 
   const status = String(user?.status || '-')
@@ -56,7 +56,7 @@ export function UserShowPage() {
         </Space>
       }
     >
-      <Card loading={isLoading} title="用户详情">
+      <Card loading={query.isFetching} title="用户详情">
         <Descriptions column={2} size="middle">
           <Descriptions.Item label="Global User ID">{user?.global_user_id || userId}</Descriptions.Item>
           <Descriptions.Item label="Telegram ID">{user?.telegram_id ?? '-'}</Descriptions.Item>

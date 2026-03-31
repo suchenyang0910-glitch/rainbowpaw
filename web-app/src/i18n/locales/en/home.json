@@ -1,0 +1,146 @@
+{
+  "seo": {
+    "title": "RainbowPaw | Pet Memorial & Cremation Services",
+    "description": "RainbowPaw provides respectful pet memorial and cremation services. We help families say goodbye with dignity and love.",
+    "keywords": "RainbowPaw, pet memorial, pet cremation, memorial keepsakes, Phnom Penh, Cambodia"
+  },
+  "site": {
+    "serviceCity": "Phnom Penh"
+  },
+  "lang": {
+    "label": "Language",
+    "native": "English"
+  },
+  "nav": {
+    "home": "Home",
+    "services": "Services",
+    "packages": "Packages",
+    "shop": "Shop",
+    "memorial": "Memorial",
+    "contact": "Contact",
+    "chatTelegram": "Chat on Telegram"
+  },
+  "hero": {
+    "pill": "Every Paw Leaves a Rainbow",
+    "title": "A Peaceful Farewell for Your Beloved Pet",
+    "lead": "RainbowPaw provides respectful pet memorial and cremation services. We help families say goodbye with dignity and love.",
+    "microTrust": "Pickup within 1 hour in {city}",
+    "bookService": "Book Service",
+    "compassionateTitle": "Compassionate Care",
+    "compassionateDesc": "Giving them the respect they deserve."
+  },
+  "services": {
+    "title": "Our Services",
+    "pickupTitle": "Pet Pickup",
+    "pickupDesc": "We provide respectful pickup service for your beloved pet.",
+    "cremationTitle": "Private Cremation",
+    "cremationDesc": "Your pet will be cremated individually with dignity and care.",
+    "keepsakesTitle": "Memorial Keepsakes",
+    "keepsakesDesc": "Keep your pet’s memory forever with personalized memorial items."
+  },
+  "packages": {
+    "title": "Service Packages",
+    "subtitle": "Final pricing may vary by pet weight, pickup location, and special requests.",
+    "badgePopular": "Most Popular",
+    "selectPlan": "Select Plan",
+    "items": [
+      {
+        "name": "Basic Package",
+        "price": "From $49",
+        "features": ["Drop-off to service point", "Group cremation", "Digital memorial"],
+        "highlight": false
+      },
+      {
+        "name": "Standard Package",
+        "price": "From $129",
+        "features": ["Pet pickup", "Private cremation", "Basic urn", "Paw print"],
+        "highlight": true
+      },
+      {
+        "name": "Premium Package",
+        "price": "From $249",
+        "features": ["Pet pickup", "Private cremation", "Memorial ceremony", "Premium urn", "Paw print", "Memorial photo"],
+        "highlight": false
+      },
+      {
+        "name": "Ceremony Package",
+        "price": "From $399",
+        "features": ["Pet hearse pickup", "Memorial ceremony", "Private cremation", "Memorial video", "Ash jewelry"],
+        "highlight": false
+      }
+    ]
+  },
+  "why": {
+    "title": "Why Families Choose RainbowPaw",
+    "desc": "We understand pets are family. Our mission is to support people through one of life’s hardest moments.",
+    "reasons": ["Compassionate care", "Transparent process", "Respectful farewell", "Trusted by pet owners"],
+    "stat": "Over 5,000+ Pets Honored with Love"
+  },
+  "shop": {
+    "title": "Memorial Shop",
+    "subtitle": "Products and services come from the supply side (merchant onboarding → listing → ordering → fulfillment → reviews).",
+    "phonePlaceholder": "Enter phone number for orders and lookup",
+    "openMiniApp": "Open Mini App",
+    "loading": "Loading...",
+    "serviceMatch": "Match me (platform assigned)",
+    "orderNow": "Order now",
+    "enterMarketplace": "Enter marketplace",
+    "askCatalog": "Ask for shop catalog",
+    "errors": {
+      "loadFailed": "Failed to load",
+      "phoneRequired": "Phone number is required",
+      "orderFailed": "Order failed",
+      "submitFailed": "Submit failed"
+    },
+    "messages": {
+      "orderCreated": "Order created: {orderId}",
+      "matchCreated": "Match request submitted: {orderId}"
+    }
+  },
+  "memorial": {
+    "title": "Online Memorial",
+    "subtitle": "Online memorial, online tribute, and shared memories — staying close to every remembrance.",
+    "items": [
+      { "id": "m1", "name": "Cloud Memorial Hall (Annual)", "price": 99, "desc": "Memorial page, anniversary reminders, and messages from family & friends." },
+      { "id": "m2", "name": "Tribute Lantern (30 days)", "price": 29, "desc": "Light a lantern with warm wishes for 30 days." },
+      { "id": "m3", "name": "Shared Photo Album", "price": 59, "desc": "Invite friends and family to upload photos and stories." }
+    ],
+    "pets": [
+      { "name": "Bella", "years": "2015 – 2024", "phrase": "Forever Loved" },
+      { "name": "Max", "years": "2012 – 2023", "phrase": "Run Free" },
+      { "name": "Luna", "years": "2018 – 2024", "phrase": "Always in our hearts" },
+      { "name": "Cooper", "years": "2010 – 2024", "phrase": "Best Friend" }
+    ]
+  },
+  "telegramAuth": {
+    "title": "Telegram Login",
+    "subtitle": "Supports both pet owners and merchants. Merchants can enter the merchant portal.",
+    "telegramId": "Telegram ID",
+    "nicknameOptional": "Nickname (optional)",
+    "roleOwner": "Pet owner",
+    "roleMerchant": "Merchant",
+    "authorize": "Authorize",
+    "enterMerchant": "Go to merchant portal",
+    "errors": {
+      "telegramIdRequired": "Telegram ID is required",
+      "authFailed": "Authorization failed"
+    },
+    "messages": {
+      "approved": "Telegram authorized",
+      "pending": "Merchant application submitted. Please wait for approval."
+    }
+  },
+  "contact": {
+    "title": "Need Help Saying Goodbye?",
+    "desc": "We are here for you 24/7. Contact us anytime for support and service booking.",
+    "bookService": "Book a Service",
+    "chatTelegram": "Chat on Telegram"
+  },
+  "footer": {
+    "telegram": "Telegram: @RainbowPawBot",
+    "phone": "Phone: +855 00 000 000",
+    "email": "Email: hello@rainbowpaw.com",
+    "serviceArea": "Service area: {city}",
+    "languageNote": "Language: {lang}"
+  }
+}

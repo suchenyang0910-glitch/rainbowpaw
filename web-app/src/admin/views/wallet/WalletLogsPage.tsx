@@ -24,13 +24,9 @@ export function WalletLogsPage() {
     [query],
   )
 
-  const { data, isLoading } = useCustom({
-    url: '/wallet/logs',
-    method: 'get',
-    query: params,
-  })
+  const { result, query: logsQuery } = useCustom({ url: '/wallet/logs', method: 'get', query: params } as any)
 
-  const payload = (data as any)?.data || { items: [], total: 0, current: query.current, pageSize: query.pageSize }
+  const payload = (result as any)?.data || { items: [], total: 0, current: query.current, pageSize: query.pageSize }
 
   return (
     <Space direction="vertical" style={{ width: '100%' }} size="middle">
@@ -77,7 +73,7 @@ export function WalletLogsPage() {
       </Card>
 
       <Table
-        loading={isLoading}
+        loading={logsQuery.isFetching}
         dataSource={Array.isArray(payload.items) ? payload.items : []}
         rowKey="id"
         pagination={{
@@ -102,4 +98,3 @@ export function WalletLogsPage() {
     </Space>
   )
 }
-

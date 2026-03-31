@@ -38,4 +38,3 @@ export class DbCallLogStore implements CallLogStore {
     return Number(rows?.[0]?.s || 0);
   }
 }
-

@@ -8,8 +8,9 @@ export class InternalAuthGuard implements CanActivate {
 
     const req = context.switchToHttp().getRequest();
     const auth = String(req.headers?.authorization || '');
-    const token = auth.startsWith('Bearer ') ? auth.slice('Bearer '.length) : '';
+    const token = auth.startsWith('Bearer ')
+      ? auth.slice('Bearer '.length)
+      : '';
     return token === required;
   }
 }
-

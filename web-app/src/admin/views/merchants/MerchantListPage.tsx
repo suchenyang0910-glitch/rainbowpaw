@@ -3,7 +3,7 @@ import { CanAccess, useCustomMutation } from '@refinedev/core'
 import { Button, Modal, Space, Table, Tag, message } from 'antd'
 
 export function MerchantListPage() {
-  const { tableProps, tableQueryResult } = useTable({ resource: 'merchants' })
+  const { tableProps, tableQuery } = useTable({ resource: 'merchants' })
   const { mutateAsync } = useCustomMutation()
 
   const act = async (id: string, action: 'approve' | 'reject' | 'suspend') => {
@@ -20,7 +20,7 @@ export function MerchantListPage() {
     if (!ok) return
     await mutateAsync({ url: `/merchants/${encodeURIComponent(id)}/${action}`, method: 'post', values: {} })
     message.success('操作成功')
-    await tableQueryResult.refetch()
+    await tableQuery.refetch()
   }
 
   return (

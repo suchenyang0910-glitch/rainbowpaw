@@ -8,4 +8,3 @@ export class VisionAnalyzeDto {
   @IsString()
   task?: string;
 }
-

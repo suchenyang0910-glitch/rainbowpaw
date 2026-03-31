@@ -13,4 +13,3 @@ export class ProductOptimizeDto {
   @IsOptional()
   user_preference?: any;
 }
-

@@ -1,7 +1,11 @@
 import { DynamicModule, Global, Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AiCallLogEntity } from '../ai/entities/ai-call-log.entity';
-import { CALL_LOG_STORE, DbCallLogStore, NoopCallLogStore } from './call-log.store';
+import {
+  CALL_LOG_STORE,
+  DbCallLogStore,
+  NoopCallLogStore,
+} from './call-log.store';
 
 @Global()
 @Module({})
@@ -18,7 +22,10 @@ export class CallLogModule {
     return {
       module: CallLogModule,
       imports: [TypeOrmModule.forFeature([AiCallLogEntity])],
-      providers: [DbCallLogStore, { provide: CALL_LOG_STORE, useExisting: DbCallLogStore }],
+      providers: [
+        DbCallLogStore,
+        { provide: CALL_LOG_STORE, useExisting: DbCallLogStore },
+      ],
       exports: [CALL_LOG_STORE],
     };
   }

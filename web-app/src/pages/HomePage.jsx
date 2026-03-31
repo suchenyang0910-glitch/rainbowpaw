@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import {
   Heart,
   MessageCircle,
@@ -15,50 +16,31 @@ import {
 import { apiFetch } from '../api/client.js'
 import SafeImage from '../components/SafeImage.jsx'
 import { applySeo } from '../seo.js'
+import {
+  DEFAULT_LOCALE,
+  SUPPORTED_LOCALES,
+  getLocaleNativeName,
+  getMessages,
+  localeToApiLang,
+  localeToHreflang,
+  localeToOgLocale,
+  replaceLocaleInPath,
+  setLocalePreference,
+  t,
+} from '../i18n/index.js'
 
 const TELEGRAM_URL = 'https://t.me/RainbowPawBot'
-const SERVICE_CITY = 'Phnom Penh'
-const LANGUAGES = ['EN', 'KH', 'ZH']
+const SERVICE_CITY_QUERY = 'Phnom Penh'
 const LOGO_SRC = '/logo.png'
 
-const PACKAGES = [
-  {
-    name: 'Basic Package',
-    price: 'From $49',
-    features: ['Drop-off to service point', 'Group cremation', 'Digital memorial'],
-    highlight: false,
-  },
-  {
-    name: 'Standard Package',
-    price: 'From $129',
-    features: ['Pet pickup', 'Private cremation', 'Basic urn', 'Paw print'],
-    highlight: true,
-  },
-  {
-    name: 'Premium Package',
-    price: 'From $249',
-    features: ['Pet pickup', 'Private cremation', 'Memorial ceremony', 'Premium urn', 'Paw print', 'Memorial photo'],
-    highlight: false,
-  },
-  {
-    name: 'Ceremony Package',
-    price: 'From $399',
-    features: ['Pet hearse pickup', 'Memorial ceremony', 'Private cremation', 'Memorial video', 'Ash jewelry'],
-    highlight: false,
-  },
-]
+export default function HomePage({ locale: localeProp }) {
+  const location = useLocation()
+  const navigate = useNavigate()
+  const locale = SUPPORTED_LOCALES.includes(localeProp) ? localeProp : DEFAULT_LOCALE
+  const msg = useMemo(() => getMessages(locale), [locale])
 
-const MEMORIAL_PETS = [
-  { name: 'Bella', years: '2015 – 2024', phrase: 'Forever Loved' },
-  { name: 'Max', years: '2012 – 2023', phrase: 'Run Free' },
-  { name: 'Luna', years: '2018 – 2024', phrase: 'Always in our hearts' },
-  { name: 'Cooper', years: '2010 – 2024', phrase: 'Best Friend' },
-]
-
-export default function HomePage() {
   const [isMenuOpen, setIsMenuOpen] = useState(false)
   const [scrolled, setScrolled] = useState(false)
-  const [language, setLanguage] = useState('EN')
   const [shopLoading, setShopLoading] = useState(false)
   const [shopError, setShopError] = useState('')
   const [shopProducts, setShopProducts] = useState([])
@@ -71,21 +53,37 @@ export default function HomePage() {
   const [submitting, setSubmitting] = useState(false)
 
   useEffect(() => {
+    setLocalePreference(locale)
+
+    const alternates = SUPPORTED_LOCALES.map((l) => ({
+      hreflang: localeToHreflang(l),
+      href: `/${l}`,
+    }))
+    alternates.push({ hreflang: 'x-default', href: `/${DEFAULT_LOCALE}` })
+
     applySeo({
-      title: 'RainbowPaw | Pet Memorial & Cremation Services',
-      description: 'RainbowPaw provides respectful pet memorial and cremation services. We help families say goodbye with dignity and love.',
-      keywords: 'RainbowPaw, pet memorial, pet cremation, memorial keepsakes, Phnom Penh, Cambodia, 宠物善终, 宠物火化, 宠物纪念, 金边',
-      canonicalPath: '/',
+      title: t(locale, 'seo.title'),
+      description: t(locale, 'seo.description'),
+      keywords: t(locale, 'seo.keywords'),
+      canonicalPath: `/${locale}`,
       ogType: 'website',
       ogImagePath: '/logo.png',
+      htmlLang: localeToHreflang(locale),
+      ogLocale: localeToOgLocale(locale),
+      alternates,
     })
-  }, [])
+  }, [locale])
+
+  useEffect(() => {
+    const items = Array.isArray(msg?.memorial?.items) ? msg.memorial.items : []
+    setMemorialItems(items)
+  }, [msg])
 
   useEffect(() => {
     const handleScroll = () => setScrolled(window.scrollY > 24)
     window.addEventListener('scroll', handleScroll)
     return () => window.removeEventListener('scroll', handleScroll)
-  }, [])
+  }, [locale])
 
   useEffect(() => {
     let cancelled = false
@@ -95,19 +93,14 @@ export default function HomePage() {
       try {
         const [products, services] = await Promise.all([
           apiFetch('/marketplace/products'),
-          apiFetch(`/marketplace/services?city=${encodeURIComponent(SERVICE_CITY)}&category=${encodeURIComponent('cremation')}`),
+          apiFetch(`/marketplace/services?city=${encodeURIComponent(SERVICE_CITY_QUERY)}&category=${encodeURIComponent('cremation')}`),
         ])
         if (cancelled) return
         setShopProducts(Array.isArray(products?.items) ? products.items.slice(0, 6) : [])
         setShopServices(Array.isArray(services?.items) ? services.items.slice(0, 3) : [])
-        setMemorialItems([
-          { id: 'm1', name: '云端纪念馆（年度）', price: 99, desc: '支持追思页、纪念日提醒、亲友留言。' },
-          { id: 'm2', name: '在线祭拜灯牌（30天）', price: 29, desc: '支持点灯祈福与温暖寄语。' },
-          { id: 'm3', name: '亲友共创相册', price: 59, desc: '多人上传照片与回忆故事。' },
-        ])
       } catch (e) {
         if (cancelled) return
-        setShopError(e?.message || '加载失败')
+        setShopError(e?.message || t(locale, 'shop.errors.loadFailed'))
       } finally {
         if (!cancelled) setShopLoading(false)
       }
@@ -116,7 +109,7 @@ export default function HomePage() {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [locale])
 
   const createProductOrder = async (productId) => {
     if (submitting) return
@@ -125,7 +118,7 @@ export default function HomePage() {
     setShopError('')
     const phone = shopPhone.trim()
     if (!phone) {
-      setShopError('请输入手机号')
+      setShopError(t(locale, 'shop.errors.phoneRequired'))
       setSubmitting(false)
       return
     }
@@ -135,14 +128,14 @@ export default function HomePage() {
         body: {
           order_type: 'product',
           phone,
-          city: SERVICE_CITY,
+          city: SERVICE_CITY_QUERY,
           conversation_channel: 'web',
           product_items: [{ product_id: productId, quantity: 1 }],
         },
       })
-      setShopOrderMsg(`下单成功：${created.order_id}`)
+      setShopOrderMsg(t(locale, 'shop.messages.orderCreated', { orderId: created.order_id }))
     } catch (e) {
-      setShopError(e?.message || '下单失败')
+      setShopError(e?.message || t(locale, 'shop.errors.orderFailed'))
     } finally {
       setSubmitting(false)
     }
@@ -155,7 +148,7 @@ export default function HomePage() {
     setShopError('')
     const phone = shopPhone.trim()
     if (!phone) {
-      setShopError('请输入手机号')
+      setShopError(t(locale, 'shop.errors.phoneRequired'))
       setSubmitting(false)
       return
     }
@@ -167,14 +160,14 @@ export default function HomePage() {
           match_mode: 'platform',
           category: 'cremation',
           phone,
-          city: SERVICE_CITY,
-          pickup_address: SERVICE_CITY,
+          city: SERVICE_CITY_QUERY,
+          pickup_address: SERVICE_CITY_QUERY,
           conversation_channel: 'web',
         },
       })
-      setShopOrderMsg(`撮合申请已提交：${created.order_id}`)
+      setShopOrderMsg(t(locale, 'shop.messages.matchCreated', { orderId: created.order_id }))
     } catch (e) {
-      setShopError(e?.message || '提交失败')
+      setShopError(e?.message || t(locale, 'shop.errors.submitFailed'))
     } finally {
       setSubmitting(false)
     }
@@ -184,7 +177,7 @@ export default function HomePage() {
     setShopError('')
     setShopOrderMsg('')
     if (!telegramUser.telegram_id.trim()) {
-      setShopError('请输入 Telegram ID')
+      setShopError(t(locale, 'telegramAuth.errors.telegramIdRequired'))
       return
     }
     try {
@@ -195,14 +188,23 @@ export default function HomePage() {
           role: telegramUser.role,
           name: telegramUser.name || undefined,
           phone: shopPhone.trim() || undefined,
-          language: 'zh',
+          language: localeToApiLang(locale),
         },
       })
       setAuthInfo(result)
-      setShopOrderMsg(result.pending_approval ? '商家账号已提交审核，请等待通过。' : 'Telegram 授权成功')
+      setShopOrderMsg(result.pending_approval ? t(locale, 'telegramAuth.messages.pending') : t(locale, 'telegramAuth.messages.approved'))
     } catch (e) {
-      setShopError(e?.message || '授权失败')
+      setShopError(e?.message || t(locale, 'telegramAuth.errors.authFailed'))
     }
+  }
+
+  const packages = useMemo(() => (Array.isArray(msg?.packages?.items) ? msg.packages.items : []), [msg])
+  const memorialPets = useMemo(() => (Array.isArray(msg?.memorial?.pets) ? msg.memorial.pets : []), [msg])
+
+  const onSwitchLocale = (nextLocale) => {
+    const next = replaceLocaleInPath(location.pathname, nextLocale)
+    setLocalePreference(nextLocale)
+    navigate(`${next}${location.hash || ''}`)
   }
 
   return (
@@ -221,26 +223,26 @@ export default function HomePage() {
           </a>
 
           <div className="nav-links desktop-only">
-            <a href="#top">Home</a>
-            <a href="#services">Services</a>
-            <a href="#packages">Packages</a>
-            <a href="#shop">Shop</a>
-            <a href="#memorial">Memorial</a>
-            <a href="#contact">Contact</a>
-            <div className="lang-switch" role="group" aria-label="Language switch">
-              {LANGUAGES.map((lang) => (
+            <a href="#top">{t(locale, 'nav.home')}</a>
+            <a href="#services">{t(locale, 'nav.services')}</a>
+            <a href="#packages">{t(locale, 'nav.packages')}</a>
+            <a href="#shop">{t(locale, 'nav.shop')}</a>
+            <a href="#memorial">{t(locale, 'nav.memorial')}</a>
+            <a href="#contact">{t(locale, 'nav.contact')}</a>
+            <div className="lang-switch" role="group" aria-label={t(locale, 'lang.label')}>
+              {SUPPORTED_LOCALES.map((l) => (
                 <button
-                  key={lang}
+                  key={l}
                   type="button"
-                  className={`lang-btn ${language === lang ? 'active' : ''}`}
-                  onClick={() => setLanguage(lang)}
+                  className={`lang-btn ${locale === l ? 'active' : ''}`}
+                  onClick={() => onSwitchLocale(l)}
                 >
-                  {lang}
+                  {getLocaleNativeName(l)}
                 </button>
               ))}
             </div>
             <a className="btn btn-primary" href={TELEGRAM_URL} target="_blank" rel="noreferrer">
-              Chat on Telegram
+              {t(locale, 'nav.chatTelegram')}
             </a>
           </div>
 
@@ -252,32 +254,35 @@ export default function HomePage() {
         {isMenuOpen && (
           <div className="mobile-menu mobile-only">
             <a href="#top" onClick={() => setIsMenuOpen(false)}>
-              Home
+              {t(locale, 'nav.home')}
             </a>
             <a href="#services" onClick={() => setIsMenuOpen(false)}>
-              Services
+              {t(locale, 'nav.services')}
             </a>
             <a href="#packages" onClick={() => setIsMenuOpen(false)}>
-              Packages
+              {t(locale, 'nav.packages')}
             </a>
             <a href="#shop" onClick={() => setIsMenuOpen(false)}>
-              Shop
+              {t(locale, 'nav.shop')}
             </a>
             <a href="#memorial" onClick={() => setIsMenuOpen(false)}>
-              Memorial
+              {t(locale, 'nav.memorial')}
             </a>
             <a href="#contact" onClick={() => setIsMenuOpen(false)}>
-              Contact
+              {t(locale, 'nav.contact')}
             </a>
             <div className="lang-switch">
-              {LANGUAGES.map((lang) => (
+              {SUPPORTED_LOCALES.map((l) => (
                 <button
-                  key={lang}
+                  key={l}
                   type="button"
-                  className={`lang-btn ${language === lang ? 'active' : ''}`}
-                  onClick={() => setLanguage(lang)}
+                  className={`lang-btn ${locale === l ? 'active' : ''}`}
+                  onClick={() => {
+                    onSwitchLocale(l)
+                    setIsMenuOpen(false)
+                  }}
                 >
-                  {lang}
+                  {getLocaleNativeName(l)}
                 </button>
               ))}
             </div>
@@ -288,7 +293,7 @@ export default function HomePage() {
               rel="noreferrer"
               onClick={() => setIsMenuOpen(false)}
             >
-              Chat on Telegram
+              {t(locale, 'nav.chatTelegram')}
             </a>
           </div>
         )}
@@ -297,21 +302,18 @@ export default function HomePage() {
       <header id="top" className="hero">
         <div className="container hero-grid">
           <div>
-            <p className="pill">Every Paw Leaves a Rainbow</p>
-            <h1>A Peaceful Farewell for Your Beloved Pet</h1>
-            <p className="lead">
-              RainbowPaw provides respectful pet memorial and cremation services. We help families
-              say goodbye with dignity and love.
-            </p>
-            <p className="micro-trust">Pickup within 1 hour in {SERVICE_CITY}</p>
+            <p className="pill">{t(locale, 'hero.pill')}</p>
+            <h1>{t(locale, 'hero.title')}</h1>
+            <p className="lead">{t(locale, 'hero.lead')}</p>
+            <p className="micro-trust">{t(locale, 'hero.microTrust', { city: msg.site.serviceCity })}</p>
             <div className="hero-actions">
               <a className="btn btn-dark" href="#packages">
-                <span>Book Service</span>
+                <span>{t(locale, 'hero.bookService')}</span>
                 <ChevronRight size={18} />
               </a>
               <a className="btn btn-outline" href={TELEGRAM_URL} target="_blank" rel="noreferrer">
                 <MessageCircle size={18} />
-                <span>Chat on Telegram</span>
+                <span>{t(locale, 'nav.chatTelegram')}</span>
               </a>
             </div>
           </div>
@@ -329,8 +331,8 @@ export default function HomePage() {
                 height="18"
               />
               <div>
-                <strong>Compassionate Care</strong>
-                <p>Giving them the respect they deserve.</p>
+                <strong>{t(locale, 'hero.compassionateTitle')}</strong>
+                <p>{t(locale, 'hero.compassionateDesc')}</p>
               </div>
             </div>
           </div>
@@ -339,22 +341,22 @@ export default function HomePage() {
 
       <section id="services" className="section muted">
         <div className="container">
-          <h2 className="section-title">Our Services</h2>
+          <h2 className="section-title">{t(locale, 'services.title')}</h2>
           <div className="cards three">
             <article className="card">
               <MapPin className="icon" />
-              <h3>Pet Pickup</h3>
-              <p>We provide respectful pickup service for your beloved pet.</p>
+              <h3>{t(locale, 'services.pickupTitle')}</h3>
+              <p>{t(locale, 'services.pickupDesc')}</p>
             </article>
             <article className="card">
               <ShieldCheck className="icon" />
-              <h3>Private Cremation</h3>
-              <p>Your pet will be cremated individually with dignity and care.</p>
+              <h3>{t(locale, 'services.cremationTitle')}</h3>
+              <p>{t(locale, 'services.cremationDesc')}</p>
             </article>
             <article className="card">
               <Star className="icon" />
-              <h3>Memorial Keepsakes</h3>
-              <p>Keep your pet’s memory forever with personalized memorial items.</p>
+              <h3>{t(locale, 'services.keepsakesTitle')}</h3>
+              <p>{t(locale, 'services.keepsakesDesc')}</p>
             </article>
           </div>
         </div>
@@ -362,14 +364,12 @@ export default function HomePage() {
 
       <section id="packages" className="section">
         <div className="container">
-          <h2 className="section-title">Service Packages</h2>
-          <p className="section-sub">
-            Final pricing may vary by pet weight, pickup location, and special requests.
-          </p>
+          <h2 className="section-title">{t(locale, 'packages.title')}</h2>
+          <p className="section-sub">{t(locale, 'packages.subtitle')}</p>
           <div className="cards four">
-            {PACKAGES.map((pkg) => (
+            {packages.map((pkg) => (
               <article key={pkg.name} className={`card package ${pkg.highlight ? 'highlight' : ''}`}>
-                {pkg.highlight && <span className="badge">Most Popular</span>}
+                {pkg.highlight && <span className="badge">{t(locale, 'packages.badgePopular')}</span>}
                 <h3>{pkg.name}</h3>
                 <p className="price">{pkg.price}</p>
                 <ul>
@@ -381,7 +381,7 @@ export default function HomePage() {
                   ))}
                 </ul>
                 <a className={`btn ${pkg.highlight ? 'btn-primary' : 'btn-outline'}`} href={TELEGRAM_URL}>
-                  Select Plan
+                  {t(locale, 'packages.selectPlan')}
                 </a>
               </article>
             ))}
@@ -392,44 +392,36 @@ export default function HomePage() {
       <section id="why-us" className="section dark">
         <div className="container split">
           <div>
-            <h2>Why Families Choose RainbowPaw</h2>
-            <p>
-              We understand pets are family. Our mission is to support people through one of life’s
-              hardest moments.
-            </p>
+            <h2>{t(locale, 'why.title')}</h2>
+            <p>{t(locale, 'why.desc')}</p>
             <div className="reasons">
-              {[
-                'Compassionate care',
-                'Transparent process',
-                'Respectful farewell',
-                'Trusted by pet owners',
-              ].map((item) => (
+              {(Array.isArray(msg?.why?.reasons) ? msg.why.reasons : []).map((item) => (
                 <div key={item}>{item}</div>
               ))}
             </div>
           </div>
-          <div className="stat">Over 5,000+ Pets Honored with Love</div>
+          <div className="stat">{t(locale, 'why.stat')}</div>
         </div>
       </section>
 
       <section id="shop" className="section muted">
         <div className="container">
-          <h2 className="section-title">Memorial Shop</h2>
-          <p className="section-sub">商品与服务来自平台供给侧（商家入驻 → 上架 → 用户下单 → 履约 → 评价）。</p>
+          <h2 className="section-title">{t(locale, 'shop.title')}</h2>
+          <p className="section-sub">{t(locale, 'shop.subtitle')}</p>
 
           <div className="shop-form">
             <input
               className="shop-input"
-              placeholder="输入手机号，用于下单与查询"
+              placeholder={t(locale, 'shop.phonePlaceholder')}
               value={shopPhone}
               onChange={(e) => setShopPhone(e.target.value)}
             />
             <a className="btn btn-outline" href="/rainbowpaw">
-              打开 Mini App
+              {t(locale, 'shop.openMiniApp')}
             </a>
           </div>
 
-          {shopLoading && <p className="shop-hint">加载中...</p>}
+          {shopLoading && <p className="shop-hint">{t(locale, 'shop.loading')}</p>}
           {!!shopError && <p className="shop-error">{shopError}</p>}
           {!!shopOrderMsg && <p className="shop-ok">{shopOrderMsg}</p>}
 
@@ -442,7 +434,7 @@ export default function HomePage() {
                   {(svc.currency || 'USD') + ' ' + ((svc.price_cents || 0) / 100).toFixed(2)}
                 </p>
                 <button type="button" className="btn btn-dark" onClick={createServiceMatchOrder} disabled={submitting}>
-                  一键撮合（平台指派）
+                  {t(locale, 'shop.serviceMatch')}
                 </button>
               </article>
             ))}
@@ -454,7 +446,7 @@ export default function HomePage() {
                   {(p.currency || 'USD') + ' ' + ((p.price_cents || 0) / 100).toFixed(2)}
                 </p>
                 <button type="button" className="btn btn-primary" onClick={() => createProductOrder(p.id)} disabled={submitting}>
-                  立即下单
+                  {t(locale, 'shop.orderNow')}
                 </button>
               </article>
             ))}
@@ -462,10 +454,10 @@ export default function HomePage() {
 
           <div className="shop-actions">
             <a className="btn btn-outline" href="/rainbowpaw/marketplace">
-              进入商城
+              {t(locale, 'shop.enterMarketplace')}
             </a>
             <a className="btn btn-dark" href={TELEGRAM_URL} target="_blank" rel="noreferrer">
-              Ask for Shop Catalog
+              {t(locale, 'shop.askCatalog')}
             </a>
           </div>
         </div>
@@ -475,9 +467,9 @@ export default function HomePage() {
         <div className="container">
           <h2 className="section-title with-icon">
             <Camera size={24} />
-            <span>Online Memorial</span>
+            <span>{t(locale, 'memorial.title')}</span>
           </h2>
-          <p className="section-sub">在线纪念、在线祭拜、亲友共创，持续陪伴每一次想念。</p>
+          <p className="section-sub">{t(locale, 'memorial.subtitle')}</p>
           <div className="cards three">
             {memorialItems.map((item) => (
               <article key={item.id} className="card memorial">
@@ -491,7 +483,7 @@ export default function HomePage() {
             ))}
           </div>
           <div className="cards four" style={{ marginTop: '1rem' }}>
-            {MEMORIAL_PETS.map((pet) => (
+            {memorialPets.map((pet) => (
               <article key={pet.name} className="card memorial">
                 <div className="memorial-photo">
                   <Heart size={30} />
@@ -507,18 +499,18 @@ export default function HomePage() {
 
       <section className="section muted" id="telegram-auth">
         <div className="container">
-          <h2 className="section-title">Telegram 授权登录</h2>
-          <p className="section-sub">支持宠物主人与商家双身份登录，商家可直接进入商家工作台。</p>
+          <h2 className="section-title">{t(locale, 'telegramAuth.title')}</h2>
+          <p className="section-sub">{t(locale, 'telegramAuth.subtitle')}</p>
           <div className="shop-form">
             <input
               className="shop-input"
-              placeholder="Telegram ID"
+              placeholder={t(locale, 'telegramAuth.telegramId')}
               value={telegramUser.telegram_id}
               onChange={(e) => setTelegramUser((prev) => ({ ...prev, telegram_id: e.target.value }))}
             />
             <input
               className="shop-input"
-              placeholder="昵称（可选）"
+              placeholder={t(locale, 'telegramAuth.nicknameOptional')}
               value={telegramUser.name}
               onChange={(e) => setTelegramUser((prev) => ({ ...prev, name: e.target.value }))}
             />
@@ -527,17 +519,17 @@ export default function HomePage() {
               value={telegramUser.role}
               onChange={(e) => setTelegramUser((prev) => ({ ...prev, role: e.target.value }))}
             >
-              <option value="owner">宠物主人</option>
-              <option value="merchant">宠物商家</option>
+              <option value="owner">{t(locale, 'telegramAuth.roleOwner')}</option>
+              <option value="merchant">{t(locale, 'telegramAuth.roleMerchant')}</option>
             </select>
             <button className="btn btn-dark" onClick={loginWithTelegram}>
-              Telegram 授权
+              {t(locale, 'telegramAuth.authorize')}
             </button>
           </div>
           {authInfo?.role === 'merchant' && (
             <div className="shop-actions">
               <a className="btn btn-outline" href="/rainbowpaw/merchant">
-                进入商家端
+                {t(locale, 'telegramAuth.enterMerchant')}
               </a>
             </div>
           )}
@@ -546,15 +538,15 @@ export default function HomePage() {
 
       <section id="contact" className="section">
         <div className="container cta">
-          <h2>Need Help Saying Goodbye?</h2>
-          <p>We are here for you 24/7. Contact us anytime for support and service booking.</p>
+          <h2>{t(locale, 'contact.title')}</h2>
+          <p>{t(locale, 'contact.desc')}</p>
           <div className="hero-actions">
             <a className="btn btn-primary" href="#packages">
-              Book a Service
+              {t(locale, 'contact.bookService')}
             </a>
             <a className="btn btn-outline" href={TELEGRAM_URL} target="_blank" rel="noreferrer">
               <MessageCircle size={18} />
-              <span>Chat on Telegram</span>
+              <span>{t(locale, 'contact.chatTelegram')}</span>
             </a>
           </div>
         </div>
@@ -575,14 +567,14 @@ export default function HomePage() {
           <div className="footer-meta">
             <div className="footer-row">
               <a href={TELEGRAM_URL} target="_blank" rel="noreferrer">
-                Telegram: @RainbowPawBot
+                {t(locale, 'footer.telegram')}
               </a>
-              <span>Phone: +855 00 000 000</span>
-              <span>Email: hello@rainbowpaw.com</span>
+              <span>{t(locale, 'footer.phone')}</span>
+              <span>{t(locale, 'footer.email')}</span>
             </div>
             <div className="footer-row">
-              <span>Service area: {SERVICE_CITY}</span>
-              <span>Language: {language} (more coming soon)</span>
+              <span>{t(locale, 'footer.serviceArea', { city: msg.site.serviceCity })}</span>
+              <span>{t(locale, 'footer.languageNote', { lang: getLocaleNativeName(locale) })}</span>
             </div>
           </div>
           <p>© {new Date().getFullYear()} RainbowPaw</p>
@@ -594,7 +586,7 @@ export default function HomePage() {
         href={TELEGRAM_URL}
         target="_blank"
         rel="noreferrer"
-        aria-label="Chat on Telegram"
+        aria-label={t(locale, 'nav.chatTelegram')}
       >
         <MessageCircle size={22} />
       </a>

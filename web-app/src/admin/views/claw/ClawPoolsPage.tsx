@@ -4,7 +4,7 @@ import { Button, Form, Input, InputNumber, Modal, Select, Space, Table, Tag, mes
 import { useState } from 'react'
 
 export function ClawPoolsPage() {
-  const { tableProps, tableQueryResult } = useTable({ resource: 'clawPools' })
+  const { tableProps, tableQuery } = useTable({ resource: 'clawPools' })
   const { mutateAsync } = useCustomMutation()
   const [editing, setEditing] = useState<any | null>(null)
   const [creating, setCreating] = useState(false)
@@ -41,13 +41,13 @@ export function ClawPoolsPage() {
     }
     setEditing(null)
     setCreating(false)
-    await tableQueryResult.refetch()
+    await tableQuery.refetch()
   }
 
   const publish = async (id: string) => {
     await mutateAsync({ url: `/clawPools/${encodeURIComponent(id)}/publish`, method: 'post', values: {} })
     message.success('已发布')
-    await tableQueryResult.refetch()
+    await tableQuery.refetch()
   }
 
   const remove = async (id: string) => {
@@ -65,7 +65,7 @@ export function ClawPoolsPage() {
     if (!ok) return
     await mutateAsync({ url: `/clawPools/${encodeURIComponent(id)}`, method: 'delete', values: {} })
     message.success('已删除')
-    await tableQueryResult.refetch()
+    await tableQuery.refetch()
   }
 
   return (
@@ -174,4 +174,3 @@ export function ClawPoolsPage() {
     </List>
   )
 }
-

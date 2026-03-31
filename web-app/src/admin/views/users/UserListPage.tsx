@@ -18,7 +18,7 @@ type UserRow = {
 
 export function UserListPage() {
   const navigate = useNavigate()
-  const { tableProps, tableQueryResult } = useTable<UserRow>({
+  const { tableProps, tableQuery } = useTable<UserRow>({
     resource: 'users',
   })
   const { mutateAsync, mutation } = useCustomMutation()
@@ -37,7 +37,7 @@ export function UserListPage() {
     if (!ok) return
     await mutateAsync({ url: `/users/${encodeURIComponent(row.global_user_id)}/${next}`, method: 'post', values: {} })
     message.success(next === 'freeze' ? '已冻结' : '已解冻')
-    await tableQueryResult.refetch()
+    await tableQuery.refetch()
   }
 
   return (

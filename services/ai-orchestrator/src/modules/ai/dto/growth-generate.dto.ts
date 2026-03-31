@@ -11,4 +11,3 @@ export class GrowthGenerateDto {
   @IsString()
   goal?: string;
 }
-

@@ -1,4 +1,17 @@
-import { Body, Controller, Delete, Get, Headers, Param, Patch, Post, Put, Query, Req, Res } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Headers,
+  Param,
+  Patch,
+  Post,
+  Put,
+  Query,
+  Req,
+  Res,
+} from '@nestjs/common';
 import type { Response } from 'express';
 import { AppService } from './app.service';
 
@@ -20,7 +33,11 @@ export class AppController {
     @Headers('x-telegram-init-data') telegramInitData: string,
     @Query('limit') limit?: string,
   ) {
-    return this.appService.wallet({ devTelegramId, telegramInitData, limit: Number(limit || 20) });
+    return this.appService.wallet({
+      devTelegramId,
+      telegramInitData,
+      limit: Number(limit || 20),
+    });
   }
 
   @Post('dev/plays/add')
@@ -29,7 +46,11 @@ export class AppController {
     @Headers('x-telegram-init-data') telegramInitData: string,
     @Body() body: any,
   ) {
-    return this.appService.devAddPlays({ devTelegramId, telegramInitData, count: Number(body?.count || 10) });
+    return this.appService.devAddPlays({
+      devTelegramId,
+      telegramInitData,
+      count: Number(body?.count || 10),
+    });
   }
 
   @Post('play')
@@ -38,7 +59,11 @@ export class AppController {
     @Headers('x-telegram-init-data') telegramInitData: string,
     @Body() body: any,
   ) {
-    return this.appService.play({ devTelegramId, telegramInitData, multi: Number(body?.multi || 1) });
+    return this.appService.play({
+      devTelegramId,
+      telegramInitData,
+      multi: Number(body?.multi || 1),
+    });
   }
 
   @Get('products')
@@ -57,7 +82,10 @@ export class AppController {
   }
 
   @Get('marketplace/services')
-  marketplaceServices(@Query('city') city?: string, @Query('category') category?: string) {
+  marketplaceServices(
+    @Query('city') city?: string,
+    @Query('category') category?: string,
+  ) {
     return this.appService.marketplaceServices({ city, category });
   }
 
@@ -197,32 +225,68 @@ export class AppController {
   }
 
   @Patch('v1/merchant/products/:id')
-  v1MerchantUpdateProduct(@Req() req: any, @Param('id') id: string, @Body() body: any) {
-    return this.appService.v1MerchantUpdateProduct(req, { id, body: body || {} });
+  v1MerchantUpdateProduct(
+    @Req() req: any,
+    @Param('id') id: string,
+    @Body() body: any,
+  ) {
+    return this.appService.v1MerchantUpdateProduct(req, {
+      id,
+      body: body || {},
+    });
   }
 
   @Post('v1/merchant/products/:id/status')
-  v1MerchantProductStatus(@Req() req: any, @Param('id') id: string, @Body() body: any) {
-    return this.appService.v1MerchantSetStatus(req, { id, status: body?.status });
+  v1MerchantProductStatus(
+    @Req() req: any,
+    @Param('id') id: string,
+    @Body() body: any,
+  ) {
+    return this.appService.v1MerchantSetStatus(req, {
+      id,
+      status: body?.status,
+    });
   }
 
   @Post('v1/merchant/products/:id/stock')
-  v1MerchantProductStock(@Req() req: any, @Param('id') id: string, @Body() body: any) {
+  v1MerchantProductStock(
+    @Req() req: any,
+    @Param('id') id: string,
+    @Body() body: any,
+  ) {
     return this.appService.v1MerchantSetStock(req, { id, stock: body?.stock });
   }
 
   @Post('v1/merchant/products/:id/images')
-  v1MerchantAddImage(@Req() req: any, @Param('id') id: string, @Body() body: any) {
-    return this.appService.v1MerchantAddImage(req, { id, image_url: body?.image_url });
+  v1MerchantAddImage(
+    @Req() req: any,
+    @Param('id') id: string,
+    @Body() body: any,
+  ) {
+    return this.appService.v1MerchantAddImage(req, {
+      id,
+      image_url: body?.image_url,
+    });
   }
 
   @Patch('v1/merchant/products/:id/images/sort')
-  v1MerchantSortImages(@Req() req: any, @Param('id') id: string, @Body() body: any) {
-    return this.appService.v1MerchantSortImages(req, { id, image_ids: body?.image_ids });
+  v1MerchantSortImages(
+    @Req() req: any,
+    @Param('id') id: string,
+    @Body() body: any,
+  ) {
+    return this.appService.v1MerchantSortImages(req, {
+      id,
+      image_ids: body?.image_ids,
+    });
   }
 
   @Delete('v1/merchant/products/:id/images/:imageId')
-  v1MerchantDeleteImage(@Req() req: any, @Param('id') id: string, @Param('imageId') imageId: string) {
+  v1MerchantDeleteImage(
+    @Req() req: any,
+    @Param('id') id: string,
+    @Param('imageId') imageId: string,
+  ) {
     return this.appService.v1MerchantDeleteImage(req, { id, imageId });
   }
 
@@ -303,7 +367,9 @@ export class AppController {
 
   @Post('payments/plays')
   createPlaysPayment(@Body() body: any) {
-    return this.appService.createPlaysPayment({ bundle: Number(body?.bundle || 1) });
+    return this.appService.createPlaysPayment({
+      bundle: Number(body?.bundle || 1),
+    });
   }
 
   @Get('payments/:id')
@@ -313,7 +379,10 @@ export class AppController {
 
   @Post('payments/:id/proof')
   submitProof(@Param('id') id: string, @Body() body: any) {
-    return this.appService.submitProof({ id, proof_text: String(body?.proof_text || '') });
+    return this.appService.submitProof({
+      id,
+      proof_text: String(body?.proof_text || ''),
+    });
   }
 
   @Post('payments/:id/proof_file')
@@ -381,7 +450,9 @@ export class AppController {
 
   @Post('groups')
   createGroup(@Body() body: any) {
-    return this.appService.createGroup({ product_id: Number(body?.product_id) });
+    return this.appService.createGroup({
+      product_id: Number(body?.product_id),
+    });
   }
 
   @Post('groups/:groupId/join')
@@ -418,7 +489,14 @@ export class AppController {
     @Query('spendLevel') spendLevel?: string,
     @Query('status') status?: string,
   ) {
-    return this.appService.adminUsers({ current, pageSize, keyword, petType, spendLevel, status });
+    return this.appService.adminUsers({
+      current,
+      pageSize,
+      keyword,
+      petType,
+      spendLevel,
+      status,
+    });
   }
 
   @Post('admin/users/:globalUserId/freeze')
@@ -443,7 +521,12 @@ export class AppController {
     @Query('status') status?: string,
     @Query('globalUserId') globalUserId?: string,
   ) {
-    return this.appService.adminWithdrawRequests({ current, pageSize, status, globalUserId });
+    return this.appService.adminWithdrawRequests({
+      current,
+      pageSize,
+      status,
+      globalUserId,
+    });
   }
 
   @Post('admin/withdraw-requests/:id/approve')
@@ -457,7 +540,11 @@ export class AppController {
   }
 
   @Get('admin/merchants')
-  adminMerchants(@Query('current') current?: string, @Query('pageSize') pageSize?: string, @Query('status') status?: string) {
+  adminMerchants(
+    @Query('current') current?: string,
+    @Query('pageSize') pageSize?: string,
+    @Query('status') status?: string,
+  ) {
     return this.appService.adminMerchants({ current, pageSize, status });
   }
 
@@ -477,7 +564,10 @@ export class AppController {
   }
 
   @Get('admin/products')
-  adminProducts(@Query('current') current?: string, @Query('pageSize') pageSize?: string) {
+  adminProducts(
+    @Query('current') current?: string,
+    @Query('pageSize') pageSize?: string,
+  ) {
     return this.appService.adminProducts({ current, pageSize });
   }
 
@@ -497,12 +587,19 @@ export class AppController {
   }
 
   @Get('admin/services')
-  adminServices(@Query('current') current?: string, @Query('pageSize') pageSize?: string) {
+  adminServices(
+    @Query('current') current?: string,
+    @Query('pageSize') pageSize?: string,
+  ) {
     return this.appService.adminServices({ current, pageSize });
   }
 
   @Get('admin/orders')
-  adminOrders(@Query('current') current?: string, @Query('pageSize') pageSize?: string, @Query('phone') phone?: string) {
+  adminOrders(
+    @Query('current') current?: string,
+    @Query('pageSize') pageSize?: string,
+    @Query('phone') phone?: string,
+  ) {
     return this.appService.adminOrders({ current, pageSize, phone });
   }
 
@@ -514,7 +611,13 @@ export class AppController {
     @Query('type') type?: string,
     @Query('keyword') keyword?: string,
   ) {
-    return this.appService.adminCampaigns({ current, pageSize, status, type, keyword });
+    return this.appService.adminCampaigns({
+      current,
+      pageSize,
+      status,
+      type,
+      keyword,
+    });
   }
 
   @Post('admin/campaigns')
@@ -528,7 +631,11 @@ export class AppController {
   }
 
   @Put('admin/campaigns/:id')
-  adminCampaignUpdate(@Req() req: any, @Param('id') id: string, @Body() body: any) {
+  adminCampaignUpdate(
+    @Req() req: any,
+    @Param('id') id: string,
+    @Body() body: any,
+  ) {
     return this.appService.adminCampaignUpdate(req, { id, body: body || {} });
   }
 
@@ -548,7 +655,12 @@ export class AppController {
   }
 
   @Get('admin/groups')
-  adminGroups(@Query('current') current?: string, @Query('pageSize') pageSize?: string, @Query('status') status?: string, @Query('keyword') keyword?: string) {
+  adminGroups(
+    @Query('current') current?: string,
+    @Query('pageSize') pageSize?: string,
+    @Query('status') status?: string,
+    @Query('keyword') keyword?: string,
+  ) {
     return this.appService.adminGroups({ current, pageSize, status, keyword });
   }
 
@@ -563,7 +675,11 @@ export class AppController {
   }
 
   @Put('admin/groups/:id')
-  adminGroupUpdate(@Req() req: any, @Param('id') id: string, @Body() body: any) {
+  adminGroupUpdate(
+    @Req() req: any,
+    @Param('id') id: string,
+    @Body() body: any,
+  ) {
     return this.appService.adminGroupUpdate(req, { id, body: body || {} });
   }
 
@@ -583,8 +699,18 @@ export class AppController {
   }
 
   @Get('admin/referrals')
-  adminReferrals(@Query('current') current?: string, @Query('pageSize') pageSize?: string, @Query('status') status?: string, @Query('keyword') keyword?: string) {
-    return this.appService.adminReferrals({ current, pageSize, status, keyword });
+  adminReferrals(
+    @Query('current') current?: string,
+    @Query('pageSize') pageSize?: string,
+    @Query('status') status?: string,
+    @Query('keyword') keyword?: string,
+  ) {
+    return this.appService.adminReferrals({
+      current,
+      pageSize,
+      status,
+      keyword,
+    });
   }
 
   @Post('admin/referrals')
@@ -598,7 +724,11 @@ export class AppController {
   }
 
   @Put('admin/referrals/:id')
-  adminReferralUpdate(@Req() req: any, @Param('id') id: string, @Body() body: any) {
+  adminReferralUpdate(
+    @Req() req: any,
+    @Param('id') id: string,
+    @Body() body: any,
+  ) {
     return this.appService.adminReferralUpdate(req, { id, body: body || {} });
   }
 
@@ -625,7 +755,13 @@ export class AppController {
     @Query('subjectType') subjectType?: string,
     @Query('keyword') keyword?: string,
   ) {
-    return this.appService.adminDistributors({ current, pageSize, status, subjectType, keyword });
+    return this.appService.adminDistributors({
+      current,
+      pageSize,
+      status,
+      subjectType,
+      keyword,
+    });
   }
 
   @Post('admin/referrals/distributors')
@@ -642,7 +778,14 @@ export class AppController {
     @Query('keyword') keyword?: string,
     @Query('ruleId') ruleId?: string,
   ) {
-    return this.appService.adminRewards({ current, pageSize, status, subjectType, keyword, ruleId });
+    return this.appService.adminRewards({
+      current,
+      pageSize,
+      status,
+      subjectType,
+      keyword,
+      ruleId,
+    });
   }
 
   @Post('admin/rewards')
@@ -656,8 +799,18 @@ export class AppController {
   }
 
   @Get('admin/rewards/rules')
-  adminRewardRules(@Query('current') current?: string, @Query('pageSize') pageSize?: string, @Query('status') status?: string, @Query('keyword') keyword?: string) {
-    return this.appService.adminRewardRules({ current, pageSize, status, keyword });
+  adminRewardRules(
+    @Query('current') current?: string,
+    @Query('pageSize') pageSize?: string,
+    @Query('status') status?: string,
+    @Query('keyword') keyword?: string,
+  ) {
+    return this.appService.adminRewardRules({
+      current,
+      pageSize,
+      status,
+      keyword,
+    });
   }
 
   @Post('admin/rewards/rules')
@@ -666,18 +819,28 @@ export class AppController {
   }
 
   @Put('admin/rewards/rules/:id')
-  adminRewardRuleUpdate(@Req() req: any, @Param('id') id: string, @Body() body: any) {
+  adminRewardRuleUpdate(
+    @Req() req: any,
+    @Param('id') id: string,
+    @Body() body: any,
+  ) {
     return this.appService.adminRewardRuleUpdate(req, { id, body: body || {} });
   }
 
   @Post('admin/rewards/rules/:id/activate')
   adminRewardRuleActivate(@Req() req: any, @Param('id') id: string) {
-    return this.appService.adminRewardRuleActivate(req, { id, status: 'active' });
+    return this.appService.adminRewardRuleActivate(req, {
+      id,
+      status: 'active',
+    });
   }
 
   @Post('admin/rewards/rules/:id/deactivate')
   adminRewardRuleDeactivate(@Req() req: any, @Param('id') id: string) {
-    return this.appService.adminRewardRuleActivate(req, { id, status: 'inactive' });
+    return this.appService.adminRewardRuleActivate(req, {
+      id,
+      status: 'inactive',
+    });
   }
 
   @Get('admin/riskBlacklist')
@@ -688,7 +851,13 @@ export class AppController {
     @Query('subjectType') subjectType?: string,
     @Query('keyword') keyword?: string,
   ) {
-    return this.appService.adminRiskBlacklist({ current, pageSize, status, subjectType, keyword });
+    return this.appService.adminRiskBlacklist({
+      current,
+      pageSize,
+      status,
+      subjectType,
+      keyword,
+    });
   }
 
   @Post('admin/riskBlacklist')
@@ -697,8 +866,15 @@ export class AppController {
   }
 
   @Put('admin/riskBlacklist/:id')
-  adminRiskBlacklistUpdate(@Req() req: any, @Param('id') id: string, @Body() body: any) {
-    return this.appService.adminRiskBlacklistUpdate(req, { id, body: body || {} });
+  adminRiskBlacklistUpdate(
+    @Req() req: any,
+    @Param('id') id: string,
+    @Body() body: any,
+  ) {
+    return this.appService.adminRiskBlacklistUpdate(req, {
+      id,
+      body: body || {},
+    });
   }
 
   @Delete('admin/riskBlacklist/:id')
@@ -720,7 +896,14 @@ export class AppController {
     @Query('success') success?: string,
     @Query('keyword') keyword?: string,
   ) {
-    return this.appService.adminAudit({ current, pageSize, module, action, success, keyword });
+    return this.appService.adminAudit({
+      current,
+      pageSize,
+      module,
+      action,
+      success,
+      keyword,
+    });
   }
 
   @Get('admin/bridge/reports/summary')
@@ -729,7 +912,10 @@ export class AppController {
   }
 
   @Get('admin/clawPools')
-  adminClawPools(@Query('current') current?: string, @Query('pageSize') pageSize?: string) {
+  adminClawPools(
+    @Query('current') current?: string,
+    @Query('pageSize') pageSize?: string,
+  ) {
     return this.appService.adminClawPools({ current, pageSize });
   }
 
@@ -754,7 +940,10 @@ export class AppController {
   }
 
   @Get('admin/clawPlays')
-  adminClawPlays(@Query('current') current?: string, @Query('pageSize') pageSize?: string) {
+  adminClawPlays(
+    @Query('current') current?: string,
+    @Query('pageSize') pageSize?: string,
+  ) {
     return this.appService.adminClawPlays({ current, pageSize });
   }
 
@@ -764,7 +953,10 @@ export class AppController {
   }
 
   @Get('admin/risk/alerts')
-  adminRiskAlerts(@Query('current') current?: string, @Query('pageSize') pageSize?: string) {
+  adminRiskAlerts(
+    @Query('current') current?: string,
+    @Query('pageSize') pageSize?: string,
+  ) {
     return this.appService.adminRiskAlerts({ current, pageSize });
   }
 
@@ -812,6 +1004,13 @@ export class AppController {
     @Query('assetType') assetType?: string,
     @Query('refId') refId?: string,
   ) {
-    return this.appService.adminWalletLogs({ current, pageSize, globalUserId, bizType, assetType, refId });
+    return this.appService.adminWalletLogs({
+      current,
+      pageSize,
+      globalUserId,
+      bizType,
+      assetType,
+      refId,
+    });
   }
 }

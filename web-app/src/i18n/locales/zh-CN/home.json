@@ -1,0 +1,146 @@
+{
+  "seo": {
+    "title": "RainbowPaw | 宠物善终与纪念服务",
+    "description": "RainbowPaw 提供尊重与温柔的宠物善终、火化与纪念服务，帮助家庭以爱与体面告别。",
+    "keywords": "RainbowPaw, 宠物善终, 宠物火化, 宠物纪念, 纪念品, 金边, 柬埔寨"
+  },
+  "site": {
+    "serviceCity": "金边"
+  },
+  "lang": {
+    "label": "语言",
+    "native": "中文"
+  },
+  "nav": {
+    "home": "首页",
+    "services": "服务",
+    "packages": "套餐",
+    "shop": "商城",
+    "memorial": "纪念",
+    "contact": "联系",
+    "chatTelegram": "Telegram 咨询"
+  },
+  "hero": {
+    "pill": "每一次告别，都值得被温柔对待",
+    "title": "为你挚爱的宠物，送上一场平静而体面的告别",
+    "lead": "RainbowPaw 提供尊重与温柔的宠物善终、火化与纪念服务，帮助家庭以爱与体面告别。",
+    "microTrust": "{city} 1 小时内上门接宠",
+    "bookService": "预约服务",
+    "compassionateTitle": "温柔守护",
+    "compassionateDesc": "给予他们应得的尊重与体面。"
+  },
+  "services": {
+    "title": "我们的服务",
+    "pickupTitle": "上门接宠",
+    "pickupDesc": "为你挚爱的宠物提供尊重与体面的接宠服务。",
+    "cremationTitle": "独立火化",
+    "cremationDesc": "全程独立火化，庄重且用心。",
+    "keepsakesTitle": "纪念品与周边",
+    "keepsakesDesc": "用定制纪念品把想念留在身边。"
+  },
+  "packages": {
+    "title": "服务套餐",
+    "subtitle": "最终价格可能因宠物体重、接宠距离与特殊需求而有所调整。",
+    "badgePopular": "最受欢迎",
+    "selectPlan": "选择套餐",
+    "items": [
+      {
+        "name": "Basic 基础套餐",
+        "price": "$49 起",
+        "features": ["送达服务点", "集体火化", "数字纪念"],
+        "highlight": false
+      },
+      {
+        "name": "Standard 标准套餐",
+        "price": "$129 起",
+        "features": ["上门接宠", "独立火化", "基础骨灰盒", "爪印"],
+        "highlight": true
+      },
+      {
+        "name": "Premium 尊享套餐",
+        "price": "$249 起",
+        "features": ["上门接宠", "独立火化", "纪念仪式", "高级骨灰盒", "爪印", "纪念照片"],
+        "highlight": false
+      },
+      {
+        "name": "Ceremony 仪式套餐",
+        "price": "$399 起",
+        "features": ["灵车接宠", "纪念仪式", "独立火化", "纪念视频", "骨灰饰品"],
+        "highlight": false
+      }
+    ]
+  },
+  "why": {
+    "title": "为什么选择 RainbowPaw",
+    "desc": "我们理解宠物就是家人。我们的使命，是在最难的时刻给予你支持与陪伴。",
+    "reasons": ["温柔体贴", "流程透明", "尊重告别", "众多家庭信赖"],
+    "stat": "已为 5,000+ 只宠物送上充满爱的告别"
+  },
+  "shop": {
+    "title": "纪念商城",
+    "subtitle": "商品与服务来自平台供给侧（商家入驻 → 上架 → 用户下单 → 履约 → 评价）。",
+    "phonePlaceholder": "输入手机号，用于下单与查询",
+    "openMiniApp": "打开 Mini App",
+    "loading": "加载中...",
+    "serviceMatch": "一键撮合（平台指派）",
+    "orderNow": "立即下单",
+    "enterMarketplace": "进入商城",
+    "askCatalog": "索取商品目录",
+    "errors": {
+      "loadFailed": "加载失败",
+      "phoneRequired": "请输入手机号",
+      "orderFailed": "下单失败",
+      "submitFailed": "提交失败"
+    },
+    "messages": {
+      "orderCreated": "下单成功：{orderId}",
+      "matchCreated": "撮合申请已提交：{orderId}"
+    }
+  },
+  "memorial": {
+    "title": "在线纪念",
+    "subtitle": "在线纪念、在线祭拜、亲友共创，持续陪伴每一次想念。",
+    "items": [
+      { "id": "m1", "name": "云端纪念馆（年度）", "price": 99, "desc": "支持追思页、纪念日提醒、亲友留言。" },
+      { "id": "m2", "name": "在线祭拜灯牌（30天）", "price": 29, "desc": "支持点灯祈福与温暖寄语。" },
+      { "id": "m3", "name": "亲友共创相册", "price": 59, "desc": "多人上传照片与回忆故事。" }
+    ],
+    "pets": [
+      { "name": "Bella", "years": "2015 – 2024", "phrase": "Forever Loved" },
+      { "name": "Max", "years": "2012 – 2023", "phrase": "Run Free" },
+      { "name": "Luna", "years": "2018 – 2024", "phrase": "Always in our hearts" },
+      { "name": "Cooper", "years": "2010 – 2024", "phrase": "Best Friend" }
+    ]
+  },
+  "telegramAuth": {
+    "title": "Telegram 授权登录",
+    "subtitle": "支持宠物主人与商家双身份登录，商家可直接进入商家工作台。",
+    "telegramId": "Telegram ID",
+    "nicknameOptional": "昵称（可选）",
+    "roleOwner": "宠物主人",
+    "roleMerchant": "宠物商家",
+    "authorize": "Telegram 授权",
+    "enterMerchant": "进入商家端",
+    "errors": {
+      "telegramIdRequired": "请输入 Telegram ID",
+      "authFailed": "授权失败"
+    },
+    "messages": {
+      "approved": "Telegram 授权成功",
+      "pending": "商家账号已提交审核，请等待通过。"
+    }
+  },
+  "contact": {
+    "title": "需要帮助告别吗？",
+    "desc": "我们 24/7 在线，随时为你提供支持与预约服务协助。",
+    "bookService": "预约服务",
+    "chatTelegram": "Telegram 咨询"
+  },
+  "footer": {
+    "telegram": "Telegram：@RainbowPawBot",
+    "phone": "电话：+855 00 000 000",
+    "email": "邮箱：hello@rainbowpaw.com",
+    "serviceArea": "服务范围：{city}",
+    "languageNote": "语言：{lang}"
+  }
+}

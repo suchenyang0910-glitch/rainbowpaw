@@ -10,4 +10,3 @@ export class RiskAnalyzeDto {
   @IsOptional()
   claw_plays?: any;
 }
-

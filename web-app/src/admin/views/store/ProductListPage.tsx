@@ -4,7 +4,7 @@ import { Button, Form, Input, InputNumber, Modal, Space, Table, Tag, message } f
 import { useState } from 'react'
 
 export function ProductListPage() {
-  const { tableProps, tableQueryResult } = useTable({ resource: 'products' })
+  const { tableProps, tableQuery } = useTable({ resource: 'products' })
   const { mutateAsync } = useCustomMutation()
   const [editing, setEditing] = useState<any | null>(null)
   const [form] = Form.useForm()
@@ -27,13 +27,13 @@ export function ProductListPage() {
     })
     message.success('已保存')
     setEditing(null)
-    await tableQueryResult.refetch()
+    await tableQuery.refetch()
   }
 
   const setStatus = async (id: any, action: 'publish' | 'unpublish') => {
     await mutateAsync({ url: `/products/${encodeURIComponent(String(id))}/${action}`, method: 'post', values: {} })
     message.success(action === 'publish' ? '已上架' : '已下架')
-    await tableQueryResult.refetch()
+    await tableQuery.refetch()
   }
 
   return (

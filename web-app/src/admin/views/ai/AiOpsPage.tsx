@@ -4,8 +4,8 @@ import { Alert, Button, Card, Col, Descriptions, Form, Input, Modal, Row, Space,
 import { useMemo } from 'react'
 
 export function AiOpsPage() {
-  const { data, isLoading, refetch } = useCustom({ url: '/ai/ops/daily', method: 'get' })
-  const daily = useMemo(() => (data as any)?.data || null, [data])
+  const { result, query } = useCustom({ url: '/ai/ops/daily', method: 'get' } as any)
+  const daily = useMemo(() => (result as any)?.data || null, [result])
   const { mutateAsync, mutation } = useCustomMutation()
   const [form] = Form.useForm()
 
@@ -13,7 +13,7 @@ export function AiOpsPage() {
     const v = await form.validateFields()
     await mutateAsync({ url: '/ai/ops/daily', method: 'post', values: v })
     message.success('已生成')
-    await refetch()
+    await query.refetch()
   }
 
   const publish = async () => {
@@ -60,7 +60,7 @@ export function AiOpsPage() {
 
         <Row gutter={[16, 16]}>
           <Col xs={24} md={10}>
-            <Card title="生成" loading={isLoading}>
+            <Card title="生成" loading={query.isFetching}>
               <Form form={form} layout="vertical" initialValues={{ focus: '' }}>
                 <Form.Item name="focus" label="今日重点（可选）">
                   <Input placeholder="例如：提高 claw→RainbowPaw 转化" />
@@ -81,14 +81,14 @@ export function AiOpsPage() {
                       冒烟测试
                     </Button>
                   </CanAccess>
-                  <Button onClick={() => refetch()}>刷新</Button>
+                  <Button onClick={() => query.refetch()}>刷新</Button>
                 </Space>
               </Form>
             </Card>
           </Col>
 
           <Col xs={24} md={14}>
-            <Card title="今日 AI 建议" loading={isLoading}>
+            <Card title="今日 AI 建议" loading={query.isFetching}>
               <Descriptions column={1} size="middle">
                 <Descriptions.Item label="生成时间">{daily?.generated_at || '-'}</Descriptions.Item>
                 <Descriptions.Item label="模型">
@@ -119,4 +119,3 @@ export function AiOpsPage() {
     </PageContainer>
   )
 }
-

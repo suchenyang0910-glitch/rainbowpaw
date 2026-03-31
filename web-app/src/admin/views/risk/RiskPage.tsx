@@ -3,12 +3,14 @@ import { Button, Card, Col, Modal, Row, Space, Statistic, Table, Tag, message } 
 import { useMemo } from 'react'
 
 export function RiskPage() {
-  const { data: summary } = useCustom({ url: '/risk/summary', method: 'get' })
-  const { data: alerts, refetch } = useCustom({ url: '/risk/alerts', method: 'get', query: { current: 1, pageSize: 50 } })
+  const { result: summaryResult } = useCustom({ url: '/risk/summary', method: 'get' } as any)
+  const { result: alertsResult, query: alertsQuery } = useCustom(
+    { url: '/risk/alerts', method: 'get', query: { current: 1, pageSize: 50 } } as any,
+  )
   const { mutateAsync, mutation } = useCustomMutation()
 
-  const s = (summary as any)?.data || {}
-  const list = useMemo(() => ((alerts as any)?.data?.items as any[]) || [], [alerts])
+  const s = (summaryResult as any)?.data || {}
+  const list = useMemo(() => (((alertsResult as any)?.data?.items as any[]) || []), [alertsResult])
 
   const toggle = async (globalUserId: string, next: 'freeze' | 'unfreeze') => {
     const ok = await new Promise<boolean>((resolve) => {
@@ -24,7 +26,7 @@ export function RiskPage() {
     if (!ok) return
     await mutateAsync({ url: `/users/${encodeURIComponent(globalUserId)}/${next}`, method: 'post', values: {} })
     message.success(next === 'freeze' ? '已冻结' : '已解冻')
-    await refetch()
+    await alertsQuery.refetch()
   }
 
   return (

@@ -7,4 +7,3 @@ export class OpsAnalyzeDto {
   @IsOptional()
   metrics?: any;
 }
-

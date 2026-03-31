@@ -2,12 +2,12 @@ import { useCustom } from '@refinedev/core'
 import { Card, Col, Row, Statistic } from 'antd'
 
 export function BridgeReportsPage() {
-  const { data } = useCustom({
+  const { result } = useCustom({
     url: '/bridge/reports/summary',
     method: 'get',
-  })
+  } as any)
 
-  const payload = (data as any)?.data || { clicks: 0, conversions: 0 }
+  const payload = (result as any)?.data || { clicks: 0, conversions: 0 }
 
   return (
     <div>
@@ -35,4 +35,3 @@ export function BridgeReportsPage() {
     </div>
   )
 }
-

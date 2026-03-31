@@ -4,19 +4,20 @@ import './index.css'
 import './rainbowpaw.css'
 import App from './App.jsx'
 import { BrowserRouter, Route, Routes } from 'react-router-dom'
-import HomePage from './pages/HomePage.jsx'
 import MiniAppPage from './pages/MiniAppPage.jsx'
 import MerchantPortalPage from './pages/MerchantPortalPage.jsx'
 import MarketplacePage from './pages/MarketplacePage.jsx'
 import ProductDetailPage from './pages/ProductDetailPage.jsx'
 import CartPage from './pages/CartPage.jsx'
 import AdminApp from './admin/AdminApp'
+import { LocaleHome, RootRedirect } from './routing/LocaleRoutes.jsx'
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>
     <BrowserRouter>
       <Routes>
-        <Route path="/" element={<HomePage />} />
+        <Route path="/" element={<RootRedirect />} />
+        <Route path="/:locale" element={<LocaleHome />} />
 
         <Route path="/rainbowpawclaw" element={<App />} />
 

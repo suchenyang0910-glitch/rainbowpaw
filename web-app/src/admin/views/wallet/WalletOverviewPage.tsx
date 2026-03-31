@@ -2,8 +2,8 @@ import { useCustom } from '@refinedev/core'
 import { Card, Col, Row, Statistic } from 'antd'
 
 export function WalletOverviewPage() {
-  const { data } = useCustom({ url: '/wallet/overview', method: 'get' })
-  const s = (data as any)?.data || {}
+  const { result } = useCustom({ url: '/wallet/overview', method: 'get' } as any)
+  const s = (result as any)?.data || {}
 
   return (
     <Row gutter={[16, 16]}>
@@ -35,4 +35,3 @@ export function WalletOverviewPage() {
     </Row>
   )
 }
-
