@@ -1,8 +1,24 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import axios from 'axios';
-import { randomUUID } from 'crypto';
+import { createHmac, randomUUID } from 'crypto';
 import { Pool } from 'pg';
 import type { QueryResult, QueryResultRow } from 'pg';
+
+type TelegramWebAppUser = {
+  id: number;
+  username?: string;
+  first_name?: string;
+  last_name?: string;
+  language_code?: string;
+  [k: string]: any;
+};
+
+type TelegramUserInfo = {
+  telegram_id: number;
+  username: string;
+  first_name: string;
+  source_bot: 'rainbow_bot' | 'claw_bot' | 'dev' | 'unknown';
+};
 
 @Injectable()
 export class AppService {
@@ -256,15 +272,15 @@ export class AppService {
     return data as T;
   }
 
-  private async linkUser(tgId: number) {
+  private async linkUser(tg: TelegramUserInfo) {
     const { data } = await axios.post(
       `${this.identityBase()}/identity/link-user`,
       {
-        source_bot: 'claw_bot',
-        source_user_id: String(tgId),
-        telegram_id: tgId,
-        username: '',
-        first_source: 'web',
+        source_bot: tg.source_bot === 'unknown' ? 'claw_bot' : tg.source_bot,
+        source_user_id: String(tg.telegram_id),
+        telegram_id: tg.telegram_id,
+        username: tg.username,
+        first_source: 'webapp',
       },
       {
         headers: {
@@ -276,21 +292,79 @@ export class AppService {
     return data.data as { global_user_id: string };
   }
 
-  private getTelegramId(devTelegramId: string, telegramInitData: string) {
-    const dev = Number(String(devTelegramId || '').trim());
-    if (Number.isFinite(dev) && dev > 0) return dev;
-    const raw = String(telegramInitData || '');
-    if (!raw) return 0;
-    const m = raw.match(/(?:^|&)user=([^&]+)/);
-    if (!m) return 0;
-    try {
-      const userJson = decodeURIComponent(m[1]);
-      const u = JSON.parse(userJson);
-      const id = Number(u && u.id ? u.id : 0);
-      return Number.isFinite(id) ? id : 0;
-    } catch {
-      return 0;
+  private verifyTelegramWebAppInitData(params: URLSearchParams, botToken: string) {
+    const hash = String(params.get('hash') || '').trim();
+    if (!hash) return false;
+
+    const rows: string[] = [];
+    for (const [k, v] of params.entries()) {
+      if (k === 'hash') continue;
+      rows.push(`${k}=${v}`);
     }
+    rows.sort((a, b) => a.localeCompare(b));
+    const dataCheckString = rows.join('\n');
+
+    const secretKey = createHmac('sha256', 'WebAppData').update(botToken).digest();
+    const expected = createHmac('sha256', secretKey).update(dataCheckString).digest('hex');
+    return expected === hash;
+  }
+
+  private extractTelegramUserFromInitData(initData: string): TelegramWebAppUser | null {
+    const raw = String(initData || '').trim();
+    if (!raw) return null;
+    let params: URLSearchParams;
+    try {
+      params = new URLSearchParams(raw);
+    } catch {
+      return null;
+    }
+    const userStr = params.get('user');
+    if (!userStr) return null;
+    try {
+      const u = JSON.parse(userStr);
+      const id = Number(u?.id || 0);
+      if (!Number.isFinite(id) || id <= 0) return null;
+      return { ...u, id } as TelegramWebAppUser;
+    } catch {
+      return null;
+    }
+  }
+
+  private getTelegramUserInfo(devTelegramId: string, telegramInitData: string): TelegramUserInfo | null {
+    const dev = Number(String(devTelegramId || '').trim());
+    if (Number.isFinite(dev) && dev > 0) {
+      return { telegram_id: dev, username: '', first_name: '', source_bot: 'dev' };
+    }
+
+    const initData = String(telegramInitData || '').trim();
+    if (!initData) return null;
+
+    const u = this.extractTelegramUserFromInitData(initData);
+    if (!u) return null;
+
+    const rainbowToken = String(process.env.RAINBOW_BOT_TOKEN || '').trim();
+    const clawToken = String(process.env.CLAW_BOT_TOKEN || '').trim();
+
+    let source_bot: TelegramUserInfo['source_bot'] = 'unknown';
+    try {
+      const params = new URLSearchParams(initData);
+      if (rainbowToken && this.verifyTelegramWebAppInitData(params, rainbowToken)) source_bot = 'rainbow_bot';
+      else if (clawToken && this.verifyTelegramWebAppInitData(params, clawToken)) source_bot = 'claw_bot';
+    } catch {
+      source_bot = 'unknown';
+    }
+
+    return {
+      telegram_id: u.id,
+      username: String(u.username || '').trim(),
+      first_name: String(u.first_name || '').trim(),
+      source_bot,
+    };
+  }
+
+  private getTelegramId(devTelegramId: string, telegramInitData: string) {
+    const info = this.getTelegramUserInfo(devTelegramId, telegramInitData);
+    return info ? info.telegram_id : 0;
   }
 
   private async getWallet(globalUserId: string) {
@@ -385,10 +459,10 @@ export class AppService {
   }
 
   async me(opts: { devTelegramId: string; telegramInitData: string }) {
-    const tgId = this.getTelegramId(opts.devTelegramId, opts.telegramInitData);
-    if (!tgId) throw new BadRequestException('missing telegram id');
+    const tg = this.getTelegramUserInfo(opts.devTelegramId, opts.telegramInitData);
+    if (!tg) throw new BadRequestException('missing telegram id');
 
-    const linked = await this.linkUser(tgId);
+    const linked = await this.linkUser(tg);
     const wallet = await this.getWallet(linked.global_user_id);
 
     const referralCode = `ref_${String(linked.global_user_id).slice(0, 8)}`;
@@ -396,7 +470,7 @@ export class AppService {
       code: 0,
       message: 'ok',
       data: {
-        telegram: { id: tgId, username: '', first_name: '' },
+        telegram: { id: tg.telegram_id, username: tg.username, first_name: tg.first_name },
         user: { global_user_id: linked.global_user_id, plays_left: 0, state: 'idle', referral_code: referralCode },
         wallet,
         pricing: { playUsd: 1.5, bundle3xUsd: 4, bundle10xUsd: 13 },
@@ -408,10 +482,10 @@ export class AppService {
   }
 
   async wallet(opts: { devTelegramId: string; telegramInitData: string; limit: number }) {
-    const tgId = this.getTelegramId(opts.devTelegramId, opts.telegramInitData);
-    if (!tgId) throw new BadRequestException('missing telegram id');
+    const tg = this.getTelegramUserInfo(opts.devTelegramId, opts.telegramInitData);
+    if (!tg) throw new BadRequestException('missing telegram id');
 
-    const linked = await this.linkUser(tgId);
+    const linked = await this.linkUser(tg);
     const wallet = await this.getWallet(linked.global_user_id);
     const logs = await this.getWalletLogs(linked.global_user_id, opts.limit);
 
@@ -419,35 +493,35 @@ export class AppService {
   }
 
   async devAddPlays(opts: { devTelegramId: string; telegramInitData: string; count: number }) {
-    const tgId = this.getTelegramId(opts.devTelegramId, opts.telegramInitData);
-    if (!tgId) throw new BadRequestException('missing telegram id');
+    const tg = this.getTelegramUserInfo(opts.devTelegramId, opts.telegramInitData);
+    if (!tg) throw new BadRequestException('missing telegram id');
 
-    const linked = await this.linkUser(tgId);
+    const linked = await this.linkUser(tg);
     const n = Math.min(100, Math.max(1, Number(opts.count || 10)));
     const points = n * 3;
-    await this.walletEarn(linked.global_user_id, points, `devAddPlays:${tgId}:${n}:${Date.now()}`, 'recharge');
+    await this.walletEarn(linked.global_user_id, points, `devAddPlays:${tg.telegram_id}:${n}:${Date.now()}`, 'recharge');
     const wallet = await this.getWallet(linked.global_user_id);
     return { code: 0, message: 'ok', data: { wallet } };
   }
 
   async play(opts: { devTelegramId: string; telegramInitData: string; multi: number }) {
-    const tgId = this.getTelegramId(opts.devTelegramId, opts.telegramInitData);
-    if (!tgId) throw new BadRequestException('missing telegram id');
+    const tg = this.getTelegramUserInfo(opts.devTelegramId, opts.telegramInitData);
+    if (!tg) throw new BadRequestException('missing telegram id');
 
-    const linked = await this.linkUser(tgId);
+    const linked = await this.linkUser(tg);
     const m = Number(opts.multi || 1) === 10 ? 10 : 1;
     const plays = [] as any[];
 
     for (let i = 0; i < m; i += 1) {
       try {
-        await this.walletSpend(linked.global_user_id, 3, `playSpend:${tgId}:${i}:${Date.now()}`, 'claw_consume');
+        await this.walletSpend(linked.global_user_id, 3, `playSpend:${tg.telegram_id}:${i}:${Date.now()}`, 'claw_consume');
       } catch (e: any) {
         throw new BadRequestException('no plays left');
       }
-      await this.walletRecycle(linked.global_user_id, 2.4, `playRecycle:${tgId}:${i}:${Date.now()}`);
+      await this.walletRecycle(linked.global_user_id, 2.4, `playRecycle:${tg.telegram_id}:${i}:${Date.now()}`);
       plays.push({
-        play_id: `p_${tgId}_${Date.now()}_${i}`,
-        order_id: `o_${tgId}_${Date.now()}_${i}`,
+        play_id: `p_${tg.telegram_id}_${Date.now()}_${i}`,
+        order_id: `o_${tg.telegram_id}_${Date.now()}_${i}`,
         tier: 'common',
         near_miss_tier: null,
         prize: { name: '普通奖品', display_name: '普通奖品' },
@@ -1415,9 +1489,9 @@ export class AppService {
   }
 
   async purchaseDirect(opts: { devTelegramId: string; telegramInitData: string; product_id: number }) {
-    const tgId = this.getTelegramId(opts.devTelegramId, opts.telegramInitData);
-    if (!tgId) throw new BadRequestException('missing telegram id');
-    const linked = await this.linkUser(tgId);
+    const tg = this.getTelegramUserInfo(opts.devTelegramId, opts.telegramInitData);
+    if (!tg) throw new BadRequestException('missing telegram id');
+    const linked = await this.linkUser(tg);
     const p = this.findProductPoints(opts.product_id);
     if (!p) throw new BadRequestException('invalid product_id');
 
@@ -1427,9 +1501,9 @@ export class AppService {
   }
 
   async purchaseGroup(opts: { devTelegramId: string; telegramInitData: string; product_id: number }) {
-    const tgId = this.getTelegramId(opts.devTelegramId, opts.telegramInitData);
-    if (!tgId) throw new BadRequestException('missing telegram id');
-    const linked = await this.linkUser(tgId);
+    const tg = this.getTelegramUserInfo(opts.devTelegramId, opts.telegramInitData);
+    if (!tg) throw new BadRequestException('missing telegram id');
+    const linked = await this.linkUser(tg);
     const p = this.findProductPoints(opts.product_id);
     if (!p) throw new BadRequestException('invalid product_id');
     return {
@@ -1491,10 +1565,22 @@ export class AppService {
     const role = String(body?.role || 'owner').trim();
     const initData = String(body?.init_data || '').trim();
     if (!initData) throw new BadRequestException('init_data required');
-    const phone = this.normalizePhone(`tg_${Date.now()}`);
-    const user = { id: this.v1RandomId('u'), phone, role, name: 'Telegram 用户' };
+    const tg = this.getTelegramUserInfo('', initData);
+    if (!tg) throw new BadRequestException('invalid telegram init_data');
+    const phone = this.normalizePhone(`tg_${tg.telegram_id}`);
+    const name = tg.first_name || tg.username || `用户_${tg.telegram_id}`;
+    const user = {
+      id: `u_${tg.telegram_id}`,
+      phone,
+      role,
+      name,
+      telegram_id: String(tg.telegram_id),
+      username: tg.username,
+      first_name: tg.first_name,
+    };
     this.v1UsersByPhone.set(phone, user);
-    return { code: 0, message: 'ok', data: { token: `utk_${randomUUID()}`, user } };
+    await this.linkUser(tg);
+    return { code: 0, message: 'ok', data: { pending_approval: false, token: `utk_${randomUUID()}`, user } };
   }
 
   async v1AuthTelegramWebappBindPhone(body: any) {

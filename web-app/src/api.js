@@ -4,7 +4,16 @@ function getTelegramInitData() {
     if (mock) return String(mock)
     const tg = window && window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null
     const initData = tg && typeof tg.initData === 'string' ? tg.initData : ''
-    return initData
+    if (initData) return initData
+
+    try {
+      const sp = window && window.location ? new URLSearchParams(window.location.search || '') : null
+      const fromUrl = sp ? String(sp.get('tgWebAppData') || '').trim() : ''
+      if (fromUrl) return fromUrl
+    } catch {
+      void 0
+    }
+    return ''
   } catch {
     return ''
   }
