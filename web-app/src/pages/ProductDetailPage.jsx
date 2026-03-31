@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link, useLocation, useParams } from 'react-router-dom'
 import { apiFetch } from '../api/client'
 import SafeImage from '../components/SafeImage.jsx'
+import { RP_MINIAPP_LANGS, rpMiniAppGetLangLabel, rpMiniAppLangToLocale } from '../i18n/rpMiniApp.js'
 
 export default function ProductDetailPage() {
   const { productId } = useParams()
@@ -15,12 +16,28 @@ export default function ProductDetailPage() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
+  const [lang, setLang] = useState(() => {
+    try {
+      return localStorage.getItem('rp_miniapp_lang') || 'ZH'
+    } catch {
+      return 'ZH'
+    }
+  })
+
+  const ui = useMemo(() => {
+    const id = String(lang || '').toUpperCase()
+    if (id === 'ZH') return { add: '加入购物车', buy: '立即购买', back: '返回商城' }
+    if (id === 'KM') return { add: 'បន្ថែមទៅកន្ត្រក', buy: 'ទិញឥឡូវ', back: 'ត្រឡប់ទៅហាង' }
+    return { add: 'Add to Cart', buy: 'Buy Now', back: 'Back' }
+  }, [lang])
 
   const loadDetail = async () => {
     setLoading(true)
     setError('')
     try {
-      const data = await apiFetch(`/marketplace/products/${productId}`)
+      const params = new URLSearchParams()
+      params.set('lang', rpMiniAppLangToLocale(lang))
+      const data = await apiFetch(`/marketplace/products/${productId}?${params.toString()}`)
       setDetail(data)
     } catch (e) {
       setError(e?.message || '加载商品失败')
@@ -31,7 +48,15 @@ export default function ProductDetailPage() {
 
   useEffect(() => {
     loadDetail()
-  }, [productId])
+  }, [productId, lang])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('rp_miniapp_lang', String(lang || 'ZH'))
+    } catch {
+      void 0
+    }
+  }, [lang])
 
   const priceText = useMemo(() => `$${(Number(detail?.price_cents || 0) / 100).toFixed(2)}`, [detail])
 
@@ -63,8 +88,20 @@ export default function ProductDetailPage() {
       <section className="section">
         <div className="container">
           <Link className="btn btn-outline" to="/rainbowpaw/marketplace">
-            返回商城
+            {ui.back}
           </Link>
+          <div className="tags" style={{ marginTop: '0.75rem' }}>
+            {RP_MINIAPP_LANGS.map((l) => (
+              <button
+                key={l.id}
+                type="button"
+                onClick={() => setLang(l.id)}
+                className={`tag ${String(lang || '').toUpperCase() === String(l.id).toUpperCase() ? 'on' : ''}`}
+              >
+                {rpMiniAppGetLangLabel(l.id)}
+              </button>
+            ))}
+          </div>
           {loading && <p className="shop-hint">加载中...</p>}
           {error && <p className="shop-error">{error}</p>}
           {detail && (
@@ -88,10 +125,10 @@ export default function ProductDetailPage() {
               </div>
               <div className="shop-actions">
                 <button className="btn btn-dark" onClick={addToCart}>
-                  Add to Cart
+                  {ui.add}
                 </button>
                 <Link className="btn btn-outline" to={`/rainbowpaw/marketplace/cart?phone=${encodeURIComponent(phone)}`}>
-                  Buy Now
+                  {ui.buy}
                 </Link>
               </div>
               {message && <p className="shop-ok">{message}</p>}

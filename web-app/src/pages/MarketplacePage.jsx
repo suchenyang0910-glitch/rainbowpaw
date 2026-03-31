@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { apiFetch } from '../api/client'
 import SafeImage from '../components/SafeImage.jsx'
+import { RP_MINIAPP_LANGS, rpMiniAppGetLangLabel, rpMiniAppLangToLocale } from '../i18n/rpMiniApp.js'
 
 const CATEGORY_OPTIONS = [
   { key: '', label: '全部' },
@@ -18,12 +19,22 @@ export default function MarketplacePage() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [phone, setPhone] = useState(localStorage.getItem('rp_shop_phone') || '')
+  const [lang, setLang] = useState(() => {
+    try {
+      return localStorage.getItem('rp_miniapp_lang') || 'ZH'
+    } catch {
+      return 'ZH'
+    }
+  })
 
   const loadProducts = async () => {
     setLoading(true)
     setError('')
     try {
-      const query = category ? `?category=${encodeURIComponent(category)}` : ''
+      const params = new URLSearchParams()
+      if (category) params.set('category', category)
+      params.set('lang', rpMiniAppLangToLocale(lang))
+      const query = params.toString() ? `?${params.toString()}` : ''
       const data = await apiFetch(`/marketplace/products${query}`)
       setProducts(Array.isArray(data?.items) ? data.items : [])
     } catch (e) {
@@ -35,7 +46,15 @@ export default function MarketplacePage() {
 
   useEffect(() => {
     loadProducts()
-  }, [category])
+  }, [category, lang])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('rp_miniapp_lang', String(lang || 'ZH'))
+    } catch {
+      void 0
+    }
+  }, [lang])
 
   const priceFormatter = useMemo(
     () => new Intl.NumberFormat('zh-CN', { minimumFractionDigits: 0, maximumFractionDigits: 2 }),
@@ -48,6 +67,18 @@ export default function MarketplacePage() {
         <div className="container">
           <h1 className="section-title">纪念商城</h1>
           <p className="section-sub">线上纪念 + 商品服务交易，支持平台化扩展。</p>
+          <div className="tags" style={{ marginTop: '0.75rem' }}>
+            {RP_MINIAPP_LANGS.map((l) => (
+              <button
+                key={l.id}
+                type="button"
+                onClick={() => setLang(l.id)}
+                className={`tag ${String(lang || '').toUpperCase() === String(l.id).toUpperCase() ? 'on' : ''}`}
+              >
+                {rpMiniAppGetLangLabel(l.id)}
+              </button>
+            ))}
+          </div>
           <div className="shop-form">
             <input
               className="shop-input"

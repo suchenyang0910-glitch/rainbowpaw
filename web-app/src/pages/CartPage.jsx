@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { apiFetch } from '../api/client'
 import SafeImage from '../components/SafeImage.jsx'
+import { RP_MINIAPP_LANGS, rpMiniAppGetLangLabel } from '../i18n/rpMiniApp.js'
 
 export default function CartPage() {
   const location = useLocation()
@@ -13,6 +14,58 @@ export default function CartPage() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
+  const [lang, setLang] = useState(() => {
+    try {
+      return localStorage.getItem('rp_miniapp_lang') || 'ZH'
+    } catch {
+      return 'ZH'
+    }
+  })
+
+  const ui = useMemo(() => {
+    const id = String(lang || '').toUpperCase()
+    if (id === 'ZH')
+      return {
+        title: '购物车',
+        phone: '手机号',
+        back: '返回商城',
+        qty: '数量',
+        unselect: '取消勾选',
+        select: '勾选',
+        del: '删除',
+        summary: '结算摘要',
+        selected: '已选商品',
+        total: '合计',
+        submit: '提交结算',
+      }
+    if (id === 'KM')
+      return {
+        title: 'កន្ត្រក',
+        phone: 'លេខទូរស័ព្ទ',
+        back: 'ត្រឡប់ទៅហាង',
+        qty: 'ចំនួន',
+        unselect: 'ដកជ្រើស',
+        select: 'ជ្រើស',
+        del: 'លុប',
+        summary: 'សង្ខេបបង់ប្រាក់',
+        selected: 'ទំនិញដែលបានជ្រើស',
+        total: 'សរុប',
+        submit: 'បញ្ជូន',
+      }
+    return {
+      title: 'Cart',
+      phone: 'Phone',
+      back: 'Back',
+      qty: 'Qty',
+      unselect: 'Unselect',
+      select: 'Select',
+      del: 'Remove',
+      summary: 'Summary',
+      selected: 'Selected',
+      total: 'Total',
+      submit: 'Checkout',
+    }
+  }, [lang])
 
   const loadCart = async (targetPhone = phone) => {
     if (!targetPhone.trim()) return
@@ -34,6 +87,14 @@ export default function CartPage() {
       loadCart(phone)
     }
   }, [phone])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('rp_miniapp_lang', String(lang || 'ZH'))
+    } catch {
+      void 0
+    }
+  }, [lang])
 
   const patchItem = async (itemId, payload) => {
     setError('')
@@ -87,11 +148,23 @@ export default function CartPage() {
     <div className="site">
       <section className="section">
         <div className="container">
-          <h1 className="section-title">购物车</h1>
+          <h1 className="section-title">{ui.title}</h1>
+          <div className="tags" style={{ marginTop: '0.75rem' }}>
+            {RP_MINIAPP_LANGS.map((l) => (
+              <button
+                key={l.id}
+                type="button"
+                onClick={() => setLang(l.id)}
+                className={`tag ${String(lang || '').toUpperCase() === String(l.id).toUpperCase() ? 'on' : ''}`}
+              >
+                {rpMiniAppGetLangLabel(l.id)}
+              </button>
+            ))}
+          </div>
           <div className="shop-form">
-            <input className="shop-input" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="手机号" />
+            <input className="shop-input" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder={ui.phone} />
             <Link className="btn btn-outline" to="/rainbowpaw/marketplace">
-              返回商城
+              {ui.back}
             </Link>
           </div>
           {loading && <p className="shop-hint">加载中...</p>}
@@ -101,26 +174,26 @@ export default function CartPage() {
               <article className="card shop" key={item.id}>
                 {item.image_url ? <SafeImage src={item.image_url} alt={item.name || '商品'} /> : <div className="shop-ph">No Image</div>}
                 <h3>{item.name || '商品'}</h3>
-                <p>数量：{item.quantity}</p>
+                <p>{ui.qty}：{item.quantity}</p>
                 <p className="shop-price">${(Number(item.unit_price_cents || 0) / 100).toFixed(2)}</p>
                 <div className="shop-actions">
                   <button className="btn btn-outline" onClick={() => patchItem(item.id, { quantity: Math.max(1, Number(item.quantity || 1) - 1) })}>-1</button>
                   <button className="btn btn-outline" onClick={() => patchItem(item.id, { quantity: Number(item.quantity || 1) + 1 })}>+1</button>
                   <button className="btn btn-outline" onClick={() => patchItem(item.id, { selected: !item.selected })}>
-                    {item.selected ? '取消勾选' : '勾选'}
+                    {item.selected ? ui.unselect : ui.select}
                   </button>
-                  <button className="btn btn-outline" onClick={() => deleteItem(item.id)}>删除</button>
+                  <button className="btn btn-outline" onClick={() => deleteItem(item.id)}>{ui.del}</button>
                 </div>
               </article>
             ))}
           </div>
           <div className="card" style={{ marginTop: '1rem' }}>
-            <h3>结算摘要</h3>
-            <p>已选商品：{selectedCount}</p>
-            <p>合计：${(Number(cart.subtotal_cents || 0) / 100).toFixed(2)}</p>
+            <h3>{ui.summary}</h3>
+            <p>{ui.selected}：{selectedCount}</p>
+            <p>{ui.total}：${(Number(cart.subtotal_cents || 0) / 100).toFixed(2)}</p>
             <div className="shop-actions">
               <button className="btn btn-dark" onClick={checkout} disabled={selectedCount === 0 || loading}>
-                提交结算
+                {ui.submit}
               </button>
             </div>
             {message && <p className="shop-ok">{message}</p>}

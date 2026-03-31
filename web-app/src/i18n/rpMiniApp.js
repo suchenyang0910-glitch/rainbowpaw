@@ -236,6 +236,9 @@ const DICT = {
     'profile.stats.pending': 'Pending',
     'profile.stats.completed': 'Completed',
 
+    'merchant.productDraft.required':
+      'Please fill default-language name & category label, plus category and price.',
+
     'memorial.open': 'Open',
     'memorial.saved': 'Saved',
     'memorial.savedDesc': 'Saved successfully',
@@ -494,6 +497,8 @@ const DICT = {
     'profile.stats.pending': '待处理',
     'profile.stats.completed': '已完成',
 
+    'merchant.productDraft.required': '请完整填写默认语言的名称/分类显示名，以及类目/价格。',
+
     'memorial.open': '打开',
     'memorial.saved': '已保存',
     'memorial.savedDesc': '保存成功',
@@ -707,6 +712,9 @@ const DICT = {
     'profile.stats.all': 'All',
     'profile.stats.pending': 'Pending',
     'profile.stats.completed': 'Completed',
+
+    'merchant.productDraft.required':
+      'សូមបំពេញ ឈ្មោះ/ឈ្មោះប្រភេទ (ភាសាលំនាំដើម) និង ប្រភេទ/តម្លៃ។',
 
     'memorial.open': 'Open',
     'memorial.saved': 'Saved',

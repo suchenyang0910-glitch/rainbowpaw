@@ -732,7 +732,16 @@ export class AppService {
             (p) => String(p.category) === category,
           )
         : this.marketplaceProductsStore;
-      return { code: 0, message: 'ok', data: { items: list } };
+      const items = list.map((p: any) => {
+        const txt = this.resolveProductTextByLang(p, opts?.lang);
+        return {
+          ...p,
+          name: txt.name,
+          category_label: txt.category_label,
+          description: txt.description,
+        };
+      });
+      return { code: 0, message: 'ok', data: { items } };
     }
   }
 
@@ -746,7 +755,17 @@ export class AppService {
         throw new BadRequestException('invalid product id');
       const p = this.marketplaceProductsStore.find((x) => Number(x.id) === id);
       if (!p) throw new BadRequestException('product not found');
-      return { code: 0, message: 'ok', data: p };
+      const txt = this.resolveProductTextByLang(p, opts?.lang);
+      return {
+        code: 0,
+        message: 'ok',
+        data: {
+          ...p,
+          name: txt.name,
+          category_label: txt.category_label,
+          description: txt.description,
+        },
+      };
     }
   }
 
@@ -2402,18 +2421,23 @@ export class AppService {
     } catch {
       const items = this.marketplaceProductsStore
         .filter((p: any) => String(p?.merchant?.id || '') === String(m.id))
-        .map((p: any) => ({
-          id: p.id,
-          name: p.name,
-          category: p.category,
-          description: p.description,
-          price_cents: p.price_cents,
-          currency: p.currency,
-          stock: p.stock ?? 0,
-          status: p.status || 'published',
-          images: p.images || [],
-          i18n: {},
-        }));
+        .map((p: any) => {
+          const txt = this.resolveProductTextByLang(p, lang);
+          return {
+            id: p.id,
+            name: txt.name,
+            category: p.category,
+            category_label: txt.category_label,
+            description: txt.description,
+            price_cents: p.price_cents,
+            currency: p.currency,
+            stock: p.stock ?? 0,
+            status: p.status || 'published',
+            images: p.images || [],
+            default_lang: p.default_lang || 'zh-CN',
+            i18n: p.i18n || {},
+          };
+        });
       return { code: 0, message: 'ok', data: { items } };
     }
   }
@@ -2491,11 +2515,16 @@ export class AppService {
       return { code: 0, message: 'ok', data };
     } catch {
       const id = Number(Date.now());
+      const txt = this.resolveProductTextByLang(
+        { i18n, default_lang: defaultLang },
+        defaultLang,
+      );
       const next: any = {
         id,
         category,
-        name: mustName || `商品_${id}`,
-        description: i18n?.[defaultLang]?.description || null,
+        name: txt.name || mustName || `商品_${id}`,
+        category_label: txt.category_label,
+        description: txt.description,
         price_cents: priceCents,
         currency,
         images: [],
@@ -2505,6 +2534,8 @@ export class AppService {
         stock: stock ?? 0,
         status: 'draft',
         sales_7d: 0,
+        default_lang: defaultLang,
+        i18n: i18n || {},
       };
       this.marketplaceProductsStore.unshift(next);
       return { code: 0, message: 'ok', data: next };
@@ -2625,11 +2656,55 @@ export class AppService {
           0,
           Math.floor(Number(body.price_cents || 0)),
         );
+      if (typeof body?.default_lang !== 'undefined')
+        next.default_lang = this.normalizeLocale(body.default_lang);
+      const i18nFromBody = this.parseProductI18nFromBody(body);
+      const maybeDefaultLang = this.normalizeLocale(
+        body?.default_lang || req?.query?.lang,
+      );
+      const fallbackName =
+        typeof body.name === 'string' ? String(body.name).trim() : '';
+      const fallbackCategoryLabel =
+        typeof body.category_label === 'string'
+          ? String(body.category_label)
+          : null;
+      const fallbackDesc =
+        typeof body.description === 'string' || body.description === null
+          ? body.description
+          : null;
+      const fallbackI18n =
+        fallbackName || fallbackCategoryLabel || fallbackDesc != null
+          ? {
+              [maybeDefaultLang]: {
+                name: fallbackName || null,
+                category_label: fallbackCategoryLabel,
+                description: fallbackDesc != null ? String(fallbackDesc) : null,
+              },
+            }
+          : null;
+      const patchI18n = i18nFromBody || fallbackI18n;
+      if (patchI18n) {
+        next.i18n = next.i18n && typeof next.i18n === 'object' ? next.i18n : {};
+        for (const [k, v] of Object.entries(patchI18n)) {
+          const lc = this.normalizeLocaleOrNull(k);
+          if (!lc) continue;
+          next.i18n[lc] = {
+            ...(next.i18n[lc] && typeof next.i18n[lc] === 'object'
+              ? next.i18n[lc]
+              : {}),
+            ...(v && typeof v === 'object' ? v : {}),
+          };
+        }
+      }
       if (typeof body?.name === 'string') next.name = String(body.name);
       if (typeof body?.category === 'string')
         next.category = String(body.category);
       if (typeof body?.description === 'string' || body?.description === null)
         next.description = body.description;
+      const txt = this.resolveProductTextByLang(next, next.default_lang);
+      next.name = txt.name;
+      next.category_label = txt.category_label;
+      next.description = txt.description;
       this.marketplaceProductsStore[idx] = next;
       return { code: 0, message: 'ok', data: next };
     }
@@ -2869,6 +2944,52 @@ export class AppService {
     const raw = String(input || '').trim();
     if (!raw) return null;
     return this.normalizeLocale(raw);
+  }
+
+  private resolveProductTextByLang(p: any, langInput: any) {
+    const i18n = p?.i18n && typeof p.i18n === 'object' ? p.i18n : null;
+    const normalized = this.normalizeLocaleOrNull(langInput);
+    const defaultLang = this.normalizeLocale(p?.default_lang || 'zh-CN');
+    if (!i18n) {
+      return {
+        name: p?.name != null ? String(p.name) : '',
+        category_label:
+          p?.category_label != null ? String(p.category_label) : null,
+        description: p?.description != null ? String(p.description) : null,
+      };
+    }
+    const pick = (lc: any) => {
+      const key = this.normalizeLocaleOrNull(lc);
+      if (!key) return null;
+      const v = i18n[key] && typeof i18n[key] === 'object' ? i18n[key] : null;
+      if (!v) return null;
+      return {
+        name: v.name != null ? String(v.name) : null,
+        category_label:
+          v.category_label != null ? String(v.category_label) : null,
+        description: v.description != null ? String(v.description) : null,
+      };
+    };
+    const primary = pick(normalized) || pick(defaultLang);
+    const fallbackKey = Object.keys(i18n || {})[0];
+    const fallback = primary || pick(fallbackKey);
+    return {
+      name:
+        (fallback?.name != null ? String(fallback.name) : '') ||
+        (p?.name != null ? String(p.name) : ''),
+      category_label:
+        fallback?.category_label != null
+          ? String(fallback.category_label)
+          : p?.category_label != null
+            ? String(p.category_label)
+            : null,
+      description:
+        fallback?.description != null
+          ? String(fallback.description)
+          : p?.description != null
+            ? String(p.description)
+            : null,
+    };
   }
 
   private async marketplaceDbListProducts(opts: {
