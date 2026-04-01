@@ -429,7 +429,7 @@ const ShippingModal = ({ t, open, initial, onClose, onSubmit }) => {
   )
 }
 
-const ProductModal = ({ product, onClose, onDirectBuy, onGroupBuy }) => {
+const ProductModal = ({ t, product, onClose, onDirectBuy, onGroupBuy }) => {
   if (!product) return null
   return (
     <div className="fixed inset-0 bg-black/40 z-[70] flex items-end animate-in fade-in duration-200" onClick={onClose}>
@@ -440,12 +440,12 @@ const ProductModal = ({ product, onClose, onDirectBuy, onGroupBuy }) => {
             <div className="w-16 h-16 bg-gray-50 rounded-2xl flex items-center justify-center text-3xl">{product.image || (product.image_url ? '🛍️' : '🛍️')}</div>
             <div>
               <h3 className="text-lg font-bold">{product.display_name || product.name}</h3>
-              <p className="text-sm text-gray-400">库存充足 | 返现计划可用</p>
+              <p className="text-sm text-gray-400">{t('product.modal.subtitle')}</p>
             </div>
           </div>
           <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-full"><X size={20} /></button>
         </div>
-        <p className="text-sm text-gray-600 leading-relaxed mb-6">支付完成后，分享给 2 位好友即可获得最高 30% 的现金返还。赚钱购物两不误！</p>
+        <p className="text-sm text-gray-600 leading-relaxed mb-6">{t('product.modal.desc')}</p>
         <div className="grid grid-cols-2 gap-4 mb-8">
           <button
             className="flex flex-col items-center justify-center border-2 border-gray-100 rounded-2xl py-3 active:bg-gray-50"
@@ -454,7 +454,7 @@ const ProductModal = ({ product, onClose, onDirectBuy, onGroupBuy }) => {
               if (onDirectBuy) onDirectBuy(product)
             }}
           >
-            <span className="text-[10px] font-bold text-gray-400 uppercase">直接购买</span>
+            <span className="text-[10px] font-bold text-gray-400 uppercase">{t('product.modal.direct')}</span>
             <span className="text-lg font-black text-gray-700">${Number(product.direct_buy_price || product.price || 0)}</span>
           </button>
           <button
@@ -464,7 +464,7 @@ const ProductModal = ({ product, onClose, onDirectBuy, onGroupBuy }) => {
               if (onGroupBuy) onGroupBuy(product)
             }}
           >
-            <span className="text-[10px] font-bold text-blue-100 uppercase">拼团赚钱</span>
+            <span className="text-[10px] font-bold text-blue-100 uppercase">{t('product.modal.group')}</span>
             <span className="text-lg font-black text-white">${Math.round(Number(product.direct_buy_price || product.price || 0) * 70) / 100}</span>
           </button>
         </div>
@@ -1761,7 +1761,7 @@ export default function App() {
       api.me().then(setMe).catch(() => {})
       api.wallet(20).then((d) => { setWallet(d.wallet || null); setWalletLogs(d.logs || []) }).catch(() => {})
       api.groupsActive({ limit: 20, sort: 'recent' }).then((d) => setActiveGroups(d.groups || [])).catch(() => {})
-      showToast(t('toast.orderCreated'))
+      showToast(t('toast.groupCreated'))
       api.event('purchase_group_ok', { product_id: product.id }, { source_bot: miniSourceBot, global_user_id: gid }).catch(() => {})
       clearIdemKey('group', pid)
     } catch (e) {
@@ -1815,7 +1815,7 @@ export default function App() {
       api.me().then(setMe).catch(() => {})
       api.wallet(20).then((d) => { setWallet(d.wallet || null); setWalletLogs(d.logs || []) }).catch(() => {})
       api.groupsActive({ limit: 20, sort: 'recent' }).then((d) => setActiveGroups(d.groups || [])).catch(() => {})
-      showToast(t('toast.orderCreated'))
+      showToast(t('toast.joinRequested'))
       api.event('join_group_pay_ok', { group_id: gid }, { source_bot: miniSourceBot, global_user_id: gid2 }).catch(() => {})
       clearIdemKey('join', gid)
     } catch (e) {
@@ -1880,7 +1880,7 @@ export default function App() {
       <BottomTabNav t={t} activeTab={activeTab} setActiveTab={setActiveTab} />
       <PaymentModal data={paymentModal} onClose={() => setPaymentModal(null)} onSubmitProof={submitProof} onSubmitProofFile={submitProofFile} onShareLink={shareLink} onPreviewProof={previewProof} />
       <ActionModal data={actionModal} onClose={() => setActionModal(null)} />
-      <ProductModal product={selectedProduct} onClose={() => setSelectedProduct(null)} onDirectBuy={directBuy} onGroupBuy={groupBuy} />
+      <ProductModal t={t} product={selectedProduct} onClose={() => setSelectedProduct(null)} onDirectBuy={directBuy} onGroupBuy={groupBuy} />
       <ShippingModal t={t} open={shippingModalOpen} initial={me && me.shipping ? me.shipping : null} onClose={() => setShippingModalOpen(false)} onSubmit={submitShipping} />
       <BuyPlaysModal
         t={t}

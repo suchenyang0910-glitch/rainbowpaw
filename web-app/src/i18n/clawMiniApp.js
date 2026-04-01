@@ -77,6 +77,8 @@ const DICT = {
 
     'toast.debugCopied': 'Debug info copied',
     'toast.orderCreated': 'Order created',
+    'toast.groupCreated': 'Group created',
+    'toast.joinRequested': 'Join requested',
 
     'wallet.buyPlays.title': 'Not enough plays',
     'wallet.buyPlays.desc': 'Choose a bundle to continue',
@@ -92,6 +94,12 @@ const DICT = {
     'shipping.submit': 'Submit',
     'shipping.submitting': 'Submitting...',
     'shipping.need': 'Shipping info required',
+
+    'product.modal.subtitle': 'In stock | Cashback available',
+    'product.modal.desc':
+      'After payment, share with 2 friends to get up to 30% cashback. Earn while shopping!',
+    'product.modal.direct': 'Direct Buy',
+    'product.modal.group': 'Group & Earn',
   },
   ZH: {
     'tabs.home': '首页',
@@ -140,6 +148,8 @@ const DICT = {
 
     'toast.debugCopied': '已复制诊断信息',
     'toast.orderCreated': '下单成功',
+    'toast.groupCreated': '已创建拼团',
+    'toast.joinRequested': '已发起加入',
 
     'wallet.buyPlays.title': '次数不足',
     'wallet.buyPlays.desc': '请选择购买抽奖次数',
@@ -155,6 +165,11 @@ const DICT = {
     'shipping.submit': '提交',
     'shipping.submitting': '提交中...',
     'shipping.need': '需要填写收货信息',
+
+    'product.modal.subtitle': '库存充足 | 返现计划可用',
+    'product.modal.desc': '支付完成后，分享给 2 位好友即可获得最高 30% 的现金返还。赚钱购物两不误！',
+    'product.modal.direct': '直接购买',
+    'product.modal.group': '拼团赚钱',
   },
   KM: {
     'tabs.home': 'ទំព័រដើម',
@@ -206,6 +221,8 @@ const DICT = {
 
     'toast.debugCopied': 'Copied',
     'toast.orderCreated': 'Order created',
+    'toast.groupCreated': 'Group created',
+    'toast.joinRequested': 'Join requested',
 
     'wallet.buyPlays.title': 'Not enough plays',
     'wallet.buyPlays.desc': 'Choose a bundle to continue',
@@ -221,6 +238,12 @@ const DICT = {
     'shipping.submit': 'Submit',
     'shipping.submitting': 'Submitting...',
     'shipping.need': 'Shipping info required',
+
+    'product.modal.subtitle': 'In stock | Cashback available',
+    'product.modal.desc':
+      'After payment, share with 2 friends to get up to 30% cashback. Earn while shopping!',
+    'product.modal.direct': 'Direct Buy',
+    'product.modal.group': 'Group & Earn',
   },
 }
 

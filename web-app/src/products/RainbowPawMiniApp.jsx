@@ -27,7 +27,13 @@ import {
   Trash2,
   PawPrint,
 } from 'lucide-react'
-import { RP_MINIAPP_LANGS, rpMiniAppGetLangLabel, rpMiniAppLangToLocale, rpMiniAppT } from '../i18n/rpMiniApp.js'
+import {
+  RP_MINIAPP_LANGS,
+  rpMiniAppGetLangLabel,
+  rpMiniAppLangToLocale,
+  rpMiniAppLocaleToLang,
+  rpMiniAppT,
+} from '../i18n/rpMiniApp.js'
 import { apiFetch } from '../api/client.js'
 import SafeImage from '../components/SafeImage.jsx'
 
@@ -619,7 +625,7 @@ const Header = ({ title, showBack, onBack, onSearch, onCart, cartCount, onLang, 
   </div>
 )
 
-const PackageAddressPage = ({ packageCheckoutDraft, packageAddressDraft, setPackageAddressDraft, onBack, onConfirm, onRequestLocation }) => {
+const PackageAddressPage = ({ t, packageCheckoutDraft, packageAddressDraft, setPackageAddressDraft, onBack, onConfirm, onRequestLocation }) => {
   const [submitting, setSubmitting] = useState(false)
   const canContinue = Boolean(
     String(packageAddressDraft?.pickup_address || '').trim() &&
@@ -629,58 +635,58 @@ const PackageAddressPage = ({ packageCheckoutDraft, packageAddressDraft, setPack
 
   return (
     <div className="rp-page-bg min-h-screen pb-24">
-      <Header title="填写接宠地址" showBack onBack={onBack} hideActions />
+      <Header title={t('aftercare.addr.title')} showBack onBack={onBack} hideActions />
       <div className="p-4 space-y-3">
         <div className="rp-card p-4">
-          <div className="text-sm font-black text-gray-900 mb-1">填写地址后才可继续支付</div>
-          <div className="text-[10px] text-gray-500">用于安排专员上门接宠与路线规划</div>
+          <div className="text-sm font-black text-gray-900 mb-1">{t('aftercare.addr.leadTitle')}</div>
+          <div className="text-[10px] text-gray-500">{t('aftercare.addr.leadDesc')}</div>
         </div>
 
         <div className="rp-card p-4 space-y-3">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <div>
-              <div className="text-xs font-bold text-gray-600 mb-1">联系人</div>
+              <div className="text-xs font-bold text-gray-600 mb-1">{t('aftercare.addr.contact')}</div>
               <input
                 className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-indigo-400 bg-white"
                 value={String(packageAddressDraft?.contact_name || '')}
-                placeholder="请输入联系人姓名"
+                placeholder={t('aftercare.addr.contactPh')}
                 onChange={(e) => setPackageAddressDraft((p) => ({ ...(p || {}), contact_name: e.target.value }))}
               />
             </div>
             <div>
-              <div className="text-xs font-bold text-gray-600 mb-1">联系人手机号</div>
+              <div className="text-xs font-bold text-gray-600 mb-1">{t('aftercare.addr.phone')}</div>
               <input
                 className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-indigo-400 bg-white"
                 value={String(packageAddressDraft?.contact_phone || '')}
-                placeholder="请输入手机号"
+                placeholder={t('aftercare.addr.phonePh')}
                 onChange={(e) => setPackageAddressDraft((p) => ({ ...(p || {}), contact_phone: e.target.value }))}
               />
             </div>
           </div>
           <div>
-            <div className="text-xs font-bold text-gray-600 mb-1">城市</div>
+            <div className="text-xs font-bold text-gray-600 mb-1">{t('aftercare.addr.city')}</div>
             <input
               className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-indigo-400 bg-white"
               value={String(packageAddressDraft?.city || '')}
-              placeholder="例如：Phnom Penh"
+              placeholder={t('aftercare.addr.cityPh')}
               onChange={(e) => setPackageAddressDraft((p) => ({ ...(p || {}), city: e.target.value }))}
             />
           </div>
           <div>
-            <div className="text-xs font-bold text-gray-600 mb-1">上门地址</div>
+            <div className="text-xs font-bold text-gray-600 mb-1">{t('aftercare.addr.address')}</div>
             <textarea
               className="w-full min-h-[90px] border border-gray-200 rounded-xl p-3 text-sm outline-none focus:border-indigo-400 bg-white"
               value={String(packageAddressDraft?.pickup_address || '')}
-              placeholder="请输入详细地址（楼栋/门牌/备注）"
+              placeholder={t('aftercare.addr.addressPh')}
               onChange={(e) => setPackageAddressDraft((p) => ({ ...(p || {}), pickup_address: e.target.value }))}
             />
           </div>
           <div>
-            <div className="text-xs font-bold text-gray-600 mb-1">期望时间段（可选）</div>
+            <div className="text-xs font-bold text-gray-600 mb-1">{t('aftercare.addr.timeWindow')}</div>
             <input
               className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-indigo-400 bg-white"
               value={String(packageAddressDraft?.time_window || '')}
-              placeholder="例如：今天 18:00–20:00"
+              placeholder={t('aftercare.addr.timeWindowPh')}
               onChange={(e) => setPackageAddressDraft((p) => ({ ...(p || {}), time_window: e.target.value }))}
             />
           </div>
@@ -689,15 +695,15 @@ const PackageAddressPage = ({ packageCheckoutDraft, packageAddressDraft, setPack
         <div className="rp-card p-4">
           <div className="flex items-center justify-between gap-3 mb-2">
             <div className="min-w-0">
-              <div className="text-xs font-bold text-gray-600">定位</div>
-              <div className="text-[10px] text-gray-500 truncate">调用 Telegram 定位能力获取经纬度（可选）</div>
+              <div className="text-xs font-bold text-gray-600">{t('aftercare.addr.location')}</div>
+              <div className="text-[10px] text-gray-500 truncate">{t('aftercare.addr.locationDesc')}</div>
             </div>
             <button
               type="button"
               className="px-3 py-2 rounded-lg text-xs font-bold border bg-white text-gray-700 border-gray-200 active:bg-gray-50"
               onClick={onRequestLocation}
             >
-              获取定位
+              {t('aftercare.addr.locationBtn')}
             </button>
           </div>
           {packageAddressDraft?.location_lat != null && packageAddressDraft?.location_lng != null ? (
@@ -706,7 +712,7 @@ const PackageAddressPage = ({ packageCheckoutDraft, packageAddressDraft, setPack
               {packageAddressDraft.location_accuracy_m != null ? ` acc:${Number(packageAddressDraft.location_accuracy_m).toFixed(0)}m` : ''}
             </div>
           ) : (
-            <div className="text-[10px] text-gray-400">未获取到定位</div>
+            <div className="text-[10px] text-gray-400">{t('aftercare.addr.locationEmpty')}</div>
           )}
           {packageAddressDraft?.location_formatted_address || packageAddressDraft?.location_display_name ? (
             <div className="mt-2 text-[10px] text-gray-500">
@@ -719,7 +725,7 @@ const PackageAddressPage = ({ packageCheckoutDraft, packageAddressDraft, setPack
       <div className="fixed bottom-0 left-0 right-0 bg-white border-t px-4 py-3 pb-safe max-w-md mx-auto z-50">
         <div className="flex items-center gap-3">
           <div className="flex-1 min-w-0">
-            <div className="text-[10px] text-gray-500">套餐</div>
+            <div className="text-[10px] text-gray-500">{t('aftercare.addr.bundleLabel')}</div>
             <div className="text-sm font-black text-gray-900 truncate">{packageCheckoutDraft?.title || '-'}</div>
           </div>
           <button
@@ -752,7 +758,7 @@ const PackageAddressPage = ({ packageCheckoutDraft, packageAddressDraft, setPack
               }, 0)
             }}
           >
-            去支付
+            {submitting ? t('common.processing') : t('aftercare.addr.confirmPay')}
           </button>
         </div>
       </div>
@@ -1027,7 +1033,7 @@ const MerchantPortal = ({ onBackToUser, lang, t }) => {
 
   const ensureMerchantReady = () => {
     if (!merchantHeaders()) {
-      showToast('请先填写 Merchant Token')
+      showToast(t('merchant.tokenRequired'))
       return false
     }
     if (!merchantMe) {
@@ -1054,7 +1060,7 @@ const MerchantPortal = ({ onBackToUser, lang, t }) => {
 
   const rejectOrder = async (orderId) => {
     if (!ensureMerchantReady()) return
-    const reason = prompt('填写拒单原因（可选）') || null
+    const reason = prompt(t('merchant.rejectReasonPrompt')) || null
     setLoading(true)
     try {
       await merchantFetch(`/api/v1/merchant/orders/${encodeURIComponent(orderId)}/reject`, { method: 'POST', body: { reason } })
@@ -1793,6 +1799,10 @@ export default function RainbowPawMiniApp() {
         setLang(saved)
         setShowLangModal(false)
       } else {
+        const auto = rpMiniAppLocaleToLang(
+          typeof navigator !== 'undefined' ? navigator.language : 'en',
+        )
+        setLang(auto)
         setShowLangModal(true)
       }
     } catch (e) {
@@ -4632,6 +4642,7 @@ export default function RainbowPawMiniApp() {
     if (page === 'package_address')
       return (
         <PackageAddressPage
+          t={t}
           packageCheckoutDraft={packageCheckoutDraft}
           packageAddressDraft={packageAddressDraft}
           setPackageAddressDraft={setPackageAddressDraft}
