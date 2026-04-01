@@ -205,6 +205,27 @@ export class AiService {
     return fallback;
   }
 
+  private resolveMaxTokensForRole(role: string) {
+    const k = String(role || '')
+      .trim()
+      .toUpperCase()
+      .replace(/[^A-Z0-9]+/g, '_');
+    const roleKey = (process.env as any)[`AI_MAX_TOKENS_${k}`];
+    const n = this.numOrNull(roleKey) ?? this.numOrNull(process.env.AI_MAX_TOKENS) ?? 800;
+    return Math.min(4096, Math.max(16, Math.floor(n)));
+  }
+
+  private resolveTimeoutMsForRole(role: string) {
+    const k = String(role || '')
+      .trim()
+      .toUpperCase()
+      .replace(/[^A-Z0-9]+/g, '_');
+    const roleKey = (process.env as any)[`AI_HTTP_TIMEOUT_MS_${k}`];
+    const n =
+      this.numOrNull(roleKey) ?? this.numOrNull(process.env.AI_HTTP_TIMEOUT_MS) ?? 60000;
+    return Math.min(300000, Math.max(5000, Math.floor(n)));
+  }
+
   async supportReply(dto: SupportReplyDto, req: any) {
     const prompt = renderTemplate(SUPPORT_PROMPT, {
       user_message: dto.user_message,
@@ -430,8 +451,9 @@ export class AiService {
       apiKey,
       model,
       messages,
-      maxTokens: Number(process.env.AI_MAX_TOKENS || 800),
+      maxTokens: this.resolveMaxTokensForRole(role),
       temperature: Number(process.env.AI_TEMPERATURE || 0.2),
+      timeoutMs: this.resolveTimeoutMsForRole(role),
     });
     const latencyMs = Date.now() - t0;
 
@@ -445,6 +467,8 @@ export class AiService {
       model,
       messages,
       assistantText,
+      maxTokens: this.resolveMaxTokensForRole(role),
+      timeoutMs: this.resolveTimeoutMsForRole(role),
     });
 
     const usage = res?.usage || null;
@@ -516,8 +540,9 @@ export class AiService {
     if (!apiKey) throw new BadRequestException('AI_API_KEY 未配置');
     if (!baseUrl) throw new BadRequestException('AI_BASE_URL 未配置');
 
-    const maxTokens = Number(process.env.AI_MAX_TOKENS || 800);
+    const maxTokens = this.resolveMaxTokensForRole(role);
     const temperature = Number(process.env.AI_TEMPERATURE || 0.2);
+    const timeoutMs = this.resolveTimeoutMsForRole(role);
 
     await this.enforceDailyBudget();
 
@@ -539,6 +564,7 @@ export class AiService {
       messages,
       maxTokens,
       temperature,
+      timeoutMs,
     });
     const latencyMs = Date.now() - t0;
 
@@ -552,6 +578,8 @@ export class AiService {
       model,
       messages,
       assistantText,
+      maxTokens,
+      timeoutMs,
     });
 
     const usage = res?.usage || null;
@@ -911,26 +939,31 @@ export class AiService {
     messages: ChatMessage[];
     maxTokens: number;
     temperature: number;
+    timeoutMs?: number;
   }) {
     const url =
       params.baseUrl.replace(/\/$/, '') +
       (params.path.startsWith('/') ? params.path : `/${params.path}`);
+    const enableResponseFormat =
+      String(process.env.AI_RESPONSE_FORMAT || '').trim().toLowerCase() !==
+      'false';
+    const body: any = {
+      model: params.model,
+      messages: params.messages,
+      temperature: params.temperature,
+      max_tokens: params.maxTokens,
+    };
+    if (enableResponseFormat) body.response_format = { type: 'json_object' };
     const response = await axios
       .post(
         url,
-        {
-          model: params.model,
-          messages: params.messages,
-          temperature: params.temperature,
-          max_tokens: params.maxTokens,
-          response_format: { type: 'json_object' },
-        },
+        body,
         {
           headers: {
             Authorization: `Bearer ${params.apiKey}`,
             'Content-Type': 'application/json',
           },
-          timeout: Number(process.env.AI_HTTP_TIMEOUT_MS || 60000),
+          timeout: Number(params.timeoutMs ?? process.env.AI_HTTP_TIMEOUT_MS ?? 60000),
         },
       )
       .catch((e) => this.throwUpstreamError('Chat', e));
@@ -944,6 +977,8 @@ export class AiService {
     model: string;
     messages: ChatMessage[];
     assistantText: string;
+    maxTokens: number;
+    timeoutMs: number;
   }) {
     const direct = safeJsonParse(params.assistantText);
     if (direct.ok) return direct.value;
@@ -973,8 +1008,9 @@ export class AiService {
       apiKey: params.apiKey,
       model: params.model,
       messages: repairMessages,
-      maxTokens: Number(process.env.AI_MAX_TOKENS || 800),
+      maxTokens: params.maxTokens,
       temperature: 0,
+      timeoutMs: params.timeoutMs,
     });
 
     const t2 = String(res2?.choices?.[0]?.message?.content || '').trim();
