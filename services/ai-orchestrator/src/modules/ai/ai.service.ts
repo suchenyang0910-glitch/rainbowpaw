@@ -253,36 +253,83 @@ export class AiService {
       ? (dto as any).candidate_entries
       : [];
 
-    if (
-      supportsRetrieval &&
-      (candidateProducts.length || candidateEntries.length)
-    ) {
-      const query = this.buildRecommendQuery({
-        userProfile,
-        recentActions,
-        lastResult,
-      });
-      const docs = this.buildRecommendDocuments({
-        candidateProducts,
-        candidateEntries,
-      });
-      const ranked = await this.rankCandidates({ query, docs, req });
+    if (supportsRetrieval && (candidateProducts.length || candidateEntries.length)) {
+      let ranked: any[] | null = null;
+      let retrievalError: string | null = null;
 
+      try {
+        const query = this.buildRecommendQuery({
+          userProfile,
+          recentActions,
+          lastResult,
+        });
+        const docs = this.buildRecommendDocuments({
+          candidateProducts,
+          candidateEntries,
+        });
+        ranked = await this.rankCandidates({ query, docs, req });
+      } catch (e: any) {
+        const msg = (() => {
+          const m = e?.response?.message;
+          if (typeof m === 'string') return m;
+          if (Array.isArray(m)) return m.map(String).join('; ');
+          const r = e?.response;
+          if (typeof r === 'string') return r;
+          if (typeof e?.message === 'string' && e.message.trim()) return e.message;
+          return 'retrieval_failed';
+        })();
+        retrievalError = String(msg || 'retrieval_failed');
+        try {
+          await this.callLogStore.insert({
+            global_user_id: this.extractGlobalUserId(req),
+            role: 'recommend_retrieval',
+            model: String(process.env.AI_EMBED_MODEL || '').trim() || 'unknown',
+            provider_base_url: String(process.env.AI_BASE_URL || '').trim() || null,
+            request_json: {
+              candidate_products: candidateProducts.length,
+              candidate_entries: candidateEntries.length,
+            },
+            response_json: { error: retrievalError },
+            status: 'error',
+          });
+        } catch {}
+      }
+
+      if (ranked?.length) {
+        const prompt = renderTemplate(RECOMMEND_PROMPT, {
+          user_profile: userProfile,
+          recent_actions: recentActions,
+          last_result: lastResult,
+        });
+
+        const enrichedPrompt =
+          prompt +
+          `\n\n候选项（已排序，分数越高越优先）：\n${toJsonString(ranked.slice(0, 10))}`;
+
+        const out = await this.runRole('recommend_ai', enrichedPrompt, {
+          global_user_id: this.extractGlobalUserId(req),
+          input: dto,
+        });
+        return {
+          ...out,
+          retrieval_used: true,
+          ranked_candidates: ranked.slice(0, 10),
+        };
+      }
       const prompt = renderTemplate(RECOMMEND_PROMPT, {
         user_profile: userProfile,
         recent_actions: recentActions,
         last_result: lastResult,
       });
-
-      const enrichedPrompt =
-        prompt +
-        `\n\n候选项（已排序，分数越高越优先）：\n${toJsonString(ranked.slice(0, 10))}`;
-
-      const out = await this.runRole('recommend_ai', enrichedPrompt, {
+      const out = await this.runRole('recommend_ai', prompt, {
         global_user_id: this.extractGlobalUserId(req),
         input: dto,
       });
-      return { ...out, ranked_candidates: ranked.slice(0, 10) };
+      return {
+        ...out,
+        retrieval_used: false,
+        retrieval_error: retrievalError,
+      };
     }
 
     const prompt = renderTemplate(RECOMMEND_PROMPT, {
@@ -290,10 +337,11 @@ export class AiService {
       recent_actions: recentActions,
       last_result: lastResult,
     });
-    return this.runRole('recommend_ai', prompt, {
+    const out = await this.runRole('recommend_ai', prompt, {
       global_user_id: this.extractGlobalUserId(req),
       input: dto,
     });
+    return { ...out, retrieval_used: false };
   }
 
   async visionAnalyze(dto: VisionAnalyzeDto, req: any) {
