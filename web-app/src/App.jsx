@@ -1184,7 +1184,7 @@ const ProfilePage = ({ me, orders, onPayOrder, onEditShipping, onSupport, lang, 
     <div className="pb-20 animate-in fade-in duration-300">
       <div className="bg-white p-6 border-b border-gray-100 flex flex-col items-center">
         <div className="w-20 h-20 rounded-3xl bg-blue-100 mb-4 flex items-center justify-center text-3xl shadow-sm border-4 border-white">👤</div>
-        <h2 className="text-lg font-bold">{telegram && (telegram.first_name || telegram.username) ? (telegram.first_name || telegram.username) : '...'}</h2>
+        <h2 className="text-lg font-bold">{telegram && (telegram.last_name || telegram.first_name || telegram.username) ? (`${telegram.last_name || ''} ${telegram.first_name || ''}`.trim() || telegram.username) : '...'}</h2>
         <p className="text-sm text-gray-400">@{telegram && telegram.username ? telegram.username : '...'}</p>
       </div>
 
@@ -1467,9 +1467,21 @@ export default function App() {
   const directBuy = async (product) => {
     try {
       const r = await api.purchaseDirect(product.id)
-      openPayment({ title: `🛒 Buy - ${(product.display_name || product.name)}`, display_id: r.display_id, amount: r.payment.amount, pay: r.pay })
+      if (r && r.payment && typeof r.payment.amount !== 'undefined') {
+        openPayment({ title: `🛒 Buy - ${(product.display_name || product.name)}`, display_id: r.display_id, amount: r.payment.amount, pay: r.pay })
+        return
+      }
+      api.me().then(setMe).catch(() => {})
+      api.wallet(20).then((d) => { setWallet(d.wallet || null); setWalletLogs(d.logs || []) }).catch(() => {})
+      showToast('下单成功')
     } catch (e) {
-      showToast(e && e.message ? e.message : '创建订单失败')
+      const msg = e && e.message ? String(e.message) : '创建订单失败'
+      if (msg.includes('insufficient points') || msg.includes('no plays left')) {
+        showToast('积分不足，请先去钱包充值')
+        setActiveTab('wallet')
+        return
+      }
+      showToast(msg)
     }
   }
 

@@ -11,7 +11,7 @@ function registerRainbowStartRoute() {
 
     try {
       if (!token) {
-        return rainbowBot.sendMessage(
+        return await rainbowBot.sendMessage(
           chatId,
           '🌈 欢迎来到 RainbowPaw\n\n请选择你要探索的服务。',
           {
@@ -26,13 +26,31 @@ function registerRainbowStartRoute() {
         );
       }
 
-      const parsed = await bridgeService.parseDeepLink(token);
-
-      if (!parsed.valid) {
-        return rainbowBot.sendMessage(chatId, '链接已失效，请重新进入。');
+      let parsed = null;
+      try {
+        parsed = await bridgeService.parseDeepLink(token);
+      } catch {
+        parsed = null;
       }
 
-      const profile = await identityService.getProfile(parsed.global_user_id);
+      if (!parsed || !parsed.valid) {
+        await rainbowBot.sendMessage(chatId, '链接已失效，请重新进入。');
+        return await rainbowBot.sendMessage(
+          chatId,
+          '🌈 欢迎来到 RainbowPaw\n\n请选择你要探索的服务。',
+          {
+            reply_markup: {
+              keyboard: [
+                ['🛍 商城', '🕊 善终服务'],
+                ['📸 纪念页', '👩‍💼 客服'],
+              ],
+              resize_keyboard: true,
+            },
+          },
+        );
+      }
+
+      const profile = await identityService.getProfile(parsed.global_user_id).catch(() => null);
 
       let text = '🌈 欢迎来到 RainbowPaw\n\n';
       if (parsed.scene === 'memorial') {
@@ -49,7 +67,7 @@ function registerRainbowStartRoute() {
          text += `\n\n你的宠物类型：${profile.pet_type}`;
       }
 
-      rainbowBot.sendMessage(chatId, text, {
+      await rainbowBot.sendMessage(chatId, text, {
         reply_markup: {
           keyboard: [
             ['🛍 商城', '🕊 善终服务'],

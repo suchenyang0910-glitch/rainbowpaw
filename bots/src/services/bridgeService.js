@@ -31,7 +31,9 @@ async function generateLink(payload) {
 
 async function parseDeepLink(token) {
   try {
-    const { data } = await client.get(`/bridge/deep-link/${token}`);
+    const { data } = await client.get(
+      `/bridge/deep-link/${encodeURIComponent(String(token || '').trim())}`,
+    );
     return data.data;
   } catch (error) {
     console.error('bridgeService.parseDeepLink error:', error.response?.data || error.message);

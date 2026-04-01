@@ -1,4 +1,8 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import {
+  BadGatewayException,
+  BadRequestException,
+  Injectable,
+} from '@nestjs/common';
 import axios from 'axios';
 import { createHash, createHmac, randomUUID } from 'crypto';
 import { Pool } from 'pg';
@@ -17,6 +21,7 @@ type TelegramUserInfo = {
   telegram_id: number;
   username: string;
   first_name: string;
+  last_name: string;
   source_bot: 'rainbow_bot' | 'claw_bot' | 'dev' | 'unknown';
 };
 
@@ -384,6 +389,7 @@ export class AppService {
         telegram_id: dev,
         username: '',
         first_name: '',
+        last_name: '',
         source_bot: 'dev',
       };
     }
@@ -418,6 +424,7 @@ export class AppService {
       telegram_id: u.id,
       username: String(u.username || '').trim(),
       first_name: String(u.first_name || '').trim(),
+      last_name: String((u as any).last_name || '').trim(),
       source_bot,
     };
   }
@@ -554,6 +561,7 @@ export class AppService {
           id: tg.telegram_id,
           username: tg.username,
           first_name: tg.first_name,
+          last_name: tg.last_name,
         },
         user: {
           global_user_id: linked.global_user_id,
@@ -614,6 +622,19 @@ export class AppService {
     return { code: 0, message: 'ok', data: { wallet } };
   }
 
+  private isInsufficientPointsError(e: any) {
+    if (!axios.isAxiosError(e)) return false;
+    if (e.response?.status !== 400) return false;
+    const data: any = e.response?.data;
+    const msg =
+      typeof data?.message === 'string'
+        ? data.message
+        : Array.isArray(data?.message)
+          ? data.message.map(String).join('; ')
+          : '';
+    return msg.includes('insufficient points');
+  }
+
   async play(opts: {
     devTelegramId: string;
     telegramInitData: string;
@@ -638,7 +659,9 @@ export class AppService {
           'claw_consume',
         );
       } catch (e: any) {
-        throw new BadRequestException('no plays left');
+        if (this.isInsufficientPointsError(e))
+          throw new BadRequestException('no plays left');
+        throw new BadGatewayException('wallet service unavailable');
       }
       await this.walletRecycle(
         linked.global_user_id,
@@ -2016,15 +2039,26 @@ export class AppService {
       ? `purchaseDirect:${linked.global_user_id}:${opts.product_id}:${idem}`
       : '';
     return this.runIdempotent(idemKey, 10 * 60 * 1000, async () => {
-      await this.walletSpend(
-        linked.global_user_id,
-        p.points,
-        idem
-          ? `direct:${linked.global_user_id}:${opts.product_id}:${idem}`
-          : `direct:${linked.global_user_id}:${opts.product_id}:${Date.now()}`,
-        'store_consume',
-      );
-      const wallet = await this.getWallet(linked.global_user_id);
+      try {
+        await this.walletSpend(
+          linked.global_user_id,
+          p.points,
+          idem
+            ? `direct:${linked.global_user_id}:${opts.product_id}:${idem}`
+            : `direct:${linked.global_user_id}:${opts.product_id}:${Date.now()}`,
+          'store_consume',
+        );
+      } catch (e: any) {
+        if (this.isInsufficientPointsError(e))
+          throw new BadRequestException('insufficient points');
+        throw new BadGatewayException('wallet service unavailable');
+      }
+      let wallet: any = null;
+      try {
+        wallet = await this.getWallet(linked.global_user_id);
+      } catch {
+        wallet = null;
+      }
       return {
         code: 0,
         message: 'ok',

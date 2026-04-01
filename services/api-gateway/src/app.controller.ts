@@ -57,11 +57,13 @@ export class AppController {
   play(
     @Headers('x-dev-telegram-id') devTelegramId: string,
     @Headers('x-telegram-init-data') telegramInitData: string,
+    @Query('tgWebAppData') tgWebAppData: string,
     @Body() body: any,
   ) {
     return this.appService.play({
       devTelegramId,
-      telegramInitData,
+      telegramInitData:
+        telegramInitData || String(tgWebAppData || '') || String(body?.telegram_init_data || ''),
       multi: Number(body?.multi || 1),
     });
   }
