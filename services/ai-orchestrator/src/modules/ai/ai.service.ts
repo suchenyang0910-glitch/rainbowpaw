@@ -178,7 +178,16 @@ export class AiService {
       .toUpperCase()
       .replace(/[^A-Z0-9]+/g, '_');
     const v = String((process.env as any)[`AI_MODEL_${k}`] || '').trim();
-    return v || fallback;
+    if (v) return v;
+    if (k === 'VISION_AI') {
+      const vl = String(process.env.AI_VL_MODEL || '').trim();
+      if (vl) return vl;
+    }
+    if (k === 'VOICE_AI') {
+      const voice = String(process.env.AI_VOICE_MODEL || '').trim();
+      if (voice) return voice;
+    }
+    return fallback;
   }
 
   async supportReply(dto: SupportReplyDto, req: any) {
@@ -565,6 +574,9 @@ export class AiService {
   }
 
   private numOrNull(v: any) {
+    if (v == null) return null;
+    const s = String(v).trim();
+    if (!s) return null;
     const n = Number(v);
     return Number.isFinite(n) ? n : null;
   }
