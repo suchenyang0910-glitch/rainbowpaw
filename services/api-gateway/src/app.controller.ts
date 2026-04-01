@@ -68,6 +68,19 @@ export class AppController {
     });
   }
 
+  @Post('events')
+  events(
+    @Headers('x-dev-telegram-id') devTelegramId: string,
+    @Headers('x-telegram-init-data') telegramInitData: string,
+    @Body() body: any,
+  ) {
+    return this.appService.events({
+      devTelegramId,
+      telegramInitData,
+      body,
+    });
+  }
+
   @Get('products')
   products() {
     return this.appService.products();
@@ -475,8 +488,14 @@ export class AppController {
   }
 
   @Post('groups/:groupId/join_pay')
-  joinGroupPay(@Param('groupId') groupId: string) {
-    return this.appService.joinGroupPay({ groupId });
+  joinGroupPay(
+    @Param('groupId') groupId: string,
+    @Headers('x-idempotency-key') idempotencyKey: string,
+  ) {
+    return this.appService.joinGroupPay({
+      groupId,
+      idempotency_key: String(idempotencyKey || ''),
+    });
   }
 
   @Get('admin/dashboard/summary')

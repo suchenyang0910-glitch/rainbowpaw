@@ -723,6 +723,51 @@ export class AppService {
     };
   }
 
+  async events(opts: {
+    devTelegramId: string;
+    telegramInitData: string;
+    body: any;
+  }) {
+    const eventName = String(opts?.body?.event_name || '').trim();
+    if (!eventName) throw new BadRequestException('event_name required');
+    const sourceBot = String(opts?.body?.source_bot || opts?.body?.source || 'webapp').trim();
+    const eventData =
+      opts?.body?.event_data && typeof opts.body.event_data === 'object'
+        ? opts.body.event_data
+        : {};
+
+    let globalUserId = String(opts?.body?.global_user_id || '').trim();
+    let tg: TelegramUserInfo | null = null;
+    if (!globalUserId) {
+      tg = this.getTelegramUserInfo(opts.devTelegramId, opts.telegramInitData);
+      if (tg) {
+        const linked = await this.linkUser(tg);
+        globalUserId = String(linked.global_user_id || '').trim();
+      }
+    }
+
+    if (!globalUserId) return { code: 0, message: 'ok', data: { accepted: false } };
+
+    await this.internalPost(
+      `${this.bridgeBase()}/bridge/events`,
+      {
+        event_name: eventName,
+        global_user_id: globalUserId,
+        source_bot: sourceBot,
+        ...(tg
+          ? {
+              source_user_id: String(tg.telegram_id),
+              telegram_id: tg.telegram_id,
+            }
+          : {}),
+        event_data: eventData,
+      },
+      {},
+    );
+
+    return { code: 0, message: 'ok', data: { accepted: true } };
+  }
+
   async products() {
     return {
       code: 0,
@@ -2117,12 +2162,18 @@ export class AppService {
     };
   }
 
-  async joinGroupPay(opts: { groupId: string }) {
-    return {
-      code: 0,
-      message: 'ok',
-      data: { status: 'pending', group_id: opts.groupId },
-    };
+  async joinGroupPay(opts: { groupId: string; idempotency_key?: string }) {
+    const gid = String(opts.groupId || '').trim();
+    if (!gid) throw new BadRequestException('groupId required');
+    const idem = String(opts.idempotency_key || '').trim();
+    const idemKey = idem ? `joinGroupPay:${gid}:${idem}` : '';
+    return this.runIdempotent(idemKey, 10 * 60 * 1000, async () => {
+      return {
+        code: 0,
+        message: 'ok',
+        data: { status: 'pending', group_id: gid },
+      };
+    });
   }
 
   private v1RandomId(prefix: string) {

@@ -11,6 +11,13 @@ function webUrl(pathname) {
   return `${base}${p.startsWith('/') ? '' : '/'}${p}`;
 }
 
+function webAppButton(text, url) {
+  return {
+    text: String(text || '').trim() || '打开',
+    web_app: { url: String(url || '').trim() },
+  };
+}
+
 function registerRainbowStartRoute() {
   if (!rainbowBot) return;
 
@@ -41,7 +48,7 @@ function registerRainbowStartRoute() {
           ? '🛍 点击按钮打开 RainbowPaw Mini App'
           : '🛍 Mini App 未配置（缺少 PUBLIC_WEB_BASE_URL）';
         const opts = url
-          ? { reply_markup: { inline_keyboard: [[{ text: '打开 Mini App', url }]] } }
+          ? { reply_markup: { inline_keyboard: [[webAppButton('打开 Mini App', url)]] } }
           : undefined;
         return await rainbowBot.sendMessage(chatId, text, opts);
       }

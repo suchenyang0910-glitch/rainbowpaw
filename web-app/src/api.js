@@ -111,6 +111,19 @@ export const api = {
     const q = qs.length ? `?${qs.join('&')}` : ''
     return apiFetch(`/products${q}`)
   },
+  event(event_name, event_data = {}, opts = {}) {
+    const name = String(event_name || '').trim()
+    if (!name) return Promise.resolve({ accepted: false })
+    const source = String(opts && (opts.source_bot || opts.source) ? (opts.source_bot || opts.source) : '').trim()
+    const global_user_id = String(opts && opts.global_user_id ? opts.global_user_id : '').trim()
+    const body = {
+      event_name: name,
+      ...(source ? { source_bot: source } : {}),
+      ...(global_user_id ? { global_user_id } : {}),
+      event_data: event_data && typeof event_data === 'object' ? event_data : {},
+    }
+    return apiFetch('/events', { method: 'POST', body })
+  },
   orders(limit = 30) {
     return apiFetch(`/orders?limit=${encodeURIComponent(String(limit))}`)
   },
@@ -161,11 +174,21 @@ export const api = {
     const qs = initData ? `tg_data=${encodeURIComponent(initData)}` : (devId ? `dev_id=${encodeURIComponent(devId)}` : '')
     return qs ? `${base}?${qs}` : base
   },
-  purchaseDirect(product_id) {
-    return apiFetch('/purchase/direct', { method: 'POST', body: { product_id } })
+  purchaseDirect(product_id, opts = {}) {
+    const idemKey = opts && (opts.idemKey || opts.idempotencyKey) ? String(opts.idemKey || opts.idempotencyKey) : ''
+    return apiFetch('/purchase/direct', {
+      method: 'POST',
+      body: { product_id },
+      headers: idemKey ? { 'x-idempotency-key': idemKey } : undefined,
+    })
   },
-  purchaseGroup(product_id) {
-    return apiFetch('/purchase/group', { method: 'POST', body: { product_id } })
+  purchaseGroup(product_id, opts = {}) {
+    const idemKey = opts && (opts.idemKey || opts.idempotencyKey) ? String(opts.idemKey || opts.idempotencyKey) : ''
+    return apiFetch('/purchase/group', {
+      method: 'POST',
+      body: { product_id },
+      headers: idemKey ? { 'x-idempotency-key': idemKey } : undefined,
+    })
   },
   createGroup({ product_id }) {
     return apiFetch('/groups', { method: 'POST', body: { product_id } })
@@ -173,7 +196,12 @@ export const api = {
   joinGroup(groupId) {
     return apiFetch(`/groups/${encodeURIComponent(groupId)}/join`, { method: 'POST', body: {} })
   },
-  joinGroupPay(groupId) {
-    return apiFetch(`/groups/${encodeURIComponent(groupId)}/join_pay`, { method: 'POST', body: {} })
+  joinGroupPay(groupId, opts = {}) {
+    const idemKey = opts && (opts.idemKey || opts.idempotencyKey) ? String(opts.idemKey || opts.idempotencyKey) : ''
+    return apiFetch(`/groups/${encodeURIComponent(groupId)}/join_pay`, {
+      method: 'POST',
+      body: {},
+      headers: idemKey ? { 'x-idempotency-key': idemKey } : undefined,
+    })
   }
 }

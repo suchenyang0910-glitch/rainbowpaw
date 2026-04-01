@@ -40,8 +40,6 @@ const DROPS = [
 const PRODUCTS = [
   { id: 101, name: '高级玩具 A', price: 10, groupPrice: 7, category: 'Toys', image: '🧸' },
   { id: 102, name: '纪念金币', price: 25, groupPrice: 18, category: 'Memorial', image: '🪙' },
-  { id: 103, name: '赛博眼镜', price: 15, groupPrice: 10.5, category: 'Accessories', image: '🕶️' },
-  { id: 104, name: '宠物航空箱', price: 40, groupPrice: 28, category: 'Toys', image: '🎒' },
 ];
 
 const TRANSACTIONS = [
@@ -316,20 +314,20 @@ const ActionModal = ({ data, onClose }) => {
   )
 }
 
-const InitDataBanner = ({ onOpenBot, onCopyDebug }) => {
+const InitDataBanner = ({ t, onOpenBot, onCopyDebug }) => {
   return (
     <div className="px-4 pt-4">
       <div className="bg-yellow-50 border border-yellow-100 rounded-2xl p-4 shadow-sm">
-        <p className="text-xs font-black text-yellow-800">建议在 Telegram 内打开</p>
+        <p className="text-xs font-black text-yellow-800">{t('hint.needTelegram.title')}</p>
         <p className="text-[11px] text-yellow-700 mt-1">
-          当前未检测到 Telegram WebApp 授权信息（initData）。部分功能可能无法使用。
+          {t('hint.needTelegram.desc')}
         </p>
         <div className="mt-3 flex gap-2">
           <button onClick={onOpenBot} className="flex-1 bg-yellow-500 text-white py-2.5 rounded-xl text-xs font-black">
-            打开 Bot 入口
+            {t('hint.needTelegram.openBot')}
           </button>
           <button onClick={onCopyDebug} className="bg-white border border-yellow-200 text-yellow-800 py-2.5 px-4 rounded-xl text-xs font-black">
-            复制诊断
+            {t('hint.needTelegram.copyDebug')}
           </button>
         </div>
       </div>
@@ -337,7 +335,7 @@ const InitDataBanner = ({ onOpenBot, onCopyDebug }) => {
   )
 }
 
-const BuyPlaysModal = ({ open, pricing, onClose, onChoose }) => {
+const BuyPlaysModal = ({ t, open, pricing, onClose, onChoose }) => {
   if (!open) return null
   const p = pricing || {}
   const items = [
@@ -351,8 +349,8 @@ const BuyPlaysModal = ({ open, pricing, onClose, onChoose }) => {
         <div className="w-12 h-1 bg-gray-200 rounded-full mx-auto mb-4" />
         <div className="flex justify-between items-start mb-4">
           <div>
-            <h3 className="text-lg font-bold">次数不足</h3>
-            <p className="text-xs text-gray-400">请选择购买抽奖次数</p>
+            <h3 className="text-lg font-bold">{t('wallet.buyPlays.title')}</h3>
+            <p className="text-xs text-gray-400">{t('wallet.buyPlays.desc')}</p>
           </div>
           <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-full"><X size={20} /></button>
         </div>
@@ -364,22 +362,22 @@ const BuyPlaysModal = ({ open, pricing, onClose, onChoose }) => {
               className="relative border-2 border-blue-100 bg-blue-50 rounded-2xl p-3 flex flex-col items-center active:scale-95 transition-transform"
             >
               {it.bundle === 3 ? (
-                <span className="absolute -top-2 left-1/2 -translate-x-1/2 px-2 py-0.5 bg-orange-500 text-white text-[8px] font-black rounded-full uppercase">Hot</span>
+                <span className="absolute -top-2 left-1/2 -translate-x-1/2 px-2 py-0.5 bg-orange-500 text-white text-[8px] font-black rounded-full uppercase">{t('wallet.buyPlays.hot')}</span>
               ) : null}
-              <span className="text-xs font-bold mb-1 whitespace-nowrap">{it.bundle}x Bundle</span>
+              <span className="text-xs font-bold mb-1 whitespace-nowrap">{t('wallet.buyPlays.bundle', { n: it.bundle })}</span>
               <span className="text-blue-600 font-black">${it.price}</span>
             </button>
           ))}
         </div>
         <button onClick={onClose} className="w-full mt-4 bg-gray-100 text-gray-700 py-3 rounded-2xl text-xs font-bold">
-          先不买
+          {t('wallet.buyPlays.skip')}
         </button>
       </div>
     </div>
   )
 }
 
-const ShippingModal = ({ open, initial, onClose, onSubmit }) => {
+const ShippingModal = ({ t, open, initial, onClose, onSubmit }) => {
   const [name, setName] = useState('')
   const [phone, setPhone] = useState('')
   const [address, setAddress] = useState('')
@@ -401,15 +399,15 @@ const ShippingModal = ({ open, initial, onClose, onSubmit }) => {
         <div className="w-12 h-1 bg-gray-200 rounded-full mx-auto mb-4" />
         <div className="flex justify-between items-start mb-4">
           <div>
-            <h3 className="text-lg font-bold">填写收货信息</h3>
-            <p className="text-xs text-gray-400">用于发货与领奖</p>
+            <h3 className="text-lg font-bold">{t('shipping.title')}</h3>
+            <p className="text-xs text-gray-400">{t('shipping.desc')}</p>
           </div>
           <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-full"><X size={20} /></button>
         </div>
         <div className="space-y-3">
-          <input value={name} onChange={(e) => setName(e.target.value)} type="text" placeholder="联系人姓名" className="w-full bg-white border border-gray-200 rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none" />
-          <input value={phone} onChange={(e) => setPhone(e.target.value)} type="text" placeholder="手机号" className="w-full bg-white border border-gray-200 rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none" />
-          <textarea value={address} onChange={(e) => setAddress(e.target.value)} rows={3} placeholder="详细地址" className="w-full bg-white border border-gray-200 rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none resize-none" />
+          <input value={name} onChange={(e) => setName(e.target.value)} type="text" placeholder={t('shipping.name')} className="w-full bg-white border border-gray-200 rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none" />
+          <input value={phone} onChange={(e) => setPhone(e.target.value)} type="text" placeholder={t('shipping.phone')} className="w-full bg-white border border-gray-200 rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none" />
+          <textarea value={address} onChange={(e) => setAddress(e.target.value)} rows={3} placeholder={t('shipping.address')} className="w-full bg-white border border-gray-200 rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none resize-none" />
           <button
             disabled={busy || !name.trim() || !phone.trim() || !address.trim()}
             onClick={async () => {
@@ -423,7 +421,51 @@ const ShippingModal = ({ open, initial, onClose, onSubmit }) => {
             }}
             className="w-full bg-blue-500 disabled:bg-blue-300 text-white py-3 rounded-2xl text-sm font-black"
           >
-            {busy ? '提交中...' : '提交'}
+            {busy ? t('shipping.submitting') : t('shipping.submit')}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+const ProductModal = ({ product, onClose, onDirectBuy, onGroupBuy }) => {
+  if (!product) return null
+  return (
+    <div className="fixed inset-0 bg-black/40 z-[70] flex items-end animate-in fade-in duration-200" onClick={onClose}>
+      <div className="bg-white w-full rounded-t-3xl p-6 slide-in-from-bottom duration-300" onClick={e => e.stopPropagation()}>
+        <div className="w-12 h-1 bg-gray-200 rounded-full mx-auto mb-4" />
+        <div className="flex justify-between items-start mb-6">
+          <div className="flex items-center gap-4">
+            <div className="w-16 h-16 bg-gray-50 rounded-2xl flex items-center justify-center text-3xl">{product.image || (product.image_url ? '🛍️' : '🛍️')}</div>
+            <div>
+              <h3 className="text-lg font-bold">{product.display_name || product.name}</h3>
+              <p className="text-sm text-gray-400">库存充足 | 返现计划可用</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-full"><X size={20} /></button>
+        </div>
+        <p className="text-sm text-gray-600 leading-relaxed mb-6">支付完成后，分享给 2 位好友即可获得最高 30% 的现金返还。赚钱购物两不误！</p>
+        <div className="grid grid-cols-2 gap-4 mb-8">
+          <button
+            className="flex flex-col items-center justify-center border-2 border-gray-100 rounded-2xl py-3 active:bg-gray-50"
+            onClick={() => {
+              if (onClose) onClose()
+              if (onDirectBuy) onDirectBuy(product)
+            }}
+          >
+            <span className="text-[10px] font-bold text-gray-400 uppercase">直接购买</span>
+            <span className="text-lg font-black text-gray-700">${Number(product.direct_buy_price || product.price || 0)}</span>
+          </button>
+          <button
+            className="flex flex-col items-center justify-center bg-blue-500 border-2 border-blue-500 rounded-2xl py-3 shadow-lg shadow-blue-100 active:bg-blue-600"
+            onClick={() => {
+              if (onClose) onClose()
+              if (onGroupBuy) onGroupBuy(product)
+            }}
+          >
+            <span className="text-[10px] font-bold text-blue-100 uppercase">拼团赚钱</span>
+            <span className="text-lg font-black text-white">${Math.round(Number(product.direct_buy_price || product.price || 0) * 70) / 100}</span>
           </button>
         </div>
       </div>
@@ -692,7 +734,7 @@ const BottomTabNav = ({ activeTab, setActiveTab, t }) => {
 };
 
 // 1. Home Page
-const HomePage = ({ me, onPlay, products, onDirectBuy, orders, activeGroups, onPayOrder, onInviteGroup, onGoTab, onOpenShipping, playBusy }) => {
+const HomePage = ({ me, onPlay, products, onSelectProduct, orders, activeGroups, onPayOrder, onInviteGroup, onGoTab, onOpenShipping, playBusy }) => {
   const [isMulti, setIsMulti] = useState(false);
   const [nowTick, setNowTick] = useState(0)
   const telegram = me && me.telegram ? me.telegram : null;
@@ -731,8 +773,8 @@ const HomePage = ({ me, onPlay, products, onDirectBuy, orders, activeGroups, onP
         <div className="px-4 mt-4">
           <div className="bg-orange-50 border border-orange-100 rounded-2xl p-4 flex items-center justify-between">
             <div className="pr-3">
-              <p className="text-xs font-black text-orange-700">需要填写收货信息</p>
-              <p className="text-[10px] text-orange-600 mt-1">用于发货与领奖</p>
+              <p className="text-xs font-black text-orange-700">{t('shipping.need')}</p>
+              <p className="text-[10px] text-orange-600 mt-1">{t('shipping.desc')}</p>
             </div>
             <button onClick={() => onOpenShipping && onOpenShipping()} className="bg-orange-500 text-white px-4 py-2 rounded-xl text-[10px] font-black">
               去填写
@@ -874,7 +916,7 @@ const HomePage = ({ me, onPlay, products, onDirectBuy, orders, activeGroups, onP
         </div>
         <div className="grid grid-cols-2 gap-3 pb-4">
           {(products && products.length ? products.slice(0, 6) : PRODUCTS.slice(0, 6)).map(product => (
-            <div key={product.id} onClick={() => onDirectBuy && onDirectBuy(product)} className="bg-white border border-gray-100 rounded-xl p-3 flex flex-col shadow-sm active:scale-95 transition-transform cursor-pointer">
+            <div key={product.id} onClick={() => onSelectProduct && onSelectProduct(product)} className="bg-white border border-gray-100 rounded-xl p-3 flex flex-col shadow-sm active:scale-95 transition-transform cursor-pointer">
               <div className="aspect-square bg-gray-50 rounded-lg flex items-center justify-center text-3xl mb-2">{product.image || (product.image_url ? '🛍️' : '🛍️')}</div>
               <span className="text-xs font-bold truncate w-full text-center">{product.display_name || product.name}</span>
               {Number.isFinite(Number(product.sales_7d)) ? (
@@ -918,9 +960,8 @@ const HomePage = ({ me, onPlay, products, onDirectBuy, orders, activeGroups, onP
 };
 
 // 2. Store Page (Updated with Group Buy)
-const StorePage = ({ products, onDirectBuy, onGroupBuy }) => {
+const StorePage = ({ products, onSelectProduct }) => {
   const [activeCategory, setActiveCategory] = useState('All');
-  const [selectedProduct, setSelectedProduct] = useState(null);
   const items = Array.isArray(products) && products.length ? products : PRODUCTS;
 
   return (
@@ -941,7 +982,7 @@ const StorePage = ({ products, onDirectBuy, onGroupBuy }) => {
 
       <div className="grid grid-cols-2 gap-4 p-4">
         {items.map(product => (
-          <div key={product.id} onClick={() => setSelectedProduct(product)} className="bg-white rounded-2xl p-3 border border-gray-100 shadow-sm flex flex-col active:scale-95 transition-transform relative">
+          <div key={product.id} onClick={() => onSelectProduct && onSelectProduct(product)} className="bg-white rounded-2xl p-3 border border-gray-100 shadow-sm flex flex-col active:scale-95 transition-transform relative">
             <span className="absolute top-2 right-2 bg-red-500 text-white text-[8px] font-black px-1.5 py-0.5 rounded-full z-10 animate-pulse">返现 30%</span>
             <div className="aspect-square bg-gray-50 rounded-xl flex items-center justify-center text-4xl mb-3">{product.image || (product.image_url ? '🛍️' : '🛍️')}</div>
             <h4 className="text-sm font-bold truncate">{product.display_name || product.name}</h4>
@@ -955,42 +996,6 @@ const StorePage = ({ products, onDirectBuy, onGroupBuy }) => {
           </div>
         ))}
       </div>
-
-      {selectedProduct && (
-        <div className="fixed inset-0 bg-black/40 z-[60] flex items-end animate-in fade-in duration-200" onClick={() => setSelectedProduct(null)}>
-          <div className="bg-white w-full rounded-t-3xl p-6 slide-in-from-bottom duration-300" onClick={e => e.stopPropagation()}>
-            <div className="w-12 h-1 bg-gray-200 rounded-full mx-auto mb-4" />
-            <div className="flex justify-between items-start mb-6">
-              <div className="flex items-center gap-4">
-                <div className="w-16 h-16 bg-gray-50 rounded-2xl flex items-center justify-center text-3xl">{selectedProduct.image || (selectedProduct.image_url ? '🛍️' : '🛍️')}</div>
-                <div>
-                  <h3 className="text-lg font-bold">{selectedProduct.display_name || selectedProduct.name}</h3>
-                  <p className="text-sm text-gray-400">库存充足 | 返现计划可用</p>
-                </div>
-              </div>
-              <button onClick={() => setSelectedProduct(null)} className="p-2 hover:bg-gray-100 rounded-full"><X size={20} /></button>
-            </div>
-            <p className="text-sm text-gray-600 leading-relaxed mb-6">支付完成后，分享给 2 位好友即可获得最高 30% 的现金返还。赚钱购物两不误！</p>
-            
-            <div className="grid grid-cols-2 gap-4 mb-8">
-              <button
-                className="flex flex-col items-center justify-center border-2 border-gray-100 rounded-2xl py-3 active:bg-gray-50"
-                onClick={() => onDirectBuy && onDirectBuy(selectedProduct)}
-              >
-                <span className="text-[10px] font-bold text-gray-400 uppercase">直接购买</span>
-                <span className="text-lg font-black text-gray-700">${Number(selectedProduct.direct_buy_price || selectedProduct.price || 0)}</span>
-              </button>
-              <button
-                className="flex flex-col items-center justify-center bg-blue-500 border-2 border-blue-500 rounded-2xl py-3 shadow-lg shadow-blue-100 active:bg-blue-600"
-                onClick={() => onGroupBuy && onGroupBuy(selectedProduct)}
-              >
-                <span className="text-[10px] font-bold text-blue-100 uppercase">拼团赚钱</span>
-                <span className="text-lg font-black text-white">${Math.round(Number(selectedProduct.direct_buy_price || selectedProduct.price || 0) * 70) / 100}</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };
@@ -1366,6 +1371,7 @@ export default function App() {
   const [paymentModal, setPaymentModal] = useState(null);
   const [actionModal, setActionModal] = useState(null)
   const [playResultModal, setPlayResultModal] = useState(null)
+  const [selectedProduct, setSelectedProduct] = useState(null)
   const [playBusy, setPlayBusy] = useState(false)
   const [shippingModalOpen, setShippingModalOpen] = useState(false)
   const [buyPlaysModalOpen, setBuyPlaysModalOpen] = useState(false)
@@ -1373,9 +1379,80 @@ export default function App() {
 
   const t = (key, vars) => clawMiniAppT(lang, key, vars)
 
+  const idemRef = useRef({ direct: {}, group: {}, join: {} })
+  const busyRef = useRef({ direct: {}, group: {}, join: {} })
+
+  const makeIdemKey = (prefix) => {
+    try {
+      const rnd = (globalThis.crypto && typeof globalThis.crypto.randomUUID === 'function')
+        ? globalThis.crypto.randomUUID()
+        : `${Date.now()}_${Math.random().toString(16).slice(2)}`
+      return `${String(prefix || 'idem')}:${rnd}`
+    } catch {
+      return `${String(prefix || 'idem')}:${Date.now()}_${Math.random().toString(16).slice(2)}`
+    }
+  }
+
+  const getIdemKey = (scope, id) => {
+    const s = String(scope || '').trim()
+    const k = String(id || '').trim()
+    if (!s || !k) return ''
+    const bag = idemRef.current && idemRef.current[s] ? idemRef.current[s] : null
+    if (!bag) return ''
+    if (!bag[k]) bag[k] = makeIdemKey(s)
+    return String(bag[k])
+  }
+
+  const clearIdemKey = (scope, id) => {
+    const s = String(scope || '').trim()
+    const k = String(id || '').trim()
+    const bag = idemRef.current && idemRef.current[s] ? idemRef.current[s] : null
+    if (bag && bag[k]) delete bag[k]
+  }
+
+  const setBusy = (scope, id, v) => {
+    const s = String(scope || '').trim()
+    const k = String(id || '').trim()
+    if (!s || !k) return
+    if (!busyRef.current[s]) busyRef.current[s] = {}
+    if (v) busyRef.current[s][k] = true
+    else delete busyRef.current[s][k]
+  }
+
+  const isBusy = (scope, id) => {
+    const s = String(scope || '').trim()
+    const k = String(id || '').trim()
+    return Boolean(busyRef.current && busyRef.current[s] && busyRef.current[s][k])
+  }
+
   const initData = getTelegramInitData()
   const devId = (import.meta && import.meta.env && import.meta.env.VITE_DEV_TELEGRAM_ID) || ''
   const needTelegram = !String(initData || '').trim() && !String(devId || '').trim()
+
+  const miniSourceBot = (() => {
+    const p = window && window.location ? String(window.location.pathname || '') : ''
+    return p.includes('rainbowpawclaw') ? 'claw_miniapp' : 'rainbow_miniapp'
+  })()
+
+  const hotImpressionSentRef = useRef(false)
+
+  useEffect(() => {
+    if (hotImpressionSentRef.current) return
+    if (String(activeTab || '') !== 'home') return
+    const list = (products && products.length ? products.slice(0, 6) : PRODUCTS.slice(0, 6))
+    const ids = list.map((p) => p && p.id).filter((x) => typeof x !== 'undefined' && x !== null)
+    if (!ids.length) return
+    hotImpressionSentRef.current = true
+    const gid = me && me.user ? String(me.user.global_user_id || '').trim() : ''
+    api.event('hot_products_impression', { product_ids: ids, count: ids.length }, { source_bot: miniSourceBot, global_user_id: gid }).catch(() => {})
+  }, [activeTab, products, me])
+
+  const openProduct = (product, src) => {
+    if (!product) return
+    setSelectedProduct(product)
+    const gid = me && me.user ? String(me.user.global_user_id || '').trim() : ''
+    api.event('product_open', { product_id: product.id, source: String(src || '') }, { source_bot: miniSourceBot, global_user_id: gid }).catch(() => {})
+  }
 
   useEffect(() => {
     try {
@@ -1487,7 +1564,7 @@ export default function App() {
       has_init_data: Boolean(String(getTelegramInitData() || '').trim()),
     }
     safeCopy(JSON.stringify(info))
-    showToast('已复制诊断信息')
+    showToast(t('toast.debugCopied'))
   }
 
   const handleApiError = ({ e, retry, context }) => {
@@ -1496,12 +1573,12 @@ export default function App() {
 
     if ((status === 400 || status === 401 || status === 403) && msg.includes('missing telegram id')) {
       setActionModal({
-        title: '需要在 Telegram 内打开',
-        message: '未检测到 Telegram WebApp 授权信息（initData）。\n请从 Bot 入口重新打开，或在 Telegram 内刷新页面。',
+        title: t('modal.needTelegram.title'),
+        message: t('modal.needTelegram.desc'),
         actions: [
-          { label: '打开 RainbowPawbot', primary: true, onClick: openTelegramWebApp },
-          { label: '刷新页面', onClick: () => window.location.reload() },
-          { label: '复制诊断信息', onClick: () => copyDebugInfo({ e, context }) },
+          { label: t('action.openBot'), primary: true, onClick: openTelegramWebApp },
+          { label: t('action.reload'), onClick: () => window.location.reload() },
+          { label: t('action.copyDebug'), onClick: () => copyDebugInfo({ e, context }) },
         ],
       })
       return true
@@ -1510,11 +1587,11 @@ export default function App() {
     if (msg.includes('insufficient points') || msg.includes('no plays left')) {
       const points = wallet && typeof wallet.points_total !== 'undefined' ? Number(wallet.points_total || 0) : null
       setActionModal({
-        title: '积分不足',
-        message: `当前积分不足以完成操作。\n${points == null ? '' : `当前积分：${points}\n`}建议先去钱包充值后再继续。`.trim(),
+        title: t('modal.pointsLow.title'),
+        message: `${t('modal.pointsLow.desc')}\n${points == null ? '' : t('modal.pointsLow.pointsLine', { points })}`.trim(),
         actions: [
-          { label: '去钱包充值', primary: true, onClick: openRecharge },
-          { label: '取消' },
+          { label: t('action.recharge'), primary: true, onClick: openRecharge },
+          { label: t('action.cancel') },
         ],
       })
       return true
@@ -1522,12 +1599,12 @@ export default function App() {
 
     if (status === 502 || status === 503 || status === 504 || msg.includes('wallet service unavailable')) {
       setActionModal({
-        title: '服务暂不可用',
-        message: '钱包服务暂时不可用或网络不稳定。\n请稍后重试。',
+        title: t('modal.serviceDown.title'),
+        message: t('modal.serviceDown.desc'),
         actions: [
-          ...(typeof retry === 'function' ? [{ label: '重试', primary: true, onClick: retry, keepOpen: true }] : []),
-          { label: '联系客服', onClick: openSupportLink },
-          { label: '复制诊断信息', onClick: () => copyDebugInfo({ e, context }) },
+          ...(typeof retry === 'function' ? [{ label: t('action.retry'), primary: true, onClick: retry, keepOpen: true }] : []),
+          { label: t('action.support'), onClick: openSupportLink },
+          { label: t('action.copyDebug'), onClick: () => copyDebugInfo({ e, context }) },
         ],
       })
       return true
@@ -1535,12 +1612,12 @@ export default function App() {
 
     if (status === 408 || msg.includes('请求超时')) {
       setActionModal({
-        title: '请求超时',
-        message: '当前网络不稳定或服务繁忙。\n请稍后重试。',
+        title: t('modal.timeout.title'),
+        message: t('modal.timeout.desc'),
         actions: [
-          ...(typeof retry === 'function' ? [{ label: '重试', primary: true, onClick: retry, keepOpen: true }] : []),
-          { label: '取消' },
-          { label: '复制诊断信息', onClick: () => copyDebugInfo({ e, context }) },
+          ...(typeof retry === 'function' ? [{ label: t('action.retry'), primary: true, onClick: retry, keepOpen: true }] : []),
+          { label: t('action.cancel') },
+          { label: t('action.copyDebug'), onClick: () => copyDebugInfo({ e, context }) },
         ],
       })
       return true
@@ -1638,31 +1715,61 @@ export default function App() {
   }
 
   const directBuy = async (product) => {
+    const pid = String(product && typeof product.id !== 'undefined' ? product.id : '').trim()
+    if (!pid) return
+    if (isBusy('direct', pid)) return
+    setBusy('direct', pid, true)
     try {
-      const r = await api.purchaseDirect(product.id)
+      const gid = me && me.user ? String(me.user.global_user_id || '').trim() : ''
+      api.event('purchase_direct_attempt', { product_id: product.id }, { source_bot: miniSourceBot, global_user_id: gid }).catch(() => {})
+      const idemKey = getIdemKey('direct', pid)
+      const r = await api.purchaseDirect(product.id, { idemKey })
       if (r && r.payment && typeof r.payment.amount !== 'undefined') {
         openPayment({ title: `🛒 Buy - ${(product.display_name || product.name)}`, display_id: r.display_id, amount: r.payment.amount, pay: r.pay })
+        clearIdemKey('direct', pid)
         return
       }
       api.me().then(setMe).catch(() => {})
       api.wallet(20).then((d) => { setWallet(d.wallet || null); setWalletLogs(d.logs || []) }).catch(() => {})
-      showToast('下单成功')
+      showToast(t('toast.orderCreated'))
+      api.event('purchase_direct_ok', { product_id: product.id }, { source_bot: miniSourceBot, global_user_id: gid }).catch(() => {})
+      clearIdemKey('direct', pid)
     } catch (e) {
       const msg = e && e.message ? String(e.message) : '创建订单失败'
       const handled = handleApiError({ e, retry: () => directBuy(product), context: 'purchase_direct' })
       if (!handled) showToast(msg)
+    } finally {
+      setBusy('direct', pid, false)
     }
   }
 
   const groupBuy = async (product) => {
+    const pid = String(product && typeof product.id !== 'undefined' ? product.id : '').trim()
+    if (!pid) return
+    if (isBusy('group', pid)) return
+    setBusy('group', pid, true)
     try {
-      const r = await api.purchaseGroup(product.id)
-      openPayment({ title: `🤝 Group - ${(product.display_name || product.name)}`, display_id: r.display_id, amount: r.payment.amount, pay: r.pay, invite_link: r.invite_link })
-      if (r.invite_link) showToast('已生成拼团邀请链接')
+      const gid = me && me.user ? String(me.user.global_user_id || '').trim() : ''
+      api.event('purchase_group_attempt', { product_id: product.id }, { source_bot: miniSourceBot, global_user_id: gid }).catch(() => {})
+      const idemKey = getIdemKey('group', pid)
+      const r = await api.purchaseGroup(product.id, { idemKey })
+      if (r && r.payment && typeof r.payment.amount !== 'undefined') {
+        openPayment({ title: `🤝 Group - ${(product.display_name || product.name)}`, display_id: r.display_id, amount: r.payment.amount, pay: r.pay, invite_link: r.invite_link })
+        clearIdemKey('group', pid)
+        return
+      }
+      api.me().then(setMe).catch(() => {})
+      api.wallet(20).then((d) => { setWallet(d.wallet || null); setWalletLogs(d.logs || []) }).catch(() => {})
+      api.groupsActive({ limit: 20, sort: 'recent' }).then((d) => setActiveGroups(d.groups || [])).catch(() => {})
+      showToast(t('toast.orderCreated'))
+      api.event('purchase_group_ok', { product_id: product.id }, { source_bot: miniSourceBot, global_user_id: gid }).catch(() => {})
+      clearIdemKey('group', pid)
     } catch (e) {
       const msg = e && e.message ? String(e.message) : '创建拼团失败'
       const handled = handleApiError({ e, retry: () => groupBuy(product), context: 'purchase_group' })
       if (!handled) showToast(msg)
+    } finally {
+      setBusy('group', pid, false)
     }
   }
 
@@ -1691,13 +1798,32 @@ export default function App() {
   }
 
   const joinGroupPay = async (group) => {
+    const gid = String(group && (group.id || group.group_id || '')).trim()
+    if (!gid) return
+    if (isBusy('join', gid)) return
+    setBusy('join', gid, true)
     try {
-      const r = await api.joinGroupPay(group.id)
-      openPayment({ title: '💰 Pay & Join', display_id: r.display_id, amount: r.payment.amount, pay: r.pay })
+      const gid2 = me && me.user ? String(me.user.global_user_id || '').trim() : ''
+      api.event('join_group_pay_attempt', { group_id: gid }, { source_bot: miniSourceBot, global_user_id: gid2 }).catch(() => {})
+      const idemKey = getIdemKey('join', gid)
+      const r = await api.joinGroupPay(group.id, { idemKey })
+      if (r && r.payment && typeof r.payment.amount !== 'undefined') {
+        openPayment({ title: '💰 Pay & Join', display_id: r.display_id, amount: r.payment.amount, pay: r.pay })
+        clearIdemKey('join', gid)
+        return
+      }
+      api.me().then(setMe).catch(() => {})
+      api.wallet(20).then((d) => { setWallet(d.wallet || null); setWalletLogs(d.logs || []) }).catch(() => {})
+      api.groupsActive({ limit: 20, sort: 'recent' }).then((d) => setActiveGroups(d.groups || [])).catch(() => {})
+      showToast(t('toast.orderCreated'))
+      api.event('join_group_pay_ok', { group_id: gid }, { source_bot: miniSourceBot, global_user_id: gid2 }).catch(() => {})
+      clearIdemKey('join', gid)
     } catch (e) {
       const msg = e && e.message ? String(e.message) : '加入失败'
       const handled = handleApiError({ e, retry: () => joinGroupPay(group), context: 'join_group_pay' })
       if (!handled) showToast(msg)
+    } finally {
+      setBusy('join', gid, false)
     }
   }
 
@@ -1739,12 +1865,13 @@ export default function App() {
       <main className="h-full">
         {needTelegram ? (
           <InitDataBanner
+            t={t}
             onOpenBot={openTelegramWebApp}
             onCopyDebug={() => copyDebugInfo({ e: null, context: 'initData_missing' })}
           />
         ) : null}
-        {activeTab === 'home' && <HomePage me={me} onPlay={onPlay} products={products} onDirectBuy={directBuy} orders={orders} activeGroups={activeGroups} onPayOrder={payOrder} onInviteGroup={inviteGroup} onGoTab={setActiveTab} onOpenShipping={openShippingModal} playBusy={playBusy} />}
-        {activeTab === 'store' && <StorePage products={products} onDirectBuy={directBuy} onGroupBuy={groupBuy} />}
+        {activeTab === 'home' && <HomePage me={me} onPlay={onPlay} products={products} onSelectProduct={(p) => openProduct(p, 'home_hot')} orders={orders} activeGroups={activeGroups} onPayOrder={payOrder} onInviteGroup={inviteGroup} onGoTab={setActiveTab} onOpenShipping={openShippingModal} playBusy={playBusy} />}
+        {activeTab === 'store' && <StorePage products={products} onSelectProduct={(p) => openProduct(p, 'store_list')} />}
         {activeTab === 'earn' && <EarnPage me={me} activeGroups={activeGroups} discoverGroups={discoverGroups} onCopyReferral={copyReferral} onForwardReferral={forwardReferral} onInviteGroup={inviteGroup} onJoinGroupPay={joinGroupPay} />}
         {activeTab === 'wallet' && <WalletPage t={t} wallet={wallet} logs={walletLogs} pricing={me ? me.pricing : null} pay={me ? me.pay : null} onBuyPlays={buyPlays} onSubmitProof={submitProof} />}
         {activeTab === 'profile' && <ProfilePage t={t} lang={lang} setLang={setLang} me={me} orders={orders} onPayOrder={payOrder} onEditShipping={openShippingModal} onSupport={openSupport} />}
@@ -1753,8 +1880,10 @@ export default function App() {
       <BottomTabNav t={t} activeTab={activeTab} setActiveTab={setActiveTab} />
       <PaymentModal data={paymentModal} onClose={() => setPaymentModal(null)} onSubmitProof={submitProof} onSubmitProofFile={submitProofFile} onShareLink={shareLink} onPreviewProof={previewProof} />
       <ActionModal data={actionModal} onClose={() => setActionModal(null)} />
-      <ShippingModal open={shippingModalOpen} initial={me && me.shipping ? me.shipping : null} onClose={() => setShippingModalOpen(false)} onSubmit={submitShipping} />
+      <ProductModal product={selectedProduct} onClose={() => setSelectedProduct(null)} onDirectBuy={directBuy} onGroupBuy={groupBuy} />
+      <ShippingModal t={t} open={shippingModalOpen} initial={me && me.shipping ? me.shipping : null} onClose={() => setShippingModalOpen(false)} onSubmit={submitShipping} />
       <BuyPlaysModal
+        t={t}
         open={buyPlaysModalOpen}
         pricing={me ? me.pricing : null}
         onClose={() => setBuyPlaysModalOpen(false)}

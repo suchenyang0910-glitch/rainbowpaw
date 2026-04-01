@@ -8,6 +8,13 @@ const BUTTONS = {
   support: '👩‍💼 客服',
 };
 
+function webAppButton(text, url) {
+  return {
+    text: String(text || '').trim() || '打开',
+    web_app: { url: String(url || '').trim() },
+  };
+}
+
 function webUrl(pathname) {
   const base = String(config.publicWebBaseUrl || '').trim().replace(/\/+$/, '');
   if (!base) return '';
@@ -25,7 +32,7 @@ function registerRainbowMenuRoutes() {
     const url = webUrl('/rainbowpaw/marketplace');
     const text = url ? '🛍 进入商城：' : '🛍 商城入口尚未配置（缺少 PUBLIC_WEB_BASE_URL）';
     const opts = url
-      ? { reply_markup: { inline_keyboard: [[{ text: '打开商城', url }]] } }
+      ? { reply_markup: { inline_keyboard: [[webAppButton('打开商城', url)]] } }
       : undefined;
     await rainbowBot.sendMessage(chatId, text, opts);
   });
@@ -36,7 +43,7 @@ function registerRainbowMenuRoutes() {
     const url = webUrl('/rainbowpaw');
     const text = url ? '🕊 善终服务入口：' : '🕊 善终服务入口尚未配置（缺少 PUBLIC_WEB_BASE_URL）';
     const opts = url
-      ? { reply_markup: { inline_keyboard: [[{ text: '打开服务', url }]] } }
+      ? { reply_markup: { inline_keyboard: [[webAppButton('打开服务', url)]] } }
       : undefined;
     await rainbowBot.sendMessage(chatId, text, opts);
   });
@@ -47,7 +54,7 @@ function registerRainbowMenuRoutes() {
     const url = webUrl('/rainbowpaw');
     const text = url ? '📸 纪念页入口：' : '📸 纪念页入口尚未配置（缺少 PUBLIC_WEB_BASE_URL）';
     const opts = url
-      ? { reply_markup: { inline_keyboard: [[{ text: '打开纪念页', url }]] } }
+      ? { reply_markup: { inline_keyboard: [[webAppButton('打开纪念页', url)]] } }
       : undefined;
     await rainbowBot.sendMessage(chatId, text, opts);
   });
@@ -65,4 +72,3 @@ function registerRainbowMenuRoutes() {
 }
 
 module.exports = registerRainbowMenuRoutes;
-
