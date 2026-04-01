@@ -83,7 +83,13 @@ export async function apiFetch(path, opts = {}) {
   }
 
   if (!res.ok || json.success === false) {
-    const msg = (json && json.error && json.error.message) || `HTTP ${res.status}`
+    const msg = (() => {
+      if (json && typeof json.message === 'string' && json.message.trim()) return String(json.message)
+      if (json && Array.isArray(json.message) && json.message.length) return json.message.map((x) => String(x)).join('; ')
+      if (json && json.error && typeof json.error === 'object' && typeof json.error.message === 'string') return String(json.error.message)
+      if (json && typeof json.error === 'string' && json.error.trim()) return String(json.error)
+      return `HTTP ${res.status}`
+    })()
     const err = new Error(msg)
     err.status = res.status
     throw err

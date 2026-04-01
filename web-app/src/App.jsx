@@ -266,6 +266,49 @@ const PaymentModal = ({ data, onClose, onSubmitProof, onSubmitProofFile, onShare
   )
 }
 
+const ActionModal = ({ data, onClose }) => {
+  if (!data) return null
+  const title = String(data.title || '').trim() || '提示'
+  const message = String(data.message || '').trim()
+  const actions = Array.isArray(data.actions) ? data.actions : []
+  return (
+    <div className="fixed inset-0 bg-black/40 z-[85] flex items-end animate-in fade-in duration-200" onClick={onClose}>
+      <div className="bg-white w-full rounded-t-3xl p-6 slide-in-from-bottom duration-300" onClick={(e) => e.stopPropagation()}>
+        <div className="w-12 h-1 bg-gray-200 rounded-full mx-auto mb-4" />
+        <div className="flex justify-between items-start mb-4">
+          <div>
+            <h3 className="text-lg font-bold">{title}</h3>
+            {message ? <p className="text-xs text-gray-500 mt-1 whitespace-pre-line">{message}</p> : null}
+          </div>
+          <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-full"><X size={20} /></button>
+        </div>
+        <div className="flex flex-col gap-2">
+          {actions.map((a, idx) => {
+            const label = String(a?.label || '').trim()
+            if (!label) return null
+            const primary = Boolean(a?.primary)
+            return (
+              <button
+                key={`${label}_${idx}`}
+                onClick={() => {
+                  try {
+                    if (typeof a?.onClick === 'function') a.onClick()
+                  } finally {
+                    if (!a?.keepOpen) onClose()
+                  }
+                }}
+                className={primary ? 'w-full bg-blue-500 text-white py-3 rounded-2xl text-sm font-black' : 'w-full bg-white border border-gray-200 text-gray-700 py-3 rounded-2xl text-sm font-black'}
+              >
+                {label}
+              </button>
+            )
+          })}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 const BuyPlaysModal = ({ open, pricing, onClose, onChoose }) => {
   if (!open) return null
   const p = pricing || {}
@@ -1293,6 +1336,7 @@ export default function App() {
   const [activeGroups, setActiveGroups] = useState([]);
   const [discoverGroups, setDiscoverGroups] = useState([]);
   const [paymentModal, setPaymentModal] = useState(null);
+  const [actionModal, setActionModal] = useState(null)
   const [playResultModal, setPlayResultModal] = useState(null)
   const [playBusy, setPlayBusy] = useState(false)
   const [shippingModalOpen, setShippingModalOpen] = useState(false)
@@ -1355,10 +1399,11 @@ export default function App() {
     } catch (e) {
       const msg = e && e.message ? String(e.message) : '抽奖失败'
       if (msg.includes('no plays left')) {
-        setBuyPlaysModalOpen(true)
+        openRecharge()
         return
       }
-      showToast(msg)
+      const handled = handleApiError({ e, retry: () => onPlay({ multi }) })
+      if (!handled) showToast(msg)
     } finally {
       setPlayBusy(false)
     }
@@ -1374,6 +1419,77 @@ export default function App() {
   const showToast = (text) => {
     setToast(String(text || ''))
     setTimeout(() => setToast(''), 2000)
+  }
+
+  const openRecharge = () => {
+    setActiveTab('wallet')
+    setBuyPlaysModalOpen(true)
+  }
+
+  const openTelegramWebApp = () => {
+    const ok = openTelegramLink(makeAftercareStartLink(''))
+    if (!ok) openTelegramLink('https://t.me/RainbowPawbot')
+  }
+
+  const openSupportLink = () => {
+    const raw = (import.meta && import.meta.env && import.meta.env.VITE_SUPPORT_LINK) || ''
+    const u = String(raw).trim() || 'https://t.me/RainbowPawbot'
+    openTelegramLink(u)
+  }
+
+  const handleApiError = ({ e, retry }) => {
+    const msg = e && e.message ? String(e.message) : ''
+    const status = e && typeof e.status !== 'undefined' ? Number(e.status) : null
+
+    if ((status === 400 || status === 401 || status === 403) && msg.includes('missing telegram id')) {
+      setActionModal({
+        title: '需要在 Telegram 内打开',
+        message: '未检测到 Telegram WebApp 授权信息（initData）。\n请从 Bot 入口重新打开，或在 Telegram 内刷新页面。',
+        actions: [
+          { label: '打开 RainbowPawbot', primary: true, onClick: openTelegramWebApp },
+          { label: '刷新页面', onClick: () => window.location.reload() },
+        ],
+      })
+      return true
+    }
+
+    if (msg.includes('insufficient points') || msg.includes('no plays left')) {
+      setActionModal({
+        title: '积分不足',
+        message: '当前积分不足以完成操作。\n建议先去钱包充值后再继续。',
+        actions: [
+          { label: '去钱包充值', primary: true, onClick: openRecharge },
+          { label: '取消' },
+        ],
+      })
+      return true
+    }
+
+    if (status === 502 || status === 503 || status === 504 || msg.includes('wallet service unavailable')) {
+      setActionModal({
+        title: '服务暂不可用',
+        message: '钱包服务暂时不可用或网络不稳定。\n请稍后重试。',
+        actions: [
+          ...(typeof retry === 'function' ? [{ label: '重试', primary: true, onClick: retry, keepOpen: true }] : []),
+          { label: '联系客服', onClick: openSupportLink },
+        ],
+      })
+      return true
+    }
+
+    if (status === 408 || msg.includes('请求超时')) {
+      setActionModal({
+        title: '请求超时',
+        message: '当前网络不稳定或服务繁忙。\n请稍后重试。',
+        actions: [
+          ...(typeof retry === 'function' ? [{ label: '重试', primary: true, onClick: retry, keepOpen: true }] : []),
+          { label: '取消' },
+        ],
+      })
+      return true
+    }
+
+    return false
   }
 
   const openPayment = async ({ title, display_id, amount, pay, invite_link }) => {
@@ -1476,12 +1592,8 @@ export default function App() {
       showToast('下单成功')
     } catch (e) {
       const msg = e && e.message ? String(e.message) : '创建订单失败'
-      if (msg.includes('insufficient points') || msg.includes('no plays left')) {
-        showToast('积分不足，请先去钱包充值')
-        setActiveTab('wallet')
-        return
-      }
-      showToast(msg)
+      const handled = handleApiError({ e, retry: () => directBuy(product) })
+      if (!handled) showToast(msg)
     }
   }
 
@@ -1491,7 +1603,9 @@ export default function App() {
       openPayment({ title: `🤝 Group - ${(product.display_name || product.name)}`, display_id: r.display_id, amount: r.payment.amount, pay: r.pay, invite_link: r.invite_link })
       if (r.invite_link) showToast('已生成拼团邀请链接')
     } catch (e) {
-      showToast(e && e.message ? e.message : '创建拼团失败')
+      const msg = e && e.message ? String(e.message) : '创建拼团失败'
+      const handled = handleApiError({ e, retry: () => groupBuy(product) })
+      if (!handled) showToast(msg)
     }
   }
 
@@ -1524,7 +1638,9 @@ export default function App() {
       const r = await api.joinGroupPay(group.id)
       openPayment({ title: '💰 Pay & Join', display_id: r.display_id, amount: r.payment.amount, pay: r.pay })
     } catch (e) {
-      showToast(e && e.message ? e.message : '加入失败')
+      const msg = e && e.message ? String(e.message) : '加入失败'
+      const handled = handleApiError({ e, retry: () => joinGroupPay(group) })
+      if (!handled) showToast(msg)
     }
   }
 
@@ -1573,6 +1689,7 @@ export default function App() {
       
       <BottomTabNav t={t} activeTab={activeTab} setActiveTab={setActiveTab} />
       <PaymentModal data={paymentModal} onClose={() => setPaymentModal(null)} onSubmitProof={submitProof} onSubmitProofFile={submitProofFile} onShareLink={shareLink} onPreviewProof={previewProof} />
+      <ActionModal data={actionModal} onClose={() => setActionModal(null)} />
       <ShippingModal open={shippingModalOpen} initial={me && me.shipping ? me.shipping : null} onClose={() => setShippingModalOpen(false)} onSubmit={submitShipping} />
       <BuyPlaysModal
         open={buyPlaysModalOpen}
