@@ -980,6 +980,7 @@ export class AiService {
     maxTokens: number;
     timeoutMs: number;
   }) {
+    const assistant = String(params.assistantText || '').trim();
     const direct = safeJsonParse(params.assistantText);
     if (direct.ok) return direct.value;
 
@@ -989,12 +990,43 @@ export class AiService {
       if (exParsed.ok) return exParsed.value;
     }
 
+    if (!assistant) {
+      const retryMessages: ChatMessage[] = [
+        ...params.messages,
+        {
+          role: 'user',
+          content:
+            '上一次输出为空或只有控制字符。请重新输出一个可被 JSON.parse 解析的 JSON 对象，只输出 JSON。',
+        },
+      ];
+      const resRetry = await this.callOpenAiCompatible({
+        baseUrl: params.baseUrl,
+        path: params.chatPath,
+        apiKey: params.apiKey,
+        model: params.model,
+        messages: retryMessages,
+        maxTokens: params.maxTokens,
+        temperature: 0,
+        timeoutMs: params.timeoutMs,
+      });
+      const tRetry = String(
+        resRetry?.choices?.[0]?.message?.content || '',
+      ).trim();
+      const parsedRetry = safeJsonParse(tRetry);
+      if (parsedRetry.ok) return parsedRetry.value;
+      const exRetry = extractFirstJsonObject(tRetry);
+      if (exRetry) {
+        const exRetryParsed = safeJsonParse(exRetry);
+        if (exRetryParsed.ok) return exRetryParsed.value;
+      }
+      throw new BadRequestException('AI 输出为空且无法修复成有效 JSON');
+    }
+
     const repairMessages: ChatMessage[] = [
       ...params.messages,
-      {
-        role: 'assistant',
-        content: params.assistantText,
-      },
+      ...(assistant
+        ? ([{ role: 'assistant', content: assistant }] as ChatMessage[])
+        : []),
       {
         role: 'user',
         content:
