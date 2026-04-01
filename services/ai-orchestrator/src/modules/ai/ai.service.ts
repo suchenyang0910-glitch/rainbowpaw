@@ -134,6 +134,43 @@ export class AiService {
     private readonly callLogStore: CallLogStore,
   ) {}
 
+  private throwUpstreamError(prefix: string, e: any): never {
+    if (axios.isAxiosError(e)) {
+      const status = e.response?.status;
+      const data = e.response?.data;
+      const errStr = (() => {
+        if (data == null) return '';
+        if (typeof data === 'string') return data;
+        if (typeof data === 'object') {
+          const maybe = (data as any).error;
+          const inner =
+            typeof maybe === 'string'
+              ? maybe
+              : typeof maybe === 'object'
+                ? (maybe?.message || maybe?.detail || JSON.stringify(maybe))
+                : '';
+          return (
+            inner ||
+            (data as any).message ||
+            (data as any).detail ||
+            JSON.stringify(data)
+          );
+        }
+        return String(data);
+      })();
+      const short = errStr.length > 400 ? `${errStr.slice(0, 400)}…` : errStr;
+      const code = status
+        ? `HTTP ${status}`
+        : e.code
+          ? String(e.code)
+          : 'ERR';
+      throw new BadRequestException(
+        `${prefix} failed: ${code}${short ? ` - ${short}` : ''}`,
+      );
+    }
+    throw new BadRequestException(`${prefix} failed`);
+  }
+
   private resolveModelForRole(role: string) {
     const fallback = String(process.env.AI_MODEL || 'nvidia_build').trim();
     const k = String(role || '')
@@ -635,17 +672,20 @@ export class AiService {
     const url =
       baseUrl.replace(/\/$/, '') + (path.startsWith('/') ? path : `/${path}`);
     const t0 = Date.now();
-    const response = await axios.post(
-      url,
-      { model, input: texts },
-      {
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
+    const input_type = role.includes('query') ? 'query' : 'passage';
+    const response = await axios
+      .post(
+        url,
+        { model, input: texts, input_type },
+        {
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
+          },
+          timeout: Number(process.env.AI_HTTP_TIMEOUT_MS || 20000),
         },
-        timeout: Number(process.env.AI_HTTP_TIMEOUT_MS || 20000),
-      },
-    );
+      )
+      .catch((e) => this.throwUpstreamError('Embedding', e));
     const latencyMs = Date.now() - t0;
     const data = response.data;
     const arr = Array.isArray(data?.data) ? data.data : [];
@@ -690,17 +730,24 @@ export class AiService {
     const url =
       baseUrl.replace(/\/$/, '') + (path.startsWith('/') ? path : `/${path}`);
     const t0 = Date.now();
-    const response = await axios.post(
-      url,
-      { model, query: params.query, documents: params.documents, top_n: topN },
-      {
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
+    const response = await axios
+      .post(
+        url,
+        {
+          model,
+          query: params.query,
+          documents: params.documents,
+          top_n: topN,
         },
-        timeout: Number(process.env.AI_HTTP_TIMEOUT_MS || 20000),
-      },
-    );
+        {
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
+          },
+          timeout: Number(process.env.AI_HTTP_TIMEOUT_MS || 20000),
+        },
+      )
+      .catch((e) => this.throwUpstreamError('Rerank', e));
     const latencyMs = Date.now() - t0;
     const data = response.data;
 
@@ -793,23 +840,25 @@ export class AiService {
     const url =
       params.baseUrl.replace(/\/$/, '') +
       (params.path.startsWith('/') ? params.path : `/${params.path}`);
-    const response = await axios.post(
-      url,
-      {
-        model: params.model,
-        messages: params.messages,
-        temperature: params.temperature,
-        max_tokens: params.maxTokens,
-        response_format: { type: 'json_object' },
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${params.apiKey}`,
-          'Content-Type': 'application/json',
+    const response = await axios
+      .post(
+        url,
+        {
+          model: params.model,
+          messages: params.messages,
+          temperature: params.temperature,
+          max_tokens: params.maxTokens,
+          response_format: { type: 'json_object' },
         },
-        timeout: Number(process.env.AI_HTTP_TIMEOUT_MS || 20000),
-      },
-    );
+        {
+          headers: {
+            Authorization: `Bearer ${params.apiKey}`,
+            'Content-Type': 'application/json',
+          },
+          timeout: Number(process.env.AI_HTTP_TIMEOUT_MS || 20000),
+        },
+      )
+      .catch((e) => this.throwUpstreamError('Chat', e));
     return response.data;
   }
 

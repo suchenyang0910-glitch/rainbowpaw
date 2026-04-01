@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import axios from 'axios';
-import { createHmac, randomUUID } from 'crypto';
+import { createHash, createHmac, randomUUID } from 'crypto';
 import { Pool } from 'pg';
 import type { QueryResult, QueryResultRow } from 'pg';
 
@@ -26,6 +26,10 @@ export class AppService {
   private paymentProofFiles = new Map<
     string,
     { mime_type: string; file_base64: string }
+  >();
+  private idempotencyCache = new Map<
+    string,
+    { expiresAt: number; promise: Promise<any> }
   >();
   private shippingByTelegramId = new Map<
     number,
@@ -874,14 +878,42 @@ export class AppService {
     this.ordersByPhone.get(phone)!.unshift(order);
   }
 
-  async marketplaceCreateOrder(body: any) {
+  private hashShort(input: string) {
+    const s = String(input || '').trim();
+    if (!s) return '';
+    return createHash('sha256').update(s).digest('hex').slice(0, 12);
+  }
+
+  private async runIdempotent<T>(key: string, ttlMs: number, fn: () => Promise<T>) {
+    const k = String(key || '').trim();
+    if (!k) return fn();
+    const now = Date.now();
+    const existed = this.idempotencyCache.get(k);
+    if (existed && existed.expiresAt > now) return existed.promise as Promise<T>;
+    for (const [kk, vv] of this.idempotencyCache.entries()) {
+      if (vv.expiresAt <= now) this.idempotencyCache.delete(kk);
+    }
+    const p = fn();
+    this.idempotencyCache.set(k, { expiresAt: now + ttlMs, promise: p });
+    try {
+      return await p;
+    } catch (e) {
+      this.idempotencyCache.delete(k);
+      throw e;
+    }
+  }
+
+  async marketplaceCreateOrder(body: any, opts?: { idempotency_key?: string }) {
     const phone = this.normalizePhone(body?.phone);
     const orderType = String(body?.order_type || '').trim();
     if (orderType !== 'product' && orderType !== 'service')
       throw new BadRequestException('invalid order_type');
-    const now = new Date();
-    const orderId = `rpw_${now.getTime()}`;
-    const city = String(body?.city || '').trim();
+    const idem = String(opts?.idempotency_key || '').trim();
+    const idemKey = idem ? `mp_order:${phone}:${idem}` : '';
+    return this.runIdempotent(idemKey, 10 * 60 * 1000, async () => {
+      const now = new Date();
+      const orderId = idem ? `rpw_${this.hashShort(idem)}` : `rpw_${now.getTime()}`;
+      const city = String(body?.city || '').trim();
 
     if (orderType === 'product') {
       const items = Array.isArray(body?.product_items)
@@ -941,45 +973,50 @@ export class AppService {
       },
     });
     return { code: 0, message: 'ok', data: { order_id: orderId } };
+    });
   }
 
-  async marketplaceCheckout(body: any) {
+  async marketplaceCheckout(body: any, opts?: { idempotency_key?: string }) {
     const phone = this.normalizePhone(body?.phone);
-    const cart = this.ensureCart(phone);
-    const selected = (cart.items || []).filter((x) => x.selected);
-    if (!selected.length) throw new BadRequestException('no selected items');
+    const idem = String(opts?.idempotency_key || '').trim();
+    const idemKey = idem ? `mp_checkout:${phone}:${idem}` : '';
+    return this.runIdempotent(idemKey, 10 * 60 * 1000, async () => {
+      const cart = this.ensureCart(phone);
+      const selected = (cart.items || []).filter((x) => x.selected);
+      if (!selected.length) throw new BadRequestException('no selected items');
 
-    const now = new Date();
-    const orderId = `rpw_${now.getTime()}`;
-    const total = selected.reduce(
-      (s: number, x: any) =>
-        s + Number(x.unit_price_cents || 0) * Number(x.quantity || 0),
-      0,
-    );
-    const items = selected.map((x: any) => ({
-      product_id: x.product_id,
-      name: x.name,
-      unit_price_cents: x.unit_price_cents,
-      quantity: x.quantity,
-    }));
+      const now = new Date();
+      const orderId = idem ? `rpw_${this.hashShort(idem)}` : `rpw_${now.getTime()}`;
+      const total = selected.reduce(
+        (s: number, x: any) =>
+          s + Number(x.unit_price_cents || 0) * Number(x.quantity || 0),
+        0,
+      );
+      const items = selected.map((x: any) => ({
+        product_id: x.product_id,
+        name: x.name,
+        unit_price_cents: x.unit_price_cents,
+        quantity: x.quantity,
+      }));
 
-    this.pushOrder(phone, {
-      order_id: orderId,
-      phone,
-      order_type: 'checkout',
-      status: 'pending',
-      total_cents: total,
-      currency: 'USD',
-      created_at: now.toISOString(),
-      items,
-      pickup_address: String(body?.pickup_address || '').trim() || undefined,
-      meta: {
-        conversation_channel: String(body?.conversation_channel || 'web'),
-      },
+      this.pushOrder(phone, {
+        order_id: orderId,
+        phone,
+        order_type: 'checkout',
+        status: 'pending',
+        total_cents: total,
+        currency: 'USD',
+        created_at: now.toISOString(),
+        items,
+        pickup_address: String(body?.pickup_address || '').trim() || undefined,
+        meta: {
+          conversation_channel: String(body?.conversation_channel || 'web'),
+        },
+      });
+
+      cart.items = cart.items.filter((x: any) => !x.selected);
+      return { code: 0, message: 'ok', data: { order_id: orderId } };
     });
-
-    cart.items = cart.items.filter((x: any) => !x.selected);
-    return { code: 0, message: 'ok', data: { order_id: orderId } };
   }
 
   async adminDashboardSummary() {
@@ -1881,18 +1918,22 @@ export class AppService {
     return { code: 0, message: 'ok', data: { groups: [] } };
   }
 
-  async createPlaysPayment(opts: { bundle: number }) {
+  async createPlaysPayment(opts: { bundle: number; idempotency_key?: string }) {
     const b = Math.max(1, Math.min(10, Number(opts.bundle || 1)));
     const amount = b === 10 ? 13 : b === 3 ? 4 : 1.5;
-    return {
-      code: 0,
-      message: 'ok',
-      data: {
-        display_id: `pay_${Date.now()}`,
-        payment: { amount },
-        pay: { usdtTrc20Address: '', abaName: '', abaId: '' },
-      },
-    };
+    const idem = String(opts.idempotency_key || '').trim();
+    const idemKey = idem ? `pay_plays:${idem}` : '';
+    return this.runIdempotent(idemKey, 10 * 60 * 1000, async () => {
+      return {
+        code: 0,
+        message: 'ok',
+        data: {
+          display_id: idem ? `pay_${this.hashShort(idem)}` : `pay_${Date.now()}`,
+          payment: { amount },
+          pay: { usdtTrc20Address: '', abaName: '', abaId: '' },
+        },
+      };
+    });
   }
 
   async payment(opts: { id: string }) {
@@ -1959,6 +2000,7 @@ export class AppService {
     devTelegramId: string;
     telegramInitData: string;
     product_id: number;
+    idempotency_key?: string;
   }) {
     const tg = this.getTelegramUserInfo(
       opts.devTelegramId,
@@ -1969,24 +2011,33 @@ export class AppService {
     const p = this.findProductPoints(opts.product_id);
     if (!p) throw new BadRequestException('invalid product_id');
 
-    await this.walletSpend(
-      linked.global_user_id,
-      p.points,
-      `direct:${linked.global_user_id}:${opts.product_id}:${Date.now()}`,
-      'store_consume',
-    );
-    const wallet = await this.getWallet(linked.global_user_id);
-    return {
-      code: 0,
-      message: 'ok',
-      data: { order_id: `so_${Date.now()}`, wallet },
-    };
+    const idem = String(opts.idempotency_key || '').trim();
+    const idemKey = idem
+      ? `purchaseDirect:${linked.global_user_id}:${opts.product_id}:${idem}`
+      : '';
+    return this.runIdempotent(idemKey, 10 * 60 * 1000, async () => {
+      await this.walletSpend(
+        linked.global_user_id,
+        p.points,
+        idem
+          ? `direct:${linked.global_user_id}:${opts.product_id}:${idem}`
+          : `direct:${linked.global_user_id}:${opts.product_id}:${Date.now()}`,
+        'store_consume',
+      );
+      const wallet = await this.getWallet(linked.global_user_id);
+      return {
+        code: 0,
+        message: 'ok',
+        data: { order_id: idem ? `so_${this.hashShort(idem)}` : `so_${Date.now()}`, wallet },
+      };
+    });
   }
 
   async purchaseGroup(opts: {
     devTelegramId: string;
     telegramInitData: string;
     product_id: number;
+    idempotency_key?: string;
   }) {
     const tg = this.getTelegramUserInfo(
       opts.devTelegramId,
@@ -1996,16 +2047,22 @@ export class AppService {
     const linked = await this.linkUser(tg);
     const p = this.findProductPoints(opts.product_id);
     if (!p) throw new BadRequestException('invalid product_id');
-    return {
-      code: 0,
-      message: 'ok',
-      data: {
-        group_id: `g_${Date.now()}`,
-        product_id: p.id,
-        points: p.points,
-        global_user_id: linked.global_user_id,
-      },
-    };
+    const idem = String(opts.idempotency_key || '').trim();
+    const idemKey = idem
+      ? `purchaseGroup:${linked.global_user_id}:${opts.product_id}:${idem}`
+      : '';
+    return this.runIdempotent(idemKey, 10 * 60 * 1000, async () => {
+      return {
+        code: 0,
+        message: 'ok',
+        data: {
+          group_id: idem ? `g_${this.hashShort(idem)}` : `g_${Date.now()}`,
+          product_id: p.id,
+          points: p.points,
+          global_user_id: linked.global_user_id,
+        },
+      };
+    });
   }
 
   async createGroup(opts: { product_id: number }) {

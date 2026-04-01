@@ -93,13 +93,17 @@ export class AppController {
   }
 
   @Post('marketplace/orders')
-  marketplaceCreateOrder(@Body() body: any) {
-    return this.appService.marketplaceCreateOrder(body || {});
+  marketplaceCreateOrder(@Headers() headers: any, @Body() body: any) {
+    return this.appService.marketplaceCreateOrder(body || {}, {
+      idempotency_key: String(headers?.['x-idempotency-key'] || ''),
+    });
   }
 
   @Post('marketplace/checkout')
-  marketplaceCheckout(@Body() body: any) {
-    return this.appService.marketplaceCheckout(body || {});
+  marketplaceCheckout(@Headers() headers: any, @Body() body: any) {
+    return this.appService.marketplaceCheckout(body || {}, {
+      idempotency_key: String(headers?.['x-idempotency-key'] || ''),
+    });
   }
 
   @Post('v1/auth/telegram/login')
@@ -369,9 +373,10 @@ export class AppController {
   }
 
   @Post('payments/plays')
-  createPlaysPayment(@Body() body: any) {
+  createPlaysPayment(@Headers() headers: any, @Body() body: any) {
     return this.appService.createPlaysPayment({
       bundle: Number(body?.bundle || 1),
+      idempotency_key: String(headers?.['x-idempotency-key'] || ''),
     });
   }
 
@@ -429,11 +434,13 @@ export class AppController {
   purchaseDirect(
     @Headers('x-dev-telegram-id') devTelegramId: string,
     @Headers('x-telegram-init-data') telegramInitData: string,
+    @Headers('x-idempotency-key') idempotencyKey: string,
     @Body() body: any,
   ) {
     return this.appService.purchaseDirect({
       devTelegramId,
       telegramInitData,
+      idempotency_key: String(idempotencyKey || ''),
       product_id: Number(body?.product_id),
     });
   }
@@ -442,11 +449,13 @@ export class AppController {
   purchaseGroup(
     @Headers('x-dev-telegram-id') devTelegramId: string,
     @Headers('x-telegram-init-data') telegramInitData: string,
+    @Headers('x-idempotency-key') idempotencyKey: string,
     @Body() body: any,
   ) {
     return this.appService.purchaseGroup({
       devTelegramId,
       telegramInitData,
+      idempotency_key: String(idempotencyKey || ''),
       product_id: Number(body?.product_id),
     });
   }
