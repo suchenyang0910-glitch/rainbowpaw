@@ -1,4 +1,5 @@
 import { AiService } from './ai.service';
+import { BadRequestException } from '@nestjs/common';
 
 describe('AiService recommendNext', () => {
   it('falls back when retrieval throws', async () => {
@@ -60,5 +61,29 @@ describe('AiService recommendNext', () => {
     });
 
     expect(out).toEqual({ ok: true });
+  });
+
+  it('returns fallback when recommend model output is invalid', async () => {
+    const service = new (AiService as any)({
+      insert: async () => {},
+      sumTodayCostUsd: async () => 0,
+    });
+    (service as any).canUseEmbedding = () => false;
+    (service as any).canUseRerank = () => false;
+    (service as any).runRole = async () => {
+      throw new BadRequestException('AI 输出为空且无法修复成有效 JSON');
+    };
+    const out = await service.recommendNext(
+      {
+        user_profile: { tags: ['shop'] },
+        recent_actions: ['play_completed'],
+        last_result: { plays: [{ tier: 'common' }] },
+        candidate_products: [],
+        candidate_entries: ['claw'],
+      },
+      { headers: { 'x-global-user-id': 'u_test' } },
+    );
+    expect(out).toMatchObject({ model_hint: 'fallback', retrieval_used: false });
+    expect(typeof out.ai_error).toBe('string');
   });
 });

@@ -226,6 +226,14 @@ export class AiService {
     return Math.min(300000, Math.max(5000, Math.floor(n)));
   }
 
+  private resolveJsonRepairModel(currentModel: string) {
+    const override = String(process.env.AI_JSON_REPAIR_MODEL || '').trim();
+    if (override) return override;
+    const fallback = String(process.env.AI_MODEL || '').trim();
+    if (fallback && fallback !== currentModel) return fallback;
+    return currentModel;
+  }
+
   async supportReply(dto: SupportReplyDto, req: any) {
     const prompt = renderTemplate(SUPPORT_PROMPT, {
       user_message: dto.user_message,
@@ -351,30 +359,76 @@ export class AiService {
           prompt +
           `\n\n候选项（已排序，分数越高越优先）：\n${toJsonString(ranked.slice(0, 10))}`;
 
-        const out = await this.runRole('recommend_ai', enrichedPrompt, {
-          global_user_id: this.extractGlobalUserId(req),
-          input: dto,
-        });
-        return {
-          ...out,
-          retrieval_used: true,
-          ranked_candidates: ranked.slice(0, 10),
-        };
+        try {
+          const out = await this.runRole('recommend_ai', enrichedPrompt, {
+            global_user_id: this.extractGlobalUserId(req),
+            input: dto,
+          });
+          return {
+            ...out,
+            retrieval_used: true,
+            ranked_candidates: ranked.slice(0, 10),
+          };
+        } catch (e: any) {
+          const aiError = String(e?.message || 'recommend_failed');
+          try {
+            await this.callLogStore.insert({
+              global_user_id: this.extractGlobalUserId(req),
+              role: 'recommend_ai',
+              model: this.resolveModelForRole('recommend_ai'),
+              provider_base_url: String(process.env.AI_BASE_URL || '').trim() || null,
+              request_json: dto as any,
+              response_json: { error: aiError, fallback: true },
+              status: 'error',
+            });
+          } catch {}
+          const fallback = this.mock('recommend_ai', dto as any);
+          return {
+            ...fallback,
+            model_hint: 'fallback',
+            retrieval_used: true,
+            ranked_candidates: ranked.slice(0, 10),
+            ai_error: aiError,
+          };
+        }
       }
       const prompt = renderTemplate(RECOMMEND_PROMPT, {
         user_profile: userProfile,
         recent_actions: recentActions,
         last_result: lastResult,
       });
-      const out = await this.runRole('recommend_ai', prompt, {
-        global_user_id: this.extractGlobalUserId(req),
-        input: dto,
-      });
-      return {
-        ...out,
-        retrieval_used: false,
-        retrieval_error: retrievalError,
-      };
+      try {
+        const out = await this.runRole('recommend_ai', prompt, {
+          global_user_id: this.extractGlobalUserId(req),
+          input: dto,
+        });
+        return {
+          ...out,
+          retrieval_used: false,
+          retrieval_error: retrievalError,
+        };
+      } catch (e: any) {
+        const aiError = String(e?.message || 'recommend_failed');
+        try {
+          await this.callLogStore.insert({
+            global_user_id: this.extractGlobalUserId(req),
+            role: 'recommend_ai',
+            model: this.resolveModelForRole('recommend_ai'),
+            provider_base_url: String(process.env.AI_BASE_URL || '').trim() || null,
+            request_json: dto as any,
+            response_json: { error: aiError, fallback: true, retrieval_error: retrievalError },
+            status: 'error',
+          });
+        } catch {}
+        const fallback = this.mock('recommend_ai', dto as any);
+        return {
+          ...fallback,
+          model_hint: 'fallback',
+          retrieval_used: false,
+          retrieval_error: retrievalError,
+          ai_error: aiError,
+        };
+      }
     }
 
     const prompt = renderTemplate(RECOMMEND_PROMPT, {
@@ -382,11 +436,28 @@ export class AiService {
       recent_actions: recentActions,
       last_result: lastResult,
     });
-    const out = await this.runRole('recommend_ai', prompt, {
-      global_user_id: this.extractGlobalUserId(req),
-      input: dto,
-    });
-    return { ...out, retrieval_used: false };
+    try {
+      const out = await this.runRole('recommend_ai', prompt, {
+        global_user_id: this.extractGlobalUserId(req),
+        input: dto,
+      });
+      return { ...out, retrieval_used: false };
+    } catch (e: any) {
+      const aiError = String(e?.message || 'recommend_failed');
+      try {
+        await this.callLogStore.insert({
+          global_user_id: this.extractGlobalUserId(req),
+          role: 'recommend_ai',
+          model: this.resolveModelForRole('recommend_ai'),
+          provider_base_url: String(process.env.AI_BASE_URL || '').trim() || null,
+          request_json: dto as any,
+          response_json: { error: aiError, fallback: true },
+          status: 'error',
+        });
+      } catch {}
+      const fallback = this.mock('recommend_ai', dto as any);
+      return { ...fallback, model_hint: 'fallback', retrieval_used: false, ai_error: aiError };
+    }
   }
 
   async visionAnalyze(dto: VisionAnalyzeDto, req: any) {
@@ -940,13 +1011,15 @@ export class AiService {
     maxTokens: number;
     temperature: number;
     timeoutMs?: number;
+    disableResponseFormat?: boolean;
   }) {
     const url =
       params.baseUrl.replace(/\/$/, '') +
       (params.path.startsWith('/') ? params.path : `/${params.path}`);
     const enableResponseFormat =
+      !params.disableResponseFormat &&
       String(process.env.AI_RESPONSE_FORMAT || '').trim().toLowerCase() !==
-      'false';
+        'false';
     const body: any = {
       model: params.model,
       messages: params.messages,
@@ -999,15 +1072,17 @@ export class AiService {
             '上一次输出为空或只有控制字符。请重新输出一个可被 JSON.parse 解析的 JSON 对象，只输出 JSON。',
         },
       ];
+      const repairModel = this.resolveJsonRepairModel(params.model);
       const resRetry = await this.callOpenAiCompatible({
         baseUrl: params.baseUrl,
         path: params.chatPath,
         apiKey: params.apiKey,
-        model: params.model,
+        model: repairModel,
         messages: retryMessages,
         maxTokens: params.maxTokens,
         temperature: 0,
         timeoutMs: params.timeoutMs,
+        disableResponseFormat: true,
       });
       const tRetry = String(
         resRetry?.choices?.[0]?.message?.content || '',
@@ -1034,15 +1109,17 @@ export class AiService {
       },
     ];
 
+    const repairModel = this.resolveJsonRepairModel(params.model);
     const res2 = await this.callOpenAiCompatible({
       baseUrl: params.baseUrl,
       path: params.chatPath,
       apiKey: params.apiKey,
-      model: params.model,
+      model: repairModel,
       messages: repairMessages,
       maxTokens: params.maxTokens,
       temperature: 0,
       timeoutMs: params.timeoutMs,
+      disableResponseFormat: true,
     });
 
     const t2 = String(res2?.choices?.[0]?.message?.content || '').trim();
