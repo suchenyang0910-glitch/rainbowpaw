@@ -33,7 +33,38 @@ async function supportReplyWithUser(payload, opts) {
   }
 }
 
+async function recommendNextWithUser(payload, opts) {
+  try {
+    const gid = String(opts?.global_user_id || '').trim();
+    const { data } = await client.post('/ai/recommend/next', payload, {
+      headers: gid ? { 'x-global-user-id': gid } : {},
+    });
+    return data.data;
+  } catch (error) {
+    console.error(
+      'aiOrchestratorService.recommendNext error:',
+      error.response?.data || error.message,
+    );
+    throw error;
+  }
+}
+
+async function getMetrics() {
+  try {
+    const { data } = await client.get('/ai/metrics');
+    return data.data;
+  } catch (error) {
+    console.error(
+      'aiOrchestratorService.getMetrics error:',
+      error.response?.data || error.message,
+    );
+    throw error;
+  }
+}
+
 module.exports = {
   supportReply,
   supportReplyWithUser,
+  recommendNextWithUser,
+  getMetrics,
 };

@@ -1,6 +1,7 @@
-import { Body, Controller, Post, Req } from '@nestjs/common';
+import { Body, Controller, Get, Post, Query, Req } from '@nestjs/common';
 import { success } from '../../common/utils/response';
 import { AiService } from './ai.service';
+import { AiMetricsStore } from './ai.metrics';
 import { SupportReplyDto } from './dto/support-reply.dto';
 import { GrowthGenerateDto } from './dto/growth-generate.dto';
 import { OpsAnalyzeDto } from './dto/ops-analyze.dto';
@@ -11,7 +12,17 @@ import { VisionAnalyzeDto } from './dto/vision-analyze.dto';
 
 @Controller('ai')
 export class AiController {
-  constructor(private readonly aiService: AiService) {}
+  constructor(
+    private readonly aiService: AiService,
+    private readonly metrics: AiMetricsStore,
+  ) {}
+
+  @Get('metrics')
+  metricsSnapshot(@Query('window_seconds') windowSeconds?: string) {
+    const n = Number(windowSeconds || 300);
+    const out = this.metrics.snapshot(Number.isFinite(n) ? n : 300);
+    return success(out);
+  }
 
   @Post('support/reply')
   async supportReply(@Body() dto: SupportReplyDto, @Req() req: any) {

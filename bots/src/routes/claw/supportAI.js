@@ -8,6 +8,7 @@ const ACTION_TO_BUTTON_TEXT = {
   claw: '🎮 抽奖',
   recharge: '💰 钱包',
   shop: '🛍 商城',
+  group: '🔥 发起拼团',
   memorial: '🌈 纪念服务',
 };
 
@@ -18,6 +19,7 @@ const IGNORE_TEXTS = new Set([
   '🔥 发起拼团',
   '👥 分销中心',
   '🌈 纪念服务',
+  '🤖 下一步推荐',
 ]);
 
 function toKeyboard(buttons) {

@@ -169,6 +169,11 @@ services:
       BRIDGE_SERVICE_URL: http://bridge-service:3003/api
       AI_ORCHESTRATOR_SERVICE_URL: http://ai-orchestrator:3005/api
       REPORT_SERVICE_URL: ${REPORT_SERVICE_URL:-http://localhost:3004/api}
+      API_GATEWAY_URL: http://api-gateway:3012/api
+      AI_ALERT_MIN_REQUESTS: ${AI_ALERT_MIN_REQUESTS:-20}
+      AI_ALERT_ERROR_RATE: ${AI_ALERT_ERROR_RATE:-0.2}
+      AI_ALERT_FALLBACK_RATE: ${AI_ALERT_FALLBACK_RATE:-0.3}
+      AI_ALERT_INTERVAL_MS: ${AI_ALERT_INTERVAL_MS:-300000}
     depends_on:
       api-gateway:
         condition: service_started

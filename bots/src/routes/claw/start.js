@@ -25,6 +25,7 @@ function registerClawStartRoute() {
               ['🎮 抽奖', '💰 钱包'],
               ['🛍 商城', '🔥 发起拼团'],
               ['👥 分销中心', '🌈 纪念服务'],
+              ['🤖 下一步推荐'],
             ],
             resize_keyboard: true,
           },

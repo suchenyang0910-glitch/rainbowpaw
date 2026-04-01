@@ -16,6 +16,7 @@ import { RecommendNextDto } from './dto/recommend-next.dto';
 import { CALL_LOG_STORE } from '../call-log/call-log.store';
 import type { CallLogStore } from '../call-log/call-log.store';
 import { VisionAnalyzeDto } from './dto/vision-analyze.dto';
+import { AiMetricsStore } from './ai.metrics';
 
 type ChatMessage = {
   role: 'system' | 'user' | 'assistant';
@@ -138,6 +139,7 @@ export class AiService {
   constructor(
     @Inject(CALL_LOG_STORE)
     private readonly callLogStore: CallLogStore,
+    private readonly metrics: AiMetricsStore,
   ) {}
 
   private throwUpstreamError(prefix: string, e: any): never {
@@ -311,6 +313,7 @@ export class AiService {
       let retrievalError: string | null = null;
 
       try {
+        const tRetrieval0 = Date.now();
         const query = this.buildRecommendQuery({
           userProfile,
           recentActions,
@@ -321,7 +324,17 @@ export class AiService {
           candidateEntries,
         });
         ranked = await this.rankCandidates({ query, docs, req });
+        this.metrics.record({
+          role: 'recommend_retrieval',
+          status: 'ok',
+          latency_ms: Date.now() - tRetrieval0,
+          model: String(process.env.AI_EMBED_MODEL || '').trim() || null,
+        });
       } catch (e: any) {
+        const latencyMs = (() => {
+          const v = Number(e?.response?.latency_ms);
+          return Number.isFinite(v) ? v : null;
+        })();
         const msg = (() => {
           const m = e?.response?.message;
           if (typeof m === 'string') return m;
@@ -332,6 +345,12 @@ export class AiService {
           return 'retrieval_failed';
         })();
         retrievalError = String(msg || 'retrieval_failed');
+        this.metrics.record({
+          role: 'recommend_retrieval',
+          status: 'error',
+          latency_ms: latencyMs,
+          model: String(process.env.AI_EMBED_MODEL || '').trim() || null,
+        });
         try {
           await this.callLogStore.insert({
             global_user_id: this.extractGlobalUserId(req),
@@ -383,6 +402,12 @@ export class AiService {
             });
           } catch {}
           const fallback = this.mock('recommend_ai', dto as any);
+          this.metrics.record({
+            role: 'recommend_ai',
+            status: 'fallback',
+            latency_ms: null,
+            model: this.resolveModelForRole('recommend_ai'),
+          });
           return {
             ...fallback,
             model_hint: 'fallback',
@@ -421,6 +446,12 @@ export class AiService {
           });
         } catch {}
         const fallback = this.mock('recommend_ai', dto as any);
+        this.metrics.record({
+          role: 'recommend_ai',
+          status: 'fallback',
+          latency_ms: null,
+          model: this.resolveModelForRole('recommend_ai'),
+        });
         return {
           ...fallback,
           model_hint: 'fallback',
@@ -456,6 +487,12 @@ export class AiService {
         });
       } catch {}
       const fallback = this.mock('recommend_ai', dto as any);
+      this.metrics.record({
+        role: 'recommend_ai',
+        status: 'fallback',
+        latency_ms: null,
+        model: this.resolveModelForRole('recommend_ai'),
+      });
       return { ...fallback, model_hint: 'fallback', retrieval_used: false, ai_error: aiError };
     }
   }
@@ -516,33 +553,34 @@ export class AiService {
     ];
 
     const t0 = Date.now();
-    const res = await this.callOpenAiCompatible({
-      baseUrl,
-      path: chatPath,
-      apiKey,
-      model,
-      messages,
-      maxTokens: this.resolveMaxTokensForRole(role),
-      temperature: Number(process.env.AI_TEMPERATURE || 0.2),
-      timeoutMs: this.resolveTimeoutMsForRole(role),
-    });
-    const latencyMs = Date.now() - t0;
+    try {
+      const res = await this.callOpenAiCompatible({
+        baseUrl,
+        path: chatPath,
+        apiKey,
+        model,
+        messages,
+        maxTokens: this.resolveMaxTokensForRole(role),
+        temperature: Number(process.env.AI_TEMPERATURE || 0.2),
+        timeoutMs: this.resolveTimeoutMsForRole(role),
+      });
+      const latencyMs = Date.now() - t0;
 
-    const assistantText = String(
-      res?.choices?.[0]?.message?.content || '',
-    ).trim();
-    const parsed = await this.parseJsonWithRetry({
-      baseUrl,
-      chatPath,
-      apiKey,
-      model,
-      messages,
-      assistantText,
-      maxTokens: this.resolveMaxTokensForRole(role),
-      timeoutMs: this.resolveTimeoutMsForRole(role),
-    });
+      const assistantText = String(
+        res?.choices?.[0]?.message?.content || '',
+      ).trim();
+      const parsed = await this.parseJsonWithRetry({
+        baseUrl,
+        chatPath,
+        apiKey,
+        model,
+        messages,
+        assistantText,
+        maxTokens: this.resolveMaxTokensForRole(role),
+        timeoutMs: this.resolveTimeoutMsForRole(role),
+      });
 
-    const usage = res?.usage || null;
+      const usage = res?.usage || null;
     const promptTokens =
       typeof usage?.prompt_tokens === 'number' ? usage.prompt_tokens : null;
     const completionTokens =
@@ -558,7 +596,7 @@ export class AiService {
       priceOutPer1k: this.numOrNull(process.env.AI_PRICE_OUTPUT_PER_1K),
     });
 
-    await this.callLogStore.insert({
+      await this.callLogStore.insert({
       global_user_id: this.extractGlobalUserId(req),
       role,
       model,
@@ -570,10 +608,39 @@ export class AiService {
       latency_ms: latencyMs,
       request_json: dto as any,
       response_json: parsed,
-      status: 'ok',
-    });
+        status: 'ok',
+      });
 
-    return { ...parsed, model_hint: `${model}` };
+      this.metrics.record({
+        role,
+        status: 'ok',
+        latency_ms: latencyMs,
+        model,
+      });
+
+      return { ...parsed, model_hint: `${model}` };
+    } catch (e: any) {
+      const latencyMs = Date.now() - t0;
+      this.metrics.record({
+        role,
+        status: 'error',
+        latency_ms: latencyMs,
+        model,
+      });
+      try {
+        await this.callLogStore.insert({
+          global_user_id: this.extractGlobalUserId(req),
+          role,
+          model,
+          provider_base_url: baseUrl,
+          latency_ms: latencyMs,
+          request_json: dto as any,
+          response_json: { error: String(e?.message || 'error') },
+          status: 'error',
+        });
+      } catch {}
+      throw e;
+    }
   }
 
   private extractGlobalUserId(req: any) {
@@ -627,64 +694,94 @@ export class AiService {
     ];
 
     const t0 = Date.now();
-    const res = await this.callOpenAiCompatible({
-      baseUrl,
-      path: chatPath,
-      apiKey,
-      model,
-      messages,
-      maxTokens,
-      temperature,
-      timeoutMs,
-    });
-    const latencyMs = Date.now() - t0;
+    try {
+      const res = await this.callOpenAiCompatible({
+        baseUrl,
+        path: chatPath,
+        apiKey,
+        model,
+        messages,
+        maxTokens,
+        temperature,
+        timeoutMs,
+      });
+      const latencyMs = Date.now() - t0;
 
-    const assistantText = String(
-      res?.choices?.[0]?.message?.content || '',
-    ).trim();
-    const parsed = await this.parseJsonWithRetry({
-      baseUrl,
-      chatPath,
-      apiKey,
-      model,
-      messages,
-      assistantText,
-      maxTokens,
-      timeoutMs,
-    });
+      const assistantText = String(
+        res?.choices?.[0]?.message?.content || '',
+      ).trim();
+      const parsed = await this.parseJsonWithRetry({
+        baseUrl,
+        chatPath,
+        apiKey,
+        model,
+        messages,
+        assistantText,
+        maxTokens,
+        timeoutMs,
+      });
 
-    const usage = res?.usage || null;
-    const promptTokens =
-      typeof usage?.prompt_tokens === 'number' ? usage.prompt_tokens : null;
-    const completionTokens =
-      typeof usage?.completion_tokens === 'number'
-        ? usage.completion_tokens
-        : null;
-    const totalTokens =
-      typeof usage?.total_tokens === 'number' ? usage.total_tokens : null;
-    const costUsd = computeCostUsd({
-      promptTokens,
-      completionTokens,
-      priceInPer1k: this.numOrNull(process.env.AI_PRICE_INPUT_PER_1K),
-      priceOutPer1k: this.numOrNull(process.env.AI_PRICE_OUTPUT_PER_1K),
-    });
+      const usage = res?.usage || null;
+      const promptTokens =
+        typeof usage?.prompt_tokens === 'number' ? usage.prompt_tokens : null;
+      const completionTokens =
+        typeof usage?.completion_tokens === 'number'
+          ? usage.completion_tokens
+          : null;
+      const totalTokens =
+        typeof usage?.total_tokens === 'number' ? usage.total_tokens : null;
+      const costUsd = computeCostUsd({
+        promptTokens,
+        completionTokens,
+        priceInPer1k: this.numOrNull(process.env.AI_PRICE_INPUT_PER_1K),
+        priceOutPer1k: this.numOrNull(process.env.AI_PRICE_OUTPUT_PER_1K),
+      });
 
-    await this.callLogStore.insert({
-      global_user_id: meta.global_user_id,
-      role,
-      model,
-      provider_base_url: baseUrl,
-      prompt_tokens: promptTokens,
-      completion_tokens: completionTokens,
-      total_tokens: totalTokens,
-      cost_usd: costUsd,
-      latency_ms: latencyMs,
-      request_json: meta.input,
-      response_json: parsed,
-      status: 'ok',
-    });
+      await this.callLogStore.insert({
+        global_user_id: meta.global_user_id,
+        role,
+        model,
+        provider_base_url: baseUrl,
+        prompt_tokens: promptTokens,
+        completion_tokens: completionTokens,
+        total_tokens: totalTokens,
+        cost_usd: costUsd,
+        latency_ms: latencyMs,
+        request_json: meta.input,
+        response_json: parsed,
+        status: 'ok',
+      });
 
-    return { ...parsed, model_hint: `${model}` };
+      this.metrics.record({
+        role,
+        status: 'ok',
+        latency_ms: latencyMs,
+        model,
+      });
+
+      return { ...parsed, model_hint: `${model}` };
+    } catch (e: any) {
+      const latencyMs = Date.now() - t0;
+      this.metrics.record({
+        role,
+        status: 'error',
+        latency_ms: latencyMs,
+        model,
+      });
+      try {
+        await this.callLogStore.insert({
+          global_user_id: meta.global_user_id,
+          role,
+          model,
+          provider_base_url: baseUrl,
+          latency_ms: latencyMs,
+          request_json: meta.input,
+          response_json: { error: String(e?.message || 'error') },
+          status: 'error',
+        });
+      } catch {}
+      throw e;
+    }
   }
 
   private numOrNull(v: any) {
@@ -859,7 +956,15 @@ export class AiService {
           timeout: Number(process.env.AI_HTTP_TIMEOUT_MS || 60000),
         },
       )
-      .catch((e) => this.throwUpstreamError('Embedding', e));
+      .catch((e) => {
+        this.metrics.record({
+          role,
+          status: 'error',
+          latency_ms: Date.now() - t0,
+          model,
+        });
+        return this.throwUpstreamError('Embedding', e);
+      });
     const latencyMs = Date.now() - t0;
     const data = response.data;
     const arr = Array.isArray(data?.data) ? data.data : [];
@@ -876,6 +981,13 @@ export class AiService {
       request_json: { input_count: texts.length },
       response_json: { returned: vecs.length },
       status: 'ok',
+    });
+
+    this.metrics.record({
+      role,
+      status: 'ok',
+      latency_ms: latencyMs,
+      model,
     });
 
     return vecs;
@@ -921,7 +1033,15 @@ export class AiService {
           timeout: Number(process.env.AI_HTTP_TIMEOUT_MS || 60000),
         },
       )
-      .catch((e) => this.throwUpstreamError('Rerank', e));
+      .catch((e) => {
+        this.metrics.record({
+          role: 'recommend_rerank',
+          status: 'error',
+          latency_ms: Date.now() - t0,
+          model,
+        });
+        return this.throwUpstreamError('Rerank', e);
+      });
     const latencyMs = Date.now() - t0;
     const data = response.data;
 
@@ -957,6 +1077,13 @@ export class AiService {
       request_json: { doc_count: params.documents.length },
       response_json: { returned: sorted.length },
       status: 'ok',
+    });
+
+    this.metrics.record({
+      role: 'recommend_rerank',
+      status: 'ok',
+      latency_ms: latencyMs,
+      model,
     });
 
     return sorted;

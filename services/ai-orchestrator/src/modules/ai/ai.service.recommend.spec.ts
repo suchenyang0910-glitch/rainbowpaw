@@ -3,10 +3,13 @@ import { BadRequestException } from '@nestjs/common';
 
 describe('AiService recommendNext', () => {
   it('falls back when retrieval throws', async () => {
-    const service = new (AiService as any)({
-      insert: async () => {},
-      sumTodayCostUsd: async () => 0,
-    });
+    const service = new (AiService as any)(
+      {
+        insert: async () => {},
+        sumTodayCostUsd: async () => 0,
+      },
+      { record: () => {} },
+    );
 
     (service as any).canUseEmbedding = () => true;
     (service as any).canUseRerank = () => true;
@@ -31,10 +34,13 @@ describe('AiService recommendNext', () => {
   });
 
   it('does not send empty assistant message in JSON repair', async () => {
-    const service = new (AiService as any)({
-      insert: async () => {},
-      sumTodayCostUsd: async () => 0,
-    });
+    const service = new (AiService as any)(
+      {
+        insert: async () => {},
+        sumTodayCostUsd: async () => 0,
+      },
+      { record: () => {} },
+    );
 
     (service as any).callOpenAiCompatible = async ({ messages }: any) => {
       const hasEmptyAssistant = Array.isArray(messages)
@@ -64,10 +70,13 @@ describe('AiService recommendNext', () => {
   });
 
   it('returns fallback when recommend model output is invalid', async () => {
-    const service = new (AiService as any)({
-      insert: async () => {},
-      sumTodayCostUsd: async () => 0,
-    });
+    const service = new (AiService as any)(
+      {
+        insert: async () => {},
+        sumTodayCostUsd: async () => 0,
+      },
+      { record: () => {} },
+    );
     (service as any).canUseEmbedding = () => false;
     (service as any).canUseRerank = () => false;
     (service as any).runRole = async () => {
