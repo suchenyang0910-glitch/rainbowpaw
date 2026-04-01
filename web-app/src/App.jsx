@@ -25,7 +25,7 @@ import {
   ArrowUpRight,
   Clock
 } from 'lucide-react';
-import { api } from './api';
+import { api, getTelegramInitData } from './api';
 import { applySeo } from './seo.js'
 import { CLAW_MINIAPP_LANGS, clawMiniAppGetLangLabel, clawMiniAppT } from './i18n/clawMiniApp.js'
 
@@ -120,9 +120,16 @@ function formatTimeLeft(expireAt, nowMs) {
 }
 
 function makeAftercareStartLink(scene) {
-  const u = (import.meta && import.meta.env && import.meta.env.VITE_AFTERCARE_BOT_USERNAME) || 'RainbowPawbot'
+  const u = (import.meta && import.meta.env && import.meta.env.VITE_AFTERCARE_BOT_USERNAME) || 'rainbowpawbot'
   const s = scene ? String(scene) : ''
   return `https://t.me/${String(u).trim()}?start=${encodeURIComponent(s)}`
+}
+
+function makeBotStartLink(botUsername, payload) {
+  const u = String(botUsername || '').trim()
+  if (!u) return ''
+  const p = payload ? String(payload) : ''
+  return `https://t.me/${u}?start=${encodeURIComponent(p)}`
 }
 
 function tierMeta(tier) {
@@ -303,6 +310,27 @@ const ActionModal = ({ data, onClose }) => {
               </button>
             )
           })}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+const InitDataBanner = ({ onOpenBot, onCopyDebug }) => {
+  return (
+    <div className="px-4 pt-4">
+      <div className="bg-yellow-50 border border-yellow-100 rounded-2xl p-4 shadow-sm">
+        <p className="text-xs font-black text-yellow-800">建议在 Telegram 内打开</p>
+        <p className="text-[11px] text-yellow-700 mt-1">
+          当前未检测到 Telegram WebApp 授权信息（initData）。部分功能可能无法使用。
+        </p>
+        <div className="mt-3 flex gap-2">
+          <button onClick={onOpenBot} className="flex-1 bg-yellow-500 text-white py-2.5 rounded-xl text-xs font-black">
+            打开 Bot 入口
+          </button>
+          <button onClick={onCopyDebug} className="bg-white border border-yellow-200 text-yellow-800 py-2.5 px-4 rounded-xl text-xs font-black">
+            复制诊断
+          </button>
         </div>
       </div>
     </div>
@@ -1345,6 +1373,10 @@ export default function App() {
 
   const t = (key, vars) => clawMiniAppT(lang, key, vars)
 
+  const initData = getTelegramInitData()
+  const devId = (import.meta && import.meta.env && import.meta.env.VITE_DEV_TELEGRAM_ID) || ''
+  const needTelegram = !String(initData || '').trim() && !String(devId || '').trim()
+
   useEffect(() => {
     try {
       localStorage.setItem('claw_miniapp_lang', String(lang || 'ZH'))
@@ -1402,7 +1434,7 @@ export default function App() {
         openRecharge()
         return
       }
-      const handled = handleApiError({ e, retry: () => onPlay({ multi }) })
+      const handled = handleApiError({ e, retry: () => onPlay({ multi }), context: 'play' })
       if (!handled) showToast(msg)
     } finally {
       setPlayBusy(false)
@@ -1427,17 +1459,38 @@ export default function App() {
   }
 
   const openTelegramWebApp = () => {
-    const ok = openTelegramLink(makeAftercareStartLink(''))
-    if (!ok) openTelegramLink('https://t.me/RainbowPawbot')
+    const clawBot = (import.meta && import.meta.env && import.meta.env.VITE_CLAW_BOT_USERNAME) || ''
+    const rainbowBot = (import.meta && import.meta.env && import.meta.env.VITE_AFTERCARE_BOT_USERNAME) || 'RainbowPawbot'
+    const p = window && window.location ? String(window.location.pathname || '') : ''
+    const prefer = p.includes('rainbowpawclaw') && String(clawBot || '').trim() ? String(clawBot).trim() : String(rainbowBot).trim()
+    const url = makeBotStartLink(prefer, 'open_webapp') || makeAftercareStartLink('')
+    const ok = openTelegramLink(url)
+    if (!ok) openTelegramLink('https://t.me/rainbowpawbot')
   }
 
   const openSupportLink = () => {
     const raw = (import.meta && import.meta.env && import.meta.env.VITE_SUPPORT_LINK) || ''
-    const u = String(raw).trim() || 'https://t.me/RainbowPawbot'
+    const u = String(raw).trim() || 'https://t.me/rainbowpawbot'
     openTelegramLink(u)
   }
 
-  const handleApiError = ({ e, retry }) => {
+  const copyDebugInfo = ({ e, context }) => {
+    const msg = e && e.message ? String(e.message) : ''
+    const status = e && typeof e.status !== 'undefined' ? Number(e.status) : null
+    const p = window && window.location ? `${window.location.pathname}${window.location.search || ''}` : ''
+    const info = {
+      ts: new Date().toISOString(),
+      context: String(context || ''),
+      status,
+      message: msg,
+      path: p,
+      has_init_data: Boolean(String(getTelegramInitData() || '').trim()),
+    }
+    safeCopy(JSON.stringify(info))
+    showToast('已复制诊断信息')
+  }
+
+  const handleApiError = ({ e, retry, context }) => {
     const msg = e && e.message ? String(e.message) : ''
     const status = e && typeof e.status !== 'undefined' ? Number(e.status) : null
 
@@ -1448,15 +1501,17 @@ export default function App() {
         actions: [
           { label: '打开 RainbowPawbot', primary: true, onClick: openTelegramWebApp },
           { label: '刷新页面', onClick: () => window.location.reload() },
+          { label: '复制诊断信息', onClick: () => copyDebugInfo({ e, context }) },
         ],
       })
       return true
     }
 
     if (msg.includes('insufficient points') || msg.includes('no plays left')) {
+      const points = wallet && typeof wallet.points_total !== 'undefined' ? Number(wallet.points_total || 0) : null
       setActionModal({
         title: '积分不足',
-        message: '当前积分不足以完成操作。\n建议先去钱包充值后再继续。',
+        message: `当前积分不足以完成操作。\n${points == null ? '' : `当前积分：${points}\n`}建议先去钱包充值后再继续。`.trim(),
         actions: [
           { label: '去钱包充值', primary: true, onClick: openRecharge },
           { label: '取消' },
@@ -1472,6 +1527,7 @@ export default function App() {
         actions: [
           ...(typeof retry === 'function' ? [{ label: '重试', primary: true, onClick: retry, keepOpen: true }] : []),
           { label: '联系客服', onClick: openSupportLink },
+          { label: '复制诊断信息', onClick: () => copyDebugInfo({ e, context }) },
         ],
       })
       return true
@@ -1484,6 +1540,7 @@ export default function App() {
         actions: [
           ...(typeof retry === 'function' ? [{ label: '重试', primary: true, onClick: retry, keepOpen: true }] : []),
           { label: '取消' },
+          { label: '复制诊断信息', onClick: () => copyDebugInfo({ e, context }) },
         ],
       })
       return true
@@ -1592,7 +1649,7 @@ export default function App() {
       showToast('下单成功')
     } catch (e) {
       const msg = e && e.message ? String(e.message) : '创建订单失败'
-      const handled = handleApiError({ e, retry: () => directBuy(product) })
+      const handled = handleApiError({ e, retry: () => directBuy(product), context: 'purchase_direct' })
       if (!handled) showToast(msg)
     }
   }
@@ -1604,7 +1661,7 @@ export default function App() {
       if (r.invite_link) showToast('已生成拼团邀请链接')
     } catch (e) {
       const msg = e && e.message ? String(e.message) : '创建拼团失败'
-      const handled = handleApiError({ e, retry: () => groupBuy(product) })
+      const handled = handleApiError({ e, retry: () => groupBuy(product), context: 'purchase_group' })
       if (!handled) showToast(msg)
     }
   }
@@ -1639,7 +1696,7 @@ export default function App() {
       openPayment({ title: '💰 Pay & Join', display_id: r.display_id, amount: r.payment.amount, pay: r.pay })
     } catch (e) {
       const msg = e && e.message ? String(e.message) : '加入失败'
-      const handled = handleApiError({ e, retry: () => joinGroupPay(group) })
+      const handled = handleApiError({ e, retry: () => joinGroupPay(group), context: 'join_group_pay' })
       if (!handled) showToast(msg)
     }
   }
@@ -1664,7 +1721,7 @@ export default function App() {
   const openSupport = () => {
     const raw = (import.meta && import.meta.env && import.meta.env.VITE_SUPPORT_LINK) || ''
     const u = String(raw).trim()
-    const url = u ? u : 'https://t.me/RainbowPawbot'
+    const url = u ? u : 'https://t.me/rainbowpawbot'
     openTelegramLink(url)
   }
   const submitShipping = async ({ name, phone, address }) => {
@@ -1680,6 +1737,12 @@ export default function App() {
   return (
     <div className="min-h-screen bg-gray-50 font-sans text-gray-900 max-w-md mx-auto shadow-2xl relative overflow-x-hidden">
       <main className="h-full">
+        {needTelegram ? (
+          <InitDataBanner
+            onOpenBot={openTelegramWebApp}
+            onCopyDebug={() => copyDebugInfo({ e: null, context: 'initData_missing' })}
+          />
+        ) : null}
         {activeTab === 'home' && <HomePage me={me} onPlay={onPlay} products={products} onDirectBuy={directBuy} orders={orders} activeGroups={activeGroups} onPayOrder={payOrder} onInviteGroup={inviteGroup} onGoTab={setActiveTab} onOpenShipping={openShippingModal} playBusy={playBusy} />}
         {activeTab === 'store' && <StorePage products={products} onDirectBuy={directBuy} onGroupBuy={groupBuy} />}
         {activeTab === 'earn' && <EarnPage me={me} activeGroups={activeGroups} discoverGroups={discoverGroups} onCopyReferral={copyReferral} onForwardReferral={forwardReferral} onInviteGroup={inviteGroup} onJoinGroupPay={joinGroupPay} />}

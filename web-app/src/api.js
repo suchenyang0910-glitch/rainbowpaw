@@ -1,4 +1,4 @@
-function getTelegramInitData() {
+export function getTelegramInitData() {
   try {
     const mock = (import.meta && import.meta.env && import.meta.env.VITE_MOCK_INIT_DATA) || ''
     if (mock) return String(mock)

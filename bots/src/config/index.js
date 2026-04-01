@@ -15,7 +15,7 @@ module.exports = {
   internalToken: process.env.INTERNAL_TOKEN || 'dev-secret-token',
   enableSupportAI: String(process.env.ENABLE_SUPPORT_AI || '').trim() === 'true',
   publicWebBaseUrl: String(process.env.PUBLIC_WEB_BASE_URL || '').trim(),
-  supportLink: String(process.env.SUPPORT_LINK || '').trim() || 'https://t.me/RainbowPawbot',
+  supportLink: String(process.env.SUPPORT_LINK || '').trim() || 'https://t.me/rainbowpawbot',
   adminTelegramIds: (process.env.ADMIN_TELEGRAM_IDS || '')
     .split(',')
     .filter(Boolean)

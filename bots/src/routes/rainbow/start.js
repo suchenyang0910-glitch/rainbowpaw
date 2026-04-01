@@ -1,6 +1,15 @@
 const rainbowBot = require('../../bots/rainbowBot');
 const bridgeService = require('../../services/bridgeService');
 const identityService = require('../../services/identityService');
+const config = require('../../config');
+
+function webUrl(pathname) {
+  const base = String(config.publicWebBaseUrl || '').trim().replace(/\/+$/, '');
+  if (!base) return '';
+  const p = String(pathname || '').trim();
+  if (!p) return base;
+  return `${base}${p.startsWith('/') ? '' : '/'}${p}`;
+}
 
 function registerRainbowStartRoute() {
   if (!rainbowBot) return;
@@ -24,6 +33,17 @@ function registerRainbowStartRoute() {
             },
           }
         );
+      }
+
+      if (String(token || '').trim() === 'open_webapp') {
+        const url = webUrl('/rainbowpaw/marketplace');
+        const text = url
+          ? '🛍 点击按钮打开 RainbowPaw Mini App'
+          : '🛍 Mini App 未配置（缺少 PUBLIC_WEB_BASE_URL）';
+        const opts = url
+          ? { reply_markup: { inline_keyboard: [[{ text: '打开 Mini App', url }]] } }
+          : undefined;
+        return await rainbowBot.sendMessage(chatId, text, opts);
       }
 
       let parsed = null;
