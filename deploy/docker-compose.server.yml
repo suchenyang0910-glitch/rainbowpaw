@@ -84,6 +84,7 @@ services:
       context: ..
       dockerfile: services/ai-orchestrator/Dockerfile
     environment:
+      NODE_OPTIONS: ${NODE_OPTIONS:---dns-result-order=ipv4first}
       PORT: 3005
       INTERNAL_TOKEN: ${INTERNAL_TOKEN}
       AI_ENABLE_DB: "false"
@@ -110,7 +111,7 @@ services:
       AI_PII_MODEL: ${AI_PII_MODEL}
       AI_VL_MODEL: ${AI_VL_MODEL}
       AI_VOICE_MODEL: ${AI_VOICE_MODEL}
-      AI_HTTP_TIMEOUT_MS: ${AI_HTTP_TIMEOUT_MS:-20000}
+      AI_HTTP_TIMEOUT_MS: ${AI_HTTP_TIMEOUT_MS:-60000}
       AI_MAX_TOKENS: ${AI_MAX_TOKENS:-800}
       AI_TEMPERATURE: ${AI_TEMPERATURE:-0.2}
       AI_DAILY_BUDGET_USD: ${AI_DAILY_BUDGET_USD}

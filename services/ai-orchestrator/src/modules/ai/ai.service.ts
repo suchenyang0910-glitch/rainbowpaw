@@ -1,6 +1,12 @@
 import axios from 'axios';
-import { BadRequestException } from '@nestjs/common';
-import { Inject } from '@nestjs/common';
+import {
+  BadGatewayException,
+  BadRequestException,
+  GatewayTimeoutException,
+  HttpException,
+  HttpStatus,
+  Inject,
+} from '@nestjs/common';
 import { SupportReplyDto } from './dto/support-reply.dto';
 import { GrowthGenerateDto } from './dto/growth-generate.dto';
 import { OpsAnalyzeDto } from './dto/ops-analyze.dto';
@@ -164,9 +170,18 @@ export class AiService {
         : e.code
           ? String(e.code)
           : 'ERR';
-      throw new BadRequestException(
-        `${prefix} failed: ${code}${short ? ` - ${short}` : ''}`,
-      );
+
+      const msg = `${prefix} failed: ${code}${short ? ` - ${short}` : ''}`;
+      const errCode = String(e.code || '').toUpperCase();
+      if (errCode === 'ECONNABORTED' || errCode === 'ETIMEDOUT') {
+        throw new GatewayTimeoutException(
+          `${msg} (可能需要调大 AI_HTTP_TIMEOUT_MS 或检查容器出网/DNS)`,
+        );
+      }
+      if (status === 429) throw new HttpException(msg, HttpStatus.TOO_MANY_REQUESTS);
+      if (typeof status === 'number' && status >= 500)
+        throw new BadGatewayException(msg);
+      throw new BadRequestException(msg);
     }
     throw new BadRequestException(`${prefix} failed`);
   }
@@ -742,7 +757,7 @@ export class AiService {
             Authorization: `Bearer ${apiKey}`,
             'Content-Type': 'application/json',
           },
-          timeout: Number(process.env.AI_HTTP_TIMEOUT_MS || 20000),
+          timeout: Number(process.env.AI_HTTP_TIMEOUT_MS || 60000),
         },
       )
       .catch((e) => this.throwUpstreamError('Embedding', e));
@@ -804,7 +819,7 @@ export class AiService {
             Authorization: `Bearer ${apiKey}`,
             'Content-Type': 'application/json',
           },
-          timeout: Number(process.env.AI_HTTP_TIMEOUT_MS || 20000),
+          timeout: Number(process.env.AI_HTTP_TIMEOUT_MS || 60000),
         },
       )
       .catch((e) => this.throwUpstreamError('Rerank', e));
@@ -915,7 +930,7 @@ export class AiService {
             Authorization: `Bearer ${params.apiKey}`,
             'Content-Type': 'application/json',
           },
-          timeout: Number(process.env.AI_HTTP_TIMEOUT_MS || 20000),
+          timeout: Number(process.env.AI_HTTP_TIMEOUT_MS || 60000),
         },
       )
       .catch((e) => this.throwUpstreamError('Chat', e));
