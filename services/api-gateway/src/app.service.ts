@@ -98,6 +98,37 @@ export class AppService {
     },
   ];
 
+  private async marketplaceGetProductById(productId: number, lang?: any) {
+    const id = Number(productId);
+    if (!Number.isFinite(id)) return null;
+    try {
+      return await this.marketplaceDbGetProduct({ id: String(id), lang });
+    } catch {
+      const p = this.marketplaceProductsStore.find((x) => Number(x.id) === id);
+      if (!p) return null;
+      const txt = this.resolveProductTextByLang(p, lang);
+      return {
+        ...p,
+        name: txt.name,
+        category_label: txt.category_label,
+        description: txt.description,
+      };
+    }
+  }
+
+  private marketplaceFirstImageUrl(images: any) {
+    const list = Array.isArray(images) ? images : [];
+    if (!list.length) return null;
+    const first = list[0];
+    if (!first) return null;
+    if (typeof first === 'string') return first;
+    if (typeof first === 'object') {
+      if (first.image_url) return String(first.image_url);
+      if (first.url) return String(first.url);
+    }
+    return null;
+  }
+
   private marketplaceServicesStore = [
     {
       id: 'svc_cremation_basic',
@@ -796,6 +827,7 @@ export class AppService {
   async marketplaceProducts(opts: { category?: string; lang?: any }) {
     try {
       const items = await this.marketplaceDbListProducts(opts || {});
+      if (items && items.length) return { code: 0, message: 'ok', data: { items } };
       return { code: 0, message: 'ok', data: { items } };
     } catch {
       const category = String(opts?.category || '').trim();
@@ -893,9 +925,7 @@ export class AppService {
     if (!Number.isFinite(productId))
       throw new BadRequestException('invalid product_id');
 
-    const p = this.marketplaceProductsStore.find(
-      (x) => Number(x.id) === productId,
-    );
+    const p = await this.marketplaceGetProductById(productId, body?.lang);
     if (!p) throw new BadRequestException('product not found');
 
     const cart = this.ensureCart(phone);
@@ -909,7 +939,7 @@ export class AppService {
         phone,
         product_id: productId,
         name: p.name,
-        image_url: p.images?.[0]?.image_url || null,
+        image_url: this.marketplaceFirstImageUrl(p.images),
         unit_price_cents: p.price_cents,
         quantity,
         selected: true,
@@ -990,22 +1020,21 @@ export class AppService {
       if (!items.length)
         throw new BadRequestException('product_items required');
 
-      const details = items.map((x: any) => {
-        const pid = Number(x.product_id);
-        const qty = Math.max(1, Number(x.quantity || 1));
+      const details = [] as any[];
+      for (const x of items) {
+        const pid = Number(x?.product_id);
+        const qty = Math.max(1, Number(x?.quantity || 1));
         if (!Number.isFinite(pid))
           throw new BadRequestException('invalid product_id');
-        const p = this.marketplaceProductsStore.find(
-          (pp) => Number(pp.id) === pid,
-        );
+        const p = await this.marketplaceGetProductById(pid, body?.lang);
         if (!p) throw new BadRequestException('product not found');
-        return {
-          product_id: p.id,
+        details.push({
+          product_id: Number(p.id),
           name: p.name,
           unit_price_cents: p.price_cents,
           quantity: qty,
-        };
-      });
+        });
+      }
 
       const total = details.reduce(
         (s: number, x: any) => s + x.unit_price_cents * x.quantity,
