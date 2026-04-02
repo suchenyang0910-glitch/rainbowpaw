@@ -45,76 +45,95 @@ const CATEGORIES = [
   { id: 'keepsakes', nameKey: 'cat.keepsakes', icon: '🐾', subKeys: ['catSub.keepsakes.0', 'catSub.keepsakes.1', 'catSub.keepsakes.2'] },
 ]
 
-const MERCHANTS = [
+const MERCHANTS_RAW = [
   {
     id: 'm1',
-    name: '天国工坊',
+    name_i18n: { ZH: '天国工坊', EN: 'Heaven Atelier', KM: 'Heaven Atelier' },
     logo: 'https://images.unsplash.com/photo-1541888941255-2200007635a1?q=80&w=100',
     cover: 'https://images.unsplash.com/photo-1518199266791-5375a83190b7?q=80&w=600',
     rating: 4.9,
-    location: '上海·静安',
-    desc: '专注宠物善终工艺15年，用艺术留住温度。',
+    location_i18n: { ZH: '上海·静安', EN: "Shanghai · Jing'an", KM: "Shanghai · Jing'an" },
+    desc_i18n: {
+      ZH: '专注宠物善终工艺15年，用艺术留住温度。',
+      EN: '15 years of pet aftercare craftsmanship — preserving warmth through art.',
+      KM: '15 years of pet aftercare craftsmanship — preserving warmth through art.',
+    },
   },
   {
     id: 'm2',
-    name: '拾光首饰定制',
+    name_i18n: { ZH: '拾光首饰定制', EN: 'Shiguang Jewelry Studio', KM: 'Shiguang Jewelry Studio' },
     logo: 'https://images.unsplash.com/photo-1573462937748-25920b399120?q=80&w=100',
     cover: 'https://images.unsplash.com/photo-1576053139778-7e32f2ae3cfd?q=80&w=600',
     rating: 5.0,
-    location: '杭州·西湖',
-    desc: '每一件首饰都是一段独一无二的故事。',
+    location_i18n: { ZH: '杭州·西湖', EN: 'Hangzhou · West Lake', KM: 'Hangzhou · West Lake' },
+    desc_i18n: {
+      ZH: '每一件首饰都是一段独一无二的故事。',
+      EN: 'Every piece is a one-of-a-kind story.',
+      KM: 'Every piece is a one-of-a-kind story.',
+    },
   },
 ]
 
-const PRODUCTS = [
+const PRODUCTS_RAW = [
   {
     id: 1,
     category: 'urns',
-    subCategory: '陶瓷款',
-    name: '永恒星辰 - 陶瓷骨灰瓮',
+    subCategory_i18n: { ZH: '陶瓷款', EN: 'Ceramic', KM: 'Ceramic' },
+    name_i18n: { ZH: '永恒星辰 - 陶瓷骨灰瓮', EN: 'Eternal Stardust — Ceramic Urn', KM: 'Eternal Stardust — Ceramic Urn' },
     price: 89.0,
     rating: 4.9,
     sales: 128,
     image: 'https://images.unsplash.com/photo-1579450841234-49351e3a312b?q=80&w=400&auto=format&fit=crop',
     merchantId: 'm1',
-    merchant: '天国工坊',
-    time: '3-5天制作',
-    description: '采用景德镇手工陶瓷，哑光质感，寓意宠物化作星辰守护。',
+    time_i18n: { ZH: '3-5天制作', EN: 'Made in 3–5 days', KM: 'Made in 3–5 days' },
+    description_i18n: {
+      ZH: '采用景德镇手工陶瓷，哑光质感，寓意宠物化作星辰守护。',
+      EN: 'Handcrafted ceramic with a matte finish — a symbol of your pet becoming stardust that guards you.',
+      KM: 'Handcrafted ceramic with a matte finish — a symbol of your pet becoming stardust that guards you.',
+    },
   },
   {
     id: 2,
     category: 'jewelry',
-    subCategory: '吊坠',
-    name: '足迹纯银吊坠 (可定制刻字)',
+    subCategory_i18n: { ZH: '吊坠', EN: 'Pendant', KM: 'Pendant' },
+    name_i18n: { ZH: '足迹纯银吊坠 (可定制刻字)', EN: 'Pawprint Sterling Silver Pendant (Engraving Available)', KM: 'Pawprint Sterling Silver Pendant (Engraving Available)' },
     price: 45.0,
     rating: 5.0,
     sales: 342,
     image: 'https://images.unsplash.com/photo-1535632066927-ab7c9ab60908?q=80&w=400&auto=format&fit=crop',
     merchantId: 'm2',
-    merchant: '拾光首饰定制',
-    time: '1-2天制作',
-    description: '925纯银打造，可刻下宠物名字与日期，贴心陪伴。',
+    time_i18n: { ZH: '1-2天制作', EN: 'Made in 1–2 days', KM: 'Made in 1–2 days' },
+    description_i18n: {
+      ZH: '925纯银打造，可刻下宠物名字与日期，贴心陪伴。',
+      EN: 'Crafted in 925 sterling silver. Engrave your pet’s name and date — a gentle companion.',
+      KM: 'Crafted in 925 sterling silver. Engrave your pet’s name and date — a gentle companion.',
+    },
   },
   {
     id: 3,
     category: 'art',
-    subCategory: '油画',
-    name: '治愈系手绘油画肖像',
+    subCategory_i18n: { ZH: '油画', EN: 'Oil painting', KM: 'Oil painting' },
+    name_i18n: { ZH: '治愈系手绘油画肖像', EN: 'Healing Hand-Painted Oil Portrait', KM: 'Healing Hand-Painted Oil Portrait' },
     price: 120.0,
     rating: 4.8,
     sales: 56,
     image: 'https://images.unsplash.com/photo-1582555172866-f73bb12a2ab3?q=80&w=400&auto=format&fit=crop',
     merchantId: 'm1',
-    merchant: '天国工坊',
-    time: '7-10天制作',
-    description: '专业画师根据照片进行艺术化处理，永久保存那份美好。',
+    time_i18n: { ZH: '7-10天制作', EN: 'Made in 7–10 days', KM: 'Made in 7–10 days' },
+    description_i18n: {
+      ZH: '专业画师根据照片进行艺术化处理，永久保存那份美好。',
+      EN: 'Painted by professional artists based on your photos — preserving the beauty forever.',
+      KM: 'Painted by professional artists based on your photos — preserving the beauty forever.',
+    },
   },
   {
     id: 4,
     category: 'services',
     subCategory: '仪式策划',
+    subCategory_i18n: { ZH: '仪式策划', EN: 'Ceremony planning', KM: 'Ceremony planning' },
     serviceSubId: 'ceremony',
     name: '善终纪念仪式服务',
+    name_i18n: { ZH: '善终纪念仪式服务', EN: 'Aftercare Memorial Ceremony Service', KM: 'Aftercare Memorial Ceremony Service' },
     price: 260.0,
     rating: 4.9,
     sales: 89,
@@ -122,14 +141,22 @@ const PRODUCTS = [
     merchantId: 'm2',
     merchant: '拾光首饰定制',
     time: '预约制',
+    time_i18n: { ZH: '预约制', EN: 'By appointment', KM: 'By appointment' },
     description: '提供专业的告别仪式布置，含鲜花、纪念册及全程影像记录。',
+    description_i18n: {
+      ZH: '提供专业的告别仪式布置，含鲜花、纪念册及全程影像记录。',
+      EN: 'Professional farewell ceremony setup including flowers, memorial booklet, and full photo/video coverage.',
+      KM: 'Professional farewell ceremony setup including flowers, memorial booklet, and full photo/video coverage.',
+    },
   },
   {
     id: 401,
     category: 'services',
     subCategory: '仪式策划',
+    subCategory_i18n: { ZH: '仪式策划', EN: 'Ceremony planning', KM: 'Ceremony planning' },
     serviceSubId: 'ceremony',
     name: '告别仪式策划·基础版',
+    name_i18n: { ZH: '告别仪式策划·基础版', EN: 'Farewell Ceremony — Basic', KM: 'Farewell Ceremony — Basic' },
     price: 149.0,
     rating: 4.8,
     sales: 214,
@@ -137,14 +164,22 @@ const PRODUCTS = [
     merchantId: 'm2',
     merchant: '拾光首饰定制',
     time: '预约制',
+    time_i18n: { ZH: '预约制', EN: 'By appointment', KM: 'By appointment' },
     description: '基础仪式布置与流程建议，适合温柔而克制的告别。',
+    description_i18n: {
+      ZH: '基础仪式布置与流程建议，适合温柔而克制的告别。',
+      EN: 'Basic setup and process guidance — a gentle, simple goodbye.',
+      KM: 'Basic setup and process guidance — a gentle, simple goodbye.',
+    },
   },
   {
     id: 402,
     category: 'services',
     subCategory: '仪式策划',
+    subCategory_i18n: { ZH: '仪式策划', EN: 'Ceremony planning', KM: 'Ceremony planning' },
     serviceSubId: 'ceremony',
     name: '告别仪式策划·尊享版',
+    name_i18n: { ZH: '告别仪式策划·尊享版', EN: 'Farewell Ceremony — Premium', KM: 'Farewell Ceremony — Premium' },
     price: 399.0,
     rating: 4.9,
     sales: 96,
@@ -152,14 +187,22 @@ const PRODUCTS = [
     merchantId: 'm1',
     merchant: '天国工坊',
     time: '预约制',
+    time_i18n: { ZH: '预约制', EN: 'By appointment', KM: 'By appointment' },
     description: '含专属主题布置、纪念相册与全程影像记录，让告别更体面。',
+    description_i18n: {
+      ZH: '含专属主题布置、纪念相册与全程影像记录，让告别更体面。',
+      EN: 'Includes themed setup, memorial album, and full coverage — a more dignified farewell.',
+      KM: 'Includes themed setup, memorial album, and full coverage — a more dignified farewell.',
+    },
   },
   {
     id: 451,
     category: 'services',
     subCategory: '心理疏导',
+    subCategory_i18n: { ZH: '心理疏导', EN: 'Grief support', KM: 'Grief support' },
     serviceSubId: 'grief',
     name: '心理疏导·单次倾听',
+    name_i18n: { ZH: '心理疏导·单次倾听', EN: 'Grief Support — One Session', KM: 'Grief Support — One Session' },
     price: 39.0,
     rating: 4.8,
     sales: 310,
@@ -167,14 +210,22 @@ const PRODUCTS = [
     merchantId: 'm2',
     merchant: '拾光首饰定制',
     time: '45分钟',
+    time_i18n: { ZH: '45分钟', EN: '45 minutes', KM: '45 minutes' },
     description: '由咨询师提供一次倾听与陪伴，帮助你度过最难的时刻。',
+    description_i18n: {
+      ZH: '由咨询师提供一次倾听与陪伴，帮助你度过最难的时刻。',
+      EN: 'One session of listening and companionship with a counselor to help through the hardest moments.',
+      KM: 'One session of listening and companionship with a counselor to help through the hardest moments.',
+    },
   },
   {
     id: 452,
     category: 'services',
     subCategory: '心理疏导',
+    subCategory_i18n: { ZH: '心理疏导', EN: 'Grief support', KM: 'Grief support' },
     serviceSubId: 'grief',
     name: '心理疏导·3次支持',
+    name_i18n: { ZH: '心理疏导·3次支持', EN: 'Grief Support — 3 Sessions', KM: 'Grief Support — 3 Sessions' },
     price: 99.0,
     rating: 4.9,
     sales: 142,
@@ -182,15 +233,23 @@ const PRODUCTS = [
     merchantId: 'm1',
     merchant: '天国工坊',
     time: '3x 45分钟',
+    time_i18n: { ZH: '3x 45分钟', EN: '3 × 45 minutes', KM: '3 × 45 minutes' },
     description: '围绕失落、愧疚与适应期的持续支持，帮助情绪逐步稳定。',
+    description_i18n: {
+      ZH: '围绕失落、愧疚与适应期的持续支持，帮助情绪逐步稳定。',
+      EN: 'Ongoing support through loss, guilt, and adjustment — helping emotions stabilize over time.',
+      KM: 'Ongoing support through loss, guilt, and adjustment — helping emotions stabilize over time.',
+    },
   },
   {
     id: 481,
     category: 'services',
     subCategory: '墓园选址',
+    subCategory_i18n: { ZH: '墓园选址', EN: 'Cemetery selection', KM: 'Cemetery selection' },
     serviceSubId: 'cemetery',
     seatZone: 'basic',
     name: '墓位购买·普通区（Basic Zone）',
+    name_i18n: { ZH: '墓位购买·普通区（Basic Zone）', EN: 'Cemetery Plot Purchase · Basic Zone', KM: 'Cemetery Plot Purchase · Basic Zone' },
     price: 80.0,
     rating: 4.9,
     sales: 67,
@@ -198,15 +257,23 @@ const PRODUCTS = [
     merchantId: 'm1',
     merchant: '天国工坊',
     time: '含一次实地陪同',
+    time_i18n: { ZH: '含一次实地陪同', EN: 'Includes one on-site visit', KM: 'Includes one on-site visit' },
     description: '室内普通墙面，密集排布，价格友好。',
+    description_i18n: {
+      ZH: '室内普通墙面，密集排布，价格友好。',
+      EN: 'Indoor basic wall placement, denser layout, budget-friendly.',
+      KM: 'Indoor basic wall placement, denser layout, budget-friendly.',
+    },
   },
   {
     id: 482,
     category: 'services',
     subCategory: '墓园选址',
+    subCategory_i18n: { ZH: '墓园选址', EN: 'Cemetery selection', KM: 'Cemetery selection' },
     serviceSubId: 'cemetery',
     seatZone: 'garden',
     name: '墓位购买·景观区（Garden Zone）',
+    name_i18n: { ZH: '墓位购买·景观区（Garden Zone）', EN: 'Cemetery Plot Purchase · Garden Zone', KM: 'Cemetery Plot Purchase · Garden Zone' },
     price: 220.0,
     rating: 4.8,
     sales: 98,
@@ -214,15 +281,23 @@ const PRODUCTS = [
     merchantId: 'm2',
     merchant: '拾光首饰定制',
     time: '含一次实地陪同',
+    time_i18n: { ZH: '含一次实地陪同', EN: 'Includes one on-site visit', KM: 'Includes one on-site visit' },
     description: '花园/绿植区域，环境更好，价格适中。',
+    description_i18n: {
+      ZH: '花园/绿植区域，环境更好，价格适中。',
+      EN: 'Garden/greenery area with a better environment and moderate pricing.',
+      KM: 'Garden/greenery area with a better environment and moderate pricing.',
+    },
   },
   {
     id: 483,
     category: 'services',
     subCategory: '墓园选址',
+    subCategory_i18n: { ZH: '墓园选址', EN: 'Cemetery selection', KM: 'Cemetery selection' },
     serviceSubId: 'cemetery',
     seatZone: 'vip',
     name: '墓位购买·VIP区（Premium Zone）',
+    name_i18n: { ZH: '墓位购买·VIP区（Premium Zone）', EN: 'Cemetery Plot Purchase · Premium Zone', KM: 'Cemetery Plot Purchase · Premium Zone' },
     price: 800.0,
     rating: 4.7,
     sales: 154,
@@ -230,12 +305,19 @@ const PRODUCTS = [
     merchantId: 'm2',
     merchant: '拾光首饰定制',
     time: '含一次实地陪同',
+    time_i18n: { ZH: '含一次实地陪同', EN: 'Includes one on-site visit', KM: 'Includes one on-site visit' },
     description: '独立纪念空间，私密高端，高溢价。',
+    description_i18n: {
+      ZH: '独立纪念空间，私密高端，高溢价。',
+      EN: 'Private memorial space with premium privacy and higher value.',
+      KM: 'Private memorial space with premium privacy and higher value.',
+    },
   },
   {
     id: 9201,
     category: 'cemetery_annual',
     name: '墓位年费·普通区（$10/年）',
+    name_i18n: { ZH: '墓位年费·普通区（$10/年）', EN: 'Cemetery Annual Fee · Basic Zone ($10/year)', KM: 'Cemetery Annual Fee · Basic Zone ($10/year)' },
     price: 10.0,
     rating: 4.9,
     sales: 0,
@@ -243,12 +325,19 @@ const PRODUCTS = [
     merchantId: 'm1',
     merchant: 'RainbowPaw 官方',
     time: '年费订阅',
+    time_i18n: { ZH: '年费订阅', EN: 'Annual subscription', KM: 'Annual subscription' },
     description: '包含墓位维护、线上纪念页与到期提醒等服务。',
+    description_i18n: {
+      ZH: '包含墓位维护、线上纪念页与到期提醒等服务。',
+      EN: 'Includes plot maintenance, online memorial page, and renewal reminders.',
+      KM: 'Includes plot maintenance, online memorial page, and renewal reminders.',
+    },
   },
   {
     id: 9202,
     category: 'cemetery_annual',
     name: '墓位年费·景观区（$30/年）',
+    name_i18n: { ZH: '墓位年费·景观区（$30/年）', EN: 'Cemetery Annual Fee · Garden Zone ($30/year)', KM: 'Cemetery Annual Fee · Garden Zone ($30/year)' },
     price: 30.0,
     rating: 4.9,
     sales: 0,
@@ -256,12 +345,19 @@ const PRODUCTS = [
     merchantId: 'm1',
     merchant: 'RainbowPaw 官方',
     time: '年费订阅',
+    time_i18n: { ZH: '年费订阅', EN: 'Annual subscription', KM: 'Annual subscription' },
     description: '包含墓位维护、线上纪念页与到期提醒等服务。',
+    description_i18n: {
+      ZH: '包含墓位维护、线上纪念页与到期提醒等服务。',
+      EN: 'Includes plot maintenance, online memorial page, and renewal reminders.',
+      KM: 'Includes plot maintenance, online memorial page, and renewal reminders.',
+    },
   },
   {
     id: 9203,
     category: 'cemetery_annual',
     name: '墓位年费·VIP区（$120/年）',
+    name_i18n: { ZH: '墓位年费·VIP区（$120/年）', EN: 'Cemetery Annual Fee · Premium Zone ($120/year)', KM: 'Cemetery Annual Fee · Premium Zone ($120/year)' },
     price: 120.0,
     rating: 4.9,
     sales: 0,
@@ -269,12 +365,19 @@ const PRODUCTS = [
     merchantId: 'm1',
     merchant: 'RainbowPaw 官方',
     time: '年费订阅',
+    time_i18n: { ZH: '年费订阅', EN: 'Annual subscription', KM: 'Annual subscription' },
     description: '包含墓位维护、线上纪念页与到期提醒等服务。',
+    description_i18n: {
+      ZH: '包含墓位维护、线上纪念页与到期提醒等服务。',
+      EN: 'Includes plot maintenance, online memorial page, and renewal reminders.',
+      KM: 'Includes plot maintenance, online memorial page, and renewal reminders.',
+    },
   },
   {
     id: 9001,
     category: 'memorial',
     name: '云纪念·点亮祈福（1盏灯）',
+    name_i18n: { ZH: '云纪念·点亮祈福（1盏灯）', EN: 'Cloud Memorial · Prayer Light (1 lamp)', KM: 'Cloud Memorial · Prayer Light (1 lamp)' },
     price: 1.99,
     rating: 4.9,
     sales: 1200,
@@ -282,12 +385,19 @@ const PRODUCTS = [
     merchantId: 'm1',
     merchant: 'RainbowPaw 官方',
     time: '即时生效',
+    time_i18n: { ZH: '即时生效', EN: 'Instant', KM: 'Instant' },
     description: '点亮一盏灯，愿思念温柔可见。',
+    description_i18n: {
+      ZH: '点亮一盏灯，愿思念温柔可见。',
+      EN: 'Light a lamp — let your gentle longing be seen.',
+      KM: 'Light a lamp — let your gentle longing be seen.',
+    },
   },
   {
     id: 9002,
     category: 'memorial',
     name: '云纪念·献花（1束）',
+    name_i18n: { ZH: '云纪念·献花（1束）', EN: 'Cloud Memorial · Flowers (1 bouquet)', KM: 'Cloud Memorial · Flowers (1 bouquet)' },
     price: 2.99,
     rating: 4.8,
     sales: 860,
@@ -295,12 +405,19 @@ const PRODUCTS = [
     merchantId: 'm1',
     merchant: 'RainbowPaw 官方',
     time: '即时生效',
+    time_i18n: { ZH: '即时生效', EN: 'Instant', KM: 'Instant' },
     description: '一束花，一句想说的话。',
+    description_i18n: {
+      ZH: '一束花，一句想说的话。',
+      EN: 'A bouquet, and the words you want to say.',
+      KM: 'A bouquet, and the words you want to say.',
+    },
   },
   {
     id: 9003,
     category: 'memorial',
     name: '云纪念·永久守护升级',
+    name_i18n: { ZH: '云纪念·永久守护升级', EN: 'Cloud Memorial · Eternal Guardian Upgrade', KM: 'Cloud Memorial · Eternal Guardian Upgrade' },
     price: 29.9,
     rating: 4.9,
     sales: 210,
@@ -308,12 +425,19 @@ const PRODUCTS = [
     merchantId: 'm1',
     merchant: 'RainbowPaw 官方',
     time: '即时生效',
+    time_i18n: { ZH: '即时生效', EN: 'Instant', KM: 'Instant' },
     description: '解锁专属相册与永久守护标识，让纪念更完整。',
+    description_i18n: {
+      ZH: '解锁专属相册与永久守护标识，让纪念更完整。',
+      EN: 'Unlock a dedicated album and an eternal guardian badge for a more complete memorial.',
+      KM: 'Unlock a dedicated album and an eternal guardian badge for a more complete memorial.',
+    },
   },
   {
     id: 9101,
     category: 'funeral_bundle',
     name: '善终拼单·接送费（0–5km）',
+    name_i18n: { ZH: '善终拼单·接送费（0–5km）', EN: 'Aftercare Group Deal · Pickup Fee (0–5km)', KM: 'Aftercare Group Deal · Pickup Fee (0–5km)' },
     price: 10.0,
     rating: 4.8,
     sales: 320,
@@ -321,12 +445,19 @@ const PRODUCTS = [
     merchantId: 'm1',
     merchant: 'RainbowPaw 官方',
     time: '同城 2 小时内',
+    time_i18n: { ZH: '同城 2 小时内', EN: 'Within 2 hours (in-city)', KM: 'Within 2 hours (in-city)' },
     description: '按距离计费：0–5km $10 / 5–10km $20 / 10km+ $30。',
+    description_i18n: {
+      ZH: '按距离计费：0–5km $10 / 5–10km $20 / 10km+ $30。',
+      EN: 'Distance-based: 0–5km $10 / 5–10km $20 / 10km+ $30.',
+      KM: 'Distance-based: 0–5km $10 / 5–10km $20 / 10km+ $30.',
+    },
   },
   {
     id: 9102,
     category: 'funeral_bundle',
     name: '善终拼单·告别仪式（轻量）',
+    name_i18n: { ZH: '善终拼单·告别仪式（轻量）', EN: 'Aftercare Group Deal · Farewell Ceremony (Lite)', KM: 'Aftercare Group Deal · Farewell Ceremony (Lite)' },
     price: 49.0,
     rating: 4.9,
     sales: 210,
@@ -334,12 +465,19 @@ const PRODUCTS = [
     merchantId: 'm1',
     merchant: 'RainbowPaw 官方',
     time: '现场布置',
+    time_i18n: { ZH: '现场布置', EN: 'On-site setup', KM: 'On-site setup' },
     description: '基础布置 + 流程引导，可升级更完整的仪式套餐。',
+    description_i18n: {
+      ZH: '基础布置 + 流程引导，可升级更完整的仪式套餐。',
+      EN: 'Basic setup + guided flow. Upgrade available for a fuller ceremony package.',
+      KM: 'Basic setup + guided flow. Upgrade available for a fuller ceremony package.',
+    },
   },
   {
     id: 9103,
     category: 'funeral_bundle',
     name: '善终拼单·火化安排（集体）',
+    name_i18n: { ZH: '善终拼单·火化安排（集体）', EN: 'Aftercare Group Deal · Cremation Arrangement (Group)', KM: 'Aftercare Group Deal · Cremation Arrangement (Group)' },
     price: 10.0,
     rating: 4.7,
     sales: 180,
@@ -347,12 +485,19 @@ const PRODUCTS = [
     merchantId: 'm1',
     merchant: 'RainbowPaw 官方',
     time: '24 小时内',
+    time_i18n: { ZH: '24 小时内', EN: 'Within 24 hours', KM: 'Within 24 hours' },
     description: '集体火化（更低价）；可选升级单独火化。',
+    description_i18n: {
+      ZH: '集体火化（更低价）；可选升级单独火化。',
+      EN: 'Group cremation (lower price). Optional upgrade to private cremation.',
+      KM: 'Group cremation (lower price). Optional upgrade to private cremation.',
+    },
   },
   {
     id: 9104,
     category: 'funeral_bundle',
     name: '善终拼单·纪念火花（视频/图文）',
+    name_i18n: { ZH: '善终拼单·纪念火花（视频/图文）', EN: 'Aftercare Group Deal · Memorial Moments (Video/Text)', KM: 'Aftercare Group Deal · Memorial Moments (Video/Text)' },
     price: 60.0,
     rating: 4.8,
     sales: 260,
@@ -360,7 +505,13 @@ const PRODUCTS = [
     merchantId: 'm1',
     merchant: 'RainbowPaw 官方',
     time: '即时生成',
+    time_i18n: { ZH: '即时生成', EN: 'Instant', KM: 'Instant' },
     description: '生成纪念视频/图文内容，便于分享与留存。',
+    description_i18n: {
+      ZH: '生成纪念视频/图文内容，便于分享与留存。',
+      EN: 'Generate memorial video/text content for sharing and keeping.',
+      KM: 'Generate memorial video/text content for sharing and keeping.',
+    },
   },
   {
     id: 9711,
@@ -787,7 +938,7 @@ const ProductCard = ({ product, onClick, onMerchantClick, t }) => (
         <div className="flex items-center gap-1 text-[10px] text-gray-400">
           <Star size={10} className="fill-yellow-400 text-yellow-400" />
           <span>{product.rating}</span>
-          <span className="ml-1">{t ? t('product.sold', { count: product.sales }) : `已售${product.sales}`}</span>
+          <span className="ml-1">{t('product.sold', { count: product.sales })}</span>
         </div>
       </div>
     </div>
@@ -817,17 +968,17 @@ const ProductDetailPage = ({ product, onBack, onBuy, onMerchantClick, onAddToCar
             <div className="w-10 h-10 bg-white rounded-lg border flex items-center justify-center font-bold text-indigo-600">{product.merchant[0]}</div>
             <div>
               <p className="text-xs font-bold">{product.merchant}</p>
-              <p className="text-[9px] text-gray-400">{t ? t('product.toStore') : '进店逛逛，查看更多作品'}</p>
+              <p className="text-[9px] text-gray-400">{t('product.toStore')}</p>
             </div>
           </div>
           <ChevronRight size={16} className="text-gray-400" />
         </div>
         <div className="flex items-center gap-3 text-xs text-gray-500">
           <Clock size={14} />
-          <span>{t ? t('product.makeTime', { time: product.time }) : `制作周期：${product.time}`}</span>
+          <span>{t('product.makeTime', { time: product.time })}</span>
         </div>
         <div className="border-t pt-4">
-          <h4 className="font-bold text-sm mb-2">{t ? t('product.detailTitle') : '商品详情'}</h4>
+          <h4 className="font-bold text-sm mb-2">{t('product.detailTitle')}</h4>
           <p className="text-xs text-gray-500 leading-relaxed">{product.description}</p>
         </div>
       </div>
@@ -835,10 +986,10 @@ const ProductDetailPage = ({ product, onBack, onBuy, onMerchantClick, onAddToCar
     <div className="fixed bottom-0 left-0 right-0 bg-white border-t px-4 py-3 pb-safe flex gap-3 items-center max-w-md mx-auto z-50">
       <div className="flex flex-col items-center gap-1 text-gray-500" onClick={() => onMerchantClick(product.merchantId)}>
         <Store size={20} />
-        <span className="text-[10px]">{t ? t('product.store') : '店铺'}</span>
+        <span className="text-[10px]">{t('product.store')}</span>
       </div>
-      <button className="rp-btn-soft flex-1 font-bold py-3 rounded-xl text-sm border-0" onClick={onAddToCart}>{t ? t('product.addToCart') : '加入购物车'}</button>
-      <button onClick={onBuy} className="rp-btn-primary flex-1 font-bold py-3 rounded-xl text-sm">{t ? t('product.buyNow') : '立即购买'}</button>
+      <button className="rp-btn-soft flex-1 font-bold py-3 rounded-xl text-sm border-0" onClick={onAddToCart}>{t('product.addToCart')}</button>
+      <button onClick={onBuy} className="rp-btn-primary flex-1 font-bold py-3 rounded-xl text-sm">{t('product.buyNow')}</button>
     </div>
   </div>
 )
@@ -848,18 +999,18 @@ const PaymentPage = ({ onBack, total, method, setMethod, onConfirm, t }) => {
 
   return (
     <div className="rp-page-bg min-h-screen">
-      <Header title={t ? t('pay.title') : '确认支付'} showBack onBack={onBack} hideActions />
+      <Header title={t('pay.title')} showBack onBack={onBack} hideActions />
       <div className="p-6">
         <div className="rp-card rounded-2xl p-6 text-center mb-6 border-b-4 border-indigo-600">
-          <p className="text-gray-400 text-sm mb-2">{t ? t('pay.amount') : '应付总额'}</p>
+          <p className="text-gray-400 text-sm mb-2">{t('pay.amount')}</p>
           <h2 className="text-3xl font-black text-gray-900">${total.toFixed(2)}</h2>
         </div>
-        <h3 className="font-bold text-sm text-gray-500 mb-4 px-2 uppercase tracking-wider">{t ? t('pay.chooseMethod') : '选择支付方式'}</h3>
+        <h3 className="font-bold text-sm text-gray-500 mb-4 px-2 uppercase tracking-wider">{t('pay.chooseMethod')}</h3>
         <div className="space-y-3">
           {[
-            { id: 'aba', name: 'ABA Pay', desc: '柬埔寨实时支付', icon: '🏦' },
-            { id: 'usdt', name: 'USDT (TRC20)', desc: '加密货币自动验签', icon: '🪙' },
-            { id: 'bank', name: 'Bank Transfer', desc: '多国银行转账', icon: '💳' },
+            { id: 'aba', name: 'ABA Pay', desc: t('pay.method.aba.desc'), icon: '🏦' },
+            { id: 'usdt', name: 'USDT (TRC20)', desc: t('pay.method.usdt.desc'), icon: '🪙' },
+            { id: 'bank', name: 'Bank Transfer', desc: t('pay.method.bank.desc'), icon: '💳' },
           ].map((m) => (
             <div
               key={m.id}
@@ -891,7 +1042,7 @@ const PaymentPage = ({ onBack, total, method, setMethod, onConfirm, t }) => {
           }}
           type="button"
         >
-          {submitting ? (t ? t('common.processing') : '处理中...') : t ? t('pay.confirm') : '确认付款'}
+          {submitting ? t('common.processing') : t('pay.confirm')}
         </button>
       </div>
     </div>
@@ -940,7 +1091,7 @@ const MerchantPortal = ({ onBackToUser, lang, t }) => {
 
   const merchantFetch = async (path, opts = {}) => {
     const headers = merchantHeaders()
-    if (!headers) throw new Error('缺少 Merchant Token')
+    if (!headers) throw new Error(t('merchant.missingToken'))
     const locale = rpMiniAppLangToLocale(lang)
     const withLang = (p) => {
       const s = String(p || '')
@@ -1037,7 +1188,7 @@ const MerchantPortal = ({ onBackToUser, lang, t }) => {
       return false
     }
     if (!merchantMe) {
-      showToast('请先验证 Token')
+      showToast(t('merchant.verifyTokenRequired'))
       return false
     }
     return true
@@ -1052,7 +1203,7 @@ const MerchantPortal = ({ onBackToUser, lang, t }) => {
       await loadMerchantOrders()
       await loadMerchantOrderDetail(orderId)
     } catch (e) {
-      showToast(e?.message || '接单失败')
+      showToast(e?.message || t('merchant.acceptFailed'))
     } finally {
       setLoading(false)
     }
@@ -1069,7 +1220,7 @@ const MerchantPortal = ({ onBackToUser, lang, t }) => {
       setMerchantOrderDetail(null)
       await loadMerchantOrders()
     } catch (e) {
-      showToast(e?.message || '拒单失败')
+      showToast(e?.message || t('merchant.rejectFailed'))
     } finally {
       setLoading(false)
     }
@@ -1086,7 +1237,7 @@ const MerchantPortal = ({ onBackToUser, lang, t }) => {
       await loadMerchantOrders()
       await loadMerchantOrderDetail(orderId)
     } catch (e) {
-      showToast(e?.message || '发货失败')
+      showToast(e?.message || t('merchant.shipFailed'))
     } finally {
       setLoading(false)
     }
@@ -1101,7 +1252,7 @@ const MerchantPortal = ({ onBackToUser, lang, t }) => {
       setSettlementNote('')
       await loadSettlementRequests()
     } catch (e) {
-      showToast(e?.message || '申请失败')
+      showToast(e?.message || t('merchant.applyFailed'))
     } finally {
       setLoading(false)
     }
@@ -1115,7 +1266,7 @@ const MerchantPortal = ({ onBackToUser, lang, t }) => {
       await loadMerchantProducts()
       showToast(status === 'active' ? '已上架' : '已下架')
     } catch (e) {
-      showToast(e?.message || '操作失败')
+      showToast(e?.message || t('merchant.actionFailed'))
     } finally {
       setProductSaving(false)
     }
@@ -1134,7 +1285,7 @@ const MerchantPortal = ({ onBackToUser, lang, t }) => {
       await loadMerchantProducts()
       showToast('库存已更新')
     } catch (e) {
-      showToast(e?.message || '更新失败')
+      showToast(e?.message || t('merchant.updateFailed'))
     } finally {
       setProductSaving(false)
     }
@@ -1184,7 +1335,7 @@ const MerchantPortal = ({ onBackToUser, lang, t }) => {
       await loadMerchantProducts()
       showToast(isNew ? '商品已创建（待审核）' : '商品已更新')
     } catch (e) {
-      showToast(e?.message || '保存失败')
+      showToast(e?.message || t('merchant.saveFailed'))
     } finally {
       setProductSaving(false)
     }
@@ -1319,12 +1470,12 @@ const MerchantPortal = ({ onBackToUser, lang, t }) => {
                           if (!phone) return showToast('缺少买家手机号')
                           try {
                             await navigator.clipboard.writeText(phone)
-                            showToast('手机号已复制')
+                            showToast(t('merchant.phoneCopied'))
                           } catch {
                             showToast(phone)
                           }
                         } catch (err) {
-                          showToast(err?.message || '加载失败')
+                          showToast(err?.message || t('merchant.loadFailed'))
                         }
                       }}
                     >
@@ -1341,7 +1492,7 @@ const MerchantPortal = ({ onBackToUser, lang, t }) => {
                         setShipDraft({ carrier: '', tracking_no: '', note: '' })
                       }}
                     >
-                      确认发货
+                      {t('merchant.confirmShipBtn')}
                     </button>
                   </div>
                 </div>
@@ -1370,7 +1521,7 @@ const MerchantPortal = ({ onBackToUser, lang, t }) => {
                     if (!phone) return showToast('缺少买家手机号')
                     try {
                       await navigator.clipboard.writeText(phone)
-                      showToast('手机号已复制')
+                      showToast(t('merchant.phoneCopied'))
                     } catch {
                       showToast(phone)
                     }
@@ -1388,7 +1539,7 @@ const MerchantPortal = ({ onBackToUser, lang, t }) => {
                     setShipDraft({ carrier: '', tracking_no: '', note: '' })
                   }}
                 >
-                  确认发货
+                  {t('merchant.confirmShipBtn')}
                 </button>
               </div>
 
@@ -1525,7 +1676,7 @@ const MerchantPortal = ({ onBackToUser, lang, t }) => {
               </div>
               <div className="flex gap-2 mt-3">
                 <button type="button" disabled={productSaving} className={`flex-1 py-3 rounded-xl text-sm font-black border-0 ${productSaving ? 'bg-gray-200 text-gray-500' : 'bg-indigo-600 text-white'}`} onClick={saveProductDraft}>
-                  保存
+                  {t('common.save')}
                 </button>
                 <button type="button" className="flex-1 py-3 rounded-xl text-sm font-black border border-gray-200 bg-white text-gray-700 active:bg-gray-50" onClick={() => setProductDraft(null)}>
                   取消
@@ -1644,7 +1795,7 @@ const MerchantPortal = ({ onBackToUser, lang, t }) => {
       {shipModal ? (
         <div className="fixed inset-0 z-[100] flex items-end justify-center bg-black/30 p-4">
           <div className="bg-white w-full max-w-md rounded-2xl p-4">
-            <div className="text-sm font-black text-gray-900 mb-3">确认发货</div>
+            <div className="text-sm font-black text-gray-900 mb-3">{t('merchant.confirmShip')}</div>
             <div className="space-y-2">
               <input className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-indigo-400 bg-white" placeholder="物流公司（可选）" value={shipDraft.carrier} onChange={(e) => setShipDraft({ ...shipDraft, carrier: e.target.value })} />
               <input className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-indigo-400 bg-white" placeholder="运单号（可选）" value={shipDraft.tracking_no} onChange={(e) => setShipDraft({ ...shipDraft, tracking_no: e.target.value })} />
@@ -1819,6 +1970,72 @@ export default function RainbowPawMiniApp() {
   }, [lang])
 
   const t = (key, vars) => rpMiniAppT(lang, key, vars)
+
+  const pickI18n = (value) => {
+    const translateZh = (s) => {
+      let out = String(s || '')
+      out = out
+        .replaceAll('云纪念·', 'Cloud Memorial · ')
+        .replaceAll('点亮祈福', 'Prayer Light')
+        .replaceAll('献花', 'Flowers')
+        .replaceAll('永久守护升级', 'Eternal Guardian Upgrade')
+        .replaceAll('善终拼单·', 'Aftercare Group Deal · ')
+        .replaceAll('接送费', 'Pickup fee')
+        .replaceAll('告别仪式', 'Farewell ceremony')
+        .replaceAll('火化安排', 'Cremation arrangement')
+        .replaceAll('集体', 'Group')
+        .replaceAll('单独', 'Private')
+        .replaceAll('即时生效', 'Instant')
+        .replaceAll('即时生成', 'Instant')
+        .replaceAll('预约制', 'By appointment')
+        .replaceAll('标准服务流程', 'Standard process')
+        .replaceAll('年费订阅', 'Annual subscription')
+        .replaceAll('含一次实地陪同', 'Includes one on-site visit')
+        .replaceAll('普通区', 'Basic zone')
+        .replaceAll('景观区', 'Garden zone')
+        .replaceAll('尊享', 'Premium')
+        .replaceAll('基础', 'Basic')
+        .replaceAll('标准', 'Standard')
+        .replaceAll('加购·', 'Add-on · ')
+      out = out
+        .replace(/\b(\d+)天制作\b/g, 'Made in $1 days')
+        .replace(/\b(\d+)-(\d+)天制作\b/g, 'Made in $1–$2 days')
+        .replace(/\b(\d+)-(\d+)\s*天\b/g, '$1–$2 days')
+        .replace(/\b(\d+)\s*小时内\b/g, 'Within $1 hours')
+        .replaceAll('分钟', 'min')
+      return out
+    }
+
+    if (!value) return ''
+    const wantTranslate = lang !== 'ZH'
+    if (typeof value === 'string') return wantTranslate ? translateZh(value) : value
+    if (typeof value === 'object') {
+      const v = value[lang] || value.EN || value.ZH
+      if (v == null) return ''
+      const s = String(v)
+      return wantTranslate ? translateZh(s) : s
+    }
+    return wantTranslate ? translateZh(String(value)) : String(value)
+  }
+
+  const merchants = MERCHANTS_RAW.map((m) => ({
+    ...m,
+    name: pickI18n(m.name_i18n || m.name),
+    location: pickI18n(m.location_i18n || m.location),
+    desc: pickI18n(m.desc_i18n || m.desc),
+  }))
+  const merchantById = merchants.reduce((acc, m) => {
+    acc[m.id] = m
+    return acc
+  }, {})
+  const products = PRODUCTS_RAW.map((p) => ({
+    ...p,
+    subCategory: pickI18n(p.subCategory_i18n || p.subCategory),
+    name: pickI18n(p.name_i18n || p.name),
+    time: pickI18n(p.time_i18n || p.time),
+    description: pickI18n(p.description_i18n || p.description),
+    merchant: (merchantById[p.merchantId] && merchantById[p.merchantId].name) || p.merchant || '',
+  }))
 
   const saveUserAuthToken = (next) => {
     const token = String(next || '').trim()
@@ -2076,7 +2293,7 @@ export default function RainbowPawMiniApp() {
       const lng = Number(loc?.longitude ?? loc?.lng ?? NaN)
       const acc = loc?.accuracy_radius ?? loc?.accuracy ?? null
       if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
-        showToast({ title: t('common.failed'), desc: '定位失败：未获取到坐标' })
+        showToast({ title: t('common.failed'), desc: t('aftercare.addr.locFailNoCoords') })
         return
       }
       setPackageAddressDraft((p) => ({
@@ -2131,7 +2348,7 @@ export default function RainbowPawMiniApp() {
     if (navigator.geolocation && typeof navigator.geolocation.getCurrentPosition === 'function') {
       navigator.geolocation.getCurrentPosition(
         (pos) => applyLocation({ latitude: pos.coords.latitude, longitude: pos.coords.longitude, accuracy: pos.coords.accuracy }, 'browser'),
-        () => showToast({ title: t('common.failed'), desc: '定位失败：浏览器未授权' }),
+        () => showToast({ title: t('common.failed'), desc: t('aftercare.addr.locFailNoPerm') }),
         { enableHighAccuracy: true, timeout: 10000 }
       )
       return
@@ -2147,7 +2364,7 @@ export default function RainbowPawMiniApp() {
   }, [])
 
   const handleProductClick = (p) => setSelectedProduct(p)
-  const handleMerchantClick = (mid) => setSelectedMerchant(MERCHANTS.find((m) => m.id === mid))
+  const handleMerchantClick = (mid) => setSelectedMerchant(merchants.find((m) => m.id === mid))
   const handleCategoryClick = (cid) => {
     setSelectedCategory(cid)
     setActiveTab('shop')
@@ -2303,11 +2520,11 @@ export default function RainbowPawMiniApp() {
     }, [])
 
     const currentZone = cemeteryZones.find((z) => z.id === zoneId) || cemeteryZones[0] || null
-    const purchaseProduct = currentZone ? PRODUCTS.find((p) => p.id === currentZone.productId) : null
+    const purchaseProduct = currentZone ? products.find((p) => p.id === currentZone.productId) : null
     const fallbackAnnualId =
       zoneId === 'basic' || zoneId === 'A' ? 9201 : zoneId === 'garden' || zoneId === 'B' ? 9202 : zoneId === 'vip' || zoneId === 'C' ? 9203 : 9201
     const annualProductId = Number(currentZone?.annualProductId || 0) || fallbackAnnualId
-    const annualProduct = PRODUCTS.find((p) => p.id === annualProductId) || null
+    const annualProduct = products.find((p) => p.id === annualProductId) || null
 
     const zonePrefix = (id) => {
       if (id === 'basic') return 'A'
@@ -2345,8 +2562,8 @@ export default function RainbowPawMiniApp() {
           <div className="text-xs font-bold text-gray-500 mb-3">{t('cemetery.zonesTitle')}</div>
           <div className="grid grid-cols-1 gap-3">
             {cemeteryZones.map((z) => {
-              const buy = PRODUCTS.find((p) => p.id === z.productId)
-              const annual = z.annualProductId ? PRODUCTS.find((p) => p.id === z.annualProductId) : null
+              const buy = products.find((p) => p.id === z.productId)
+              const annual = z.annualProductId ? products.find((p) => p.id === z.annualProductId) : null
               return (
                 <div
                   key={z.id}
@@ -2414,8 +2631,8 @@ export default function RainbowPawMiniApp() {
         </div>
         <div className="grid grid-cols-1 gap-3">
           {cemeteryZones.map((z) => {
-            const buy = PRODUCTS.find((p) => p.id === z.productId)
-            const annual = z.annualProductId ? PRODUCTS.find((p) => p.id === z.annualProductId) : null
+            const buy = products.find((p) => p.id === z.productId)
+            const annual = z.annualProductId ? products.find((p) => p.id === z.annualProductId) : null
             const active = zoneId === z.id
             return (
               <div
@@ -2758,8 +2975,8 @@ export default function RainbowPawMiniApp() {
   }
 
   const AftercareCeremonyPage = () => {
-    const packages = [9301, 9302, 9303, 9304].map((id) => PRODUCTS.find((p) => p.id === id)).filter(Boolean)
-    const upsells = [9401, 9402, 9403].map((id) => PRODUCTS.find((p) => p.id === id)).filter(Boolean)
+    const packages = [9301, 9302, 9303, 9304].map((id) => products.find((p) => p.id === id)).filter(Boolean)
+    const upsells = [9401, 9402, 9403].map((id) => products.find((p) => p.id === id)).filter(Boolean)
     const [pkgId, setPkgId] = useState(packages[1]?.id || packages[0]?.id || 9302)
     const [pickupTier, setPickupTier] = useState('0_5')
     const [weightBand, setWeightBand] = useState('5–15kg')
@@ -2779,10 +2996,10 @@ export default function RainbowPawMiniApp() {
     const servicePackage = pkgId === 9301 ? 'basic' : pkgId === 9302 ? 'standard' : pkgId === 9303 ? 'premium' : 'ceremony'
 
     const pickupFeeProductId = pickupTier === '0_5' ? 9501 : pickupTier === '5_10' ? 9502 : 9503
-    const pickupFee = PRODUCTS.find((p) => p.id === pickupFeeProductId) || null
+    const pickupFee = products.find((p) => p.id === pickupFeeProductId) || null
 
     const weightFeeProductId = weightBand === '<5kg' ? null : weightBand === '5–15kg' ? 9601 : weightBand === '15–30kg' ? 9602 : 9603
-    const weightFee = weightFeeProductId ? PRODUCTS.find((p) => p.id === weightFeeProductId) : null
+    const weightFee = weightFeeProductId ? products.find((p) => p.id === weightFeeProductId) : null
 
     const itemIds = [
       pkg?.id,
@@ -2793,7 +3010,7 @@ export default function RainbowPawMiniApp() {
 
     const items = itemIds.map((id) => ({ productId: id, quantity: 1 }))
     const total = items.reduce((sum, it) => {
-      const p = PRODUCTS.find((x) => x.id === it.productId)
+      const p = products.find((x) => x.id === it.productId)
       return sum + (p ? p.price : 0) * it.quantity
     }, 0)
 
@@ -3015,7 +3232,7 @@ export default function RainbowPawMiniApp() {
                 if (pickupFee) addons.push({ code: pickupTier === '0_5' ? 'pickup_fee_0_5km' : pickupTier === '5_10' ? 'pickup_fee_5_10km' : 'pickup_fee_10km_plus', item_type: 'service', title: pickupFee.name, unit_price_cents: Math.round(pickupFee.price * 100), quantity: 1 })
                 if (weightFee) addons.push({ code: weightBand === '5–15kg' ? 'weight_fee_5_15kg' : weightBand === '15–30kg' ? 'weight_fee_15_30kg' : 'weight_fee_30kg_plus', item_type: 'service', title: weightFee.name, unit_price_cents: Math.round(weightFee.price * 100), quantity: 1 })
                 Array.from(selectedUpsells).forEach((id) => {
-                  const p = PRODUCTS.find((x) => x.id === id)
+                  const p = products.find((x) => x.id === id)
                   if (!p) return
                   addons.push({ code: `upsell_${id}`, item_type: 'product', title: p.name, unit_price_cents: Math.round(p.price * 100), quantity: 1 })
                 })
@@ -3137,7 +3354,7 @@ export default function RainbowPawMiniApp() {
   const startPay = ({ title, items, source, meta }) => {
     if (checkoutStep === 'pay') return
     const total = items.reduce((sum, it) => {
-      const p = PRODUCTS.find((x) => x.id === it.productId)
+      const p = products.find((x) => x.id === it.productId)
       return sum + (p ? p.price : 0) * it.quantity
     }, 0)
     setCheckout({ title, items, total, source, meta: meta || null })
@@ -3157,7 +3374,7 @@ export default function RainbowPawMiniApp() {
           <button
             className="rp-btn-primary mt-4 px-4 py-2 rounded-full text-xs font-bold border-0 active:scale-95 transition-transform"
             onClick={() => {
-              const service = PRODUCTS.find((p) => p.category === 'services') || PRODUCTS[0]
+              const service = products.find((p) => p.category === 'services') || products[0]
               setSelectedProduct(service)
             }}
             type="button"
@@ -3208,7 +3425,7 @@ export default function RainbowPawMiniApp() {
           <span className="text-xs text-gray-400 flex items-center" onClick={() => setActiveTab('shop')}>{t('common.all')} <ChevronRight size={14} /></span>
         </div>
         <div className="grid grid-cols-2 gap-3">
-          {[...PRODUCTS].sort((a, b) => (b.sales || 0) - (a.sales || 0)).slice(0, 4).map((p) => (
+          {[...products].sort((a, b) => (b.sales || 0) - (a.sales || 0)).slice(0, 4).map((p) => (
             <ProductCard key={p.id} product={p} onClick={handleProductClick} onMerchantClick={handleMerchantClick} t={t} />
           ))}
         </div>
@@ -3237,8 +3454,8 @@ export default function RainbowPawMiniApp() {
       ? categoryData.subs.map((s) => ({ id: s.id, label: pickLabel(s.labels) || String(s.id || '') }))
       : (categoryData.subKeys || fallbackCategoryData.subKeys || []).map((k, idx) => ({ id: String(idx), label: t(k) }))
     const isServices = currentCat === 'services'
-    const filteredProducts = PRODUCTS.filter((p) => p.category === currentCat)
-    const serviceProducts = isServices ? PRODUCTS.filter((p) => p.category === 'services' && (!serviceSub || p.serviceSubId === serviceSub)) : []
+    const filteredProducts = products.filter((p) => p.category === currentCat)
+    const serviceProducts = isServices ? products.filter((p) => p.category === 'services' && (!serviceSub || p.serviceSubId === serviceSub)) : []
 
     const serviceSubTitleKey =
       serviceSub === 'ceremony' ? 'catSub.services.0' : serviceSub === 'cemetery' ? 'catSub.services.1' : serviceSub === 'grief' ? 'catSub.services.2' : null
@@ -3298,7 +3515,7 @@ export default function RainbowPawMiniApp() {
                           <Filter size={14} className="text-gray-400" />
                         </div>
                         <div className="grid grid-cols-1 gap-4">
-                          {PRODUCTS.filter((p) => p.category === 'services').map((p) => (
+                          {products.filter((p) => p.category === 'services').map((p) => (
                             <div key={p.id} className="flex gap-3 bg-white border-b pb-4 overflow-hidden">
                               <SafeImage src={p.image} className="w-24 h-24 rounded-xl object-cover" alt="p" onClick={() => onProductClick(p)} />
                               <div className="flex-1 min-w-0 flex flex-col justify-between py-1" onClick={() => onProductClick(p)}>
@@ -3423,7 +3640,7 @@ export default function RainbowPawMiniApp() {
           <span className="pb-2 text-sm text-gray-400">动态</span>
         </div>
         <div className="grid grid-cols-2 gap-4">
-          {PRODUCTS.filter((p) => p.merchantId === merchant.id).map((p) => (
+          {products.filter((p) => p.merchantId === merchant.id).map((p) => (
             <ProductCard key={p.id} product={p} onClick={onProductClick} onMerchantClick={() => {}} t={t} />
           ))}
         </div>
@@ -4099,12 +4316,16 @@ export default function RainbowPawMiniApp() {
       <Header title={t('profile.settings')} showBack onBack={() => setPage(null)} hideActions />
       <div className="p-4 space-y-2">
         <div className="rp-card p-4">
-          <div className="text-xs font-bold text-gray-500 mb-2">登录状态</div>
+          <div className="text-xs font-bold text-gray-500 mb-2">{t('settings.loginStatus')}</div>
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0">
-              <div className="text-sm font-black text-gray-900 truncate">{profilePhone ? profilePhone : '游客'}</div>
+              <div className="text-sm font-black text-gray-900 truncate">{profilePhone ? profilePhone : t('settings.guest')}</div>
               <div className="text-[10px] text-gray-400 truncate">
-                {profilePhone && profilePhone.startsWith('tg_') ? 'Telegram 登录' : profilePhone ? '手机号登录' : '未登录'}
+                {profilePhone && profilePhone.startsWith('tg_')
+                  ? t('settings.loginTelegram')
+                  : profilePhone
+                    ? t('settings.loginPhone')
+                    : t('settings.notLoggedIn')}
               </div>
             </div>
             <button
@@ -4118,18 +4339,18 @@ export default function RainbowPawMiniApp() {
                 setBackendOrders([])
                 setPayments([])
                 setMemorialFavIds([])
-                showToast({ title: t('common.deleted'), desc: '已退出登录' })
+                showToast({ title: t('common.deleted'), desc: t('settings.loggedOut') })
                 setPage(null)
               }}
             >
-              退出登录
+              {t('settings.logout')}
             </button>
           </div>
 
           {userAuthToken ? (
             <div className="mt-3 flex items-center justify-between gap-2">
               <div className="min-w-0">
-                <div className="text-[10px] font-bold text-gray-500">业务 Token</div>
+                <div className="text-[10px] font-bold text-gray-500">{t('settings.bizToken')}</div>
                 <div className="text-[10px] font-mono text-gray-500 truncate">
                   {userAuthToken.slice(0, 10)}...{userAuthToken.slice(-6)}
                 </div>
@@ -4140,13 +4361,13 @@ export default function RainbowPawMiniApp() {
                 onClick={async () => {
                   try {
                     await navigator.clipboard.writeText(userAuthToken)
-                    showToast({ title: t('common.saved'), desc: 'Token 已复制' })
+                    showToast({ title: t('common.saved'), desc: t('settings.tokenCopied') })
                   } catch {
-                    showToast({ title: t('common.failed'), desc: '复制失败' })
+                    showToast({ title: t('common.failed'), desc: t('common.copyFailed') })
                   }
                 }}
               >
-                复制
+                {t('common.copy')}
               </button>
             </div>
           ) : null}
@@ -4167,7 +4388,7 @@ export default function RainbowPawMiniApp() {
 
   const SearchPage = () => {
     const q = searchQuery.trim().toLowerCase()
-    const results = q ? PRODUCTS.filter((p) => `${p.name} ${p.merchant}`.toLowerCase().includes(q)).slice(0, 20) : PRODUCTS.slice(0, 12)
+    const results = q ? products.filter((p) => `${p.name} ${p.merchant}`.toLowerCase().includes(q)).slice(0, 20) : products.slice(0, 12)
     return (
       <div className="rp-page-bg min-h-screen">
         <Header title={t('search.title')} showBack onBack={() => setPage(null)} hideActions />
@@ -4205,7 +4426,7 @@ export default function RainbowPawMiniApp() {
   const CartPage = () => {
     const items = cartItems
       .map((it) => {
-        const p = PRODUCTS.find((x) => x.id === it.productId)
+        const p = products.find((x) => x.id === it.productId)
         if (!p) return null
         return { ...it, product: p }
       })
