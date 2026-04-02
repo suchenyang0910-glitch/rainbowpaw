@@ -1,0 +1,122 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: rainbowpaw_postgres_e2e
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-rainbowpaw}
+      POSTGRES_USER: ${POSTGRES_USER:-rainbowpaw}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-rainbowpaw}
+      TZ: Asia/Bangkok
+      PGTZ: Asia/Bangkok
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata_e2e:/var/lib/postgresql/data
+      - ../database/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+      - ../database/ops_admin.sql:/docker-entrypoint-initdb.d/02-ops-admin.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  identity-service:
+    build:
+      context: ..
+      dockerfile: services/identity-service/Dockerfile
+    environment:
+      PORT: 3001
+      TZ: Asia/Bangkok
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-rainbowpaw}
+      POSTGRES_USER: ${POSTGRES_USER:-rainbowpaw}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-rainbowpaw}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  wallet-service:
+    build:
+      context: ..
+      dockerfile: services/wallet-service/Dockerfile
+    environment:
+      PORT: 3002
+      TZ: Asia/Bangkok
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-rainbowpaw}
+      POSTGRES_USER: ${POSTGRES_USER:-rainbowpaw}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-rainbowpaw}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  bridge-service:
+    build:
+      context: ..
+      dockerfile: services/bridge-service/Dockerfile
+    environment:
+      PORT: 3003
+      TZ: Asia/Bangkok
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-rainbowpaw}
+      POSTGRES_USER: ${POSTGRES_USER:-rainbowpaw}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-rainbowpaw}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  ai-orchestrator:
+    build:
+      context: ..
+      dockerfile: services/ai-orchestrator/Dockerfile
+    environment:
+      PORT: 3005
+      TZ: Asia/Bangkok
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN}
+      AI_ENABLE_DB: "false"
+      AI_MOCK_MODE: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api-gateway:
+    build:
+      context: ..
+      dockerfile: services/api-gateway/Dockerfile
+    environment:
+      PORT: 3012
+      TZ: Asia/Bangkok
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN}
+      RAINBOW_BOT_TOKEN: ${RAINBOW_BOT_TOKEN:-}
+      CLAW_BOT_TOKEN: ${CLAW_BOT_TOKEN:-}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-rainbowpaw}
+      POSTGRES_USER: ${POSTGRES_USER:-rainbowpaw}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-rainbowpaw}
+      IDENTITY_SERVICE_URL: http://identity-service:3001/api
+      WALLET_SERVICE_URL: http://wallet-service:3002/api
+      BRIDGE_SERVICE_URL: http://bridge-service:3003/api
+      AI_ORCHESTRATOR_SERVICE_URL: http://ai-orchestrator:3005/api
+      ENABLE_AI_RECOMMEND_ON_PLAY: "false"
+    depends_on:
+      identity-service:
+        condition: service_started
+      wallet-service:
+        condition: service_started
+      bridge-service:
+        condition: service_started
+      ai-orchestrator:
+        condition: service_started
+    ports:
+      - "3012:3012"
+
+volumes:
+  pgdata_e2e:
+

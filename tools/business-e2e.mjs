@@ -1,8 +1,9 @@
 import process from 'node:process'
 
-const API_BASE_URL = String(process.env.API_BASE_URL || 'http://localhost:3005/api').replace(/\/+$/, '')
+const API_BASE_URL = String(process.env.API_BASE_URL || 'http://localhost:3012/api').replace(/\/+$/, '')
 const DEV_TELEGRAM_ID = String(process.env.DEV_TELEGRAM_ID || process.env.VITE_DEV_TELEGRAM_ID || '10001')
 const TEST_PHONE = String(process.env.TEST_PHONE || '+85510000001')
+const SKIP_CLAW = String(process.env.E2E_SKIP_CLAW || '').trim() === '1'
 
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms))
@@ -146,22 +147,85 @@ async function main() {
   })
   if (!intake.ok) failures.push('aftercare intake')
 
-  const claw = await runStep('claw points direct purchase (optional)', async () => {
-    const idem = `${idemBase}_direct_101`
-    const r = await http('/purchase/direct', {
-      method: 'POST',
-      headers: { 'x-dev-telegram-id': DEV_TELEGRAM_ID, 'x-idempotency-key': idem },
-      body: { product_id: 101 },
-    })
+  if (!SKIP_CLAW) {
+    const claw = await runStep('claw direct + group + join_pay (mandatory)', async () => {
+      const topup = await http('/dev/plays/add', {
+        method: 'POST',
+        headers: { 'x-dev-telegram-id': DEV_TELEGRAM_ID },
+        body: { count: 80 },
+      })
+      assert(topup.status === 201 || topup.status === 200, `unexpected HTTP ${topup.status}`)
+      assert(topup?.data?.code === 0, `unexpected devAddPlays response: ${JSON.stringify(topup.data)}`)
 
-    if (r.status >= 500) {
-      return { skipped: true, reason: r?.data?.message || r?.data?.error || `HTTP ${r.status}` }
-    }
-    assert(r.status === 201 || r.status === 200, `unexpected HTTP ${r.status}`)
-    assert(r?.data?.code === 0, `unexpected response: ${JSON.stringify(r.data)}`)
-    return { ok: true }
-  })
-  void claw
+      const w1 = await http('/wallet?limit=5', { headers: { 'x-dev-telegram-id': DEV_TELEGRAM_ID }, expectStatus: 200 })
+      assert(w1?.data?.code === 0, `unexpected wallet response: ${JSON.stringify(w1.data)}`)
+
+      const idemDirect = `${idemBase}_direct_101`
+      const d1 = await http('/purchase/direct', {
+        method: 'POST',
+        headers: { 'x-dev-telegram-id': DEV_TELEGRAM_ID, 'x-idempotency-key': idemDirect },
+        body: { product_id: 101 },
+      })
+      assert(d1.status === 201 || d1.status === 200, `unexpected HTTP ${d1.status}`)
+      assert(d1?.data?.code === 0, `unexpected purchaseDirect response: ${JSON.stringify(d1.data)}`)
+      const orderId1 = d1.data.data.order_id
+      assert(orderId1, 'missing order_id for purchaseDirect')
+
+      const d2 = await http('/purchase/direct', {
+        method: 'POST',
+        headers: { 'x-dev-telegram-id': DEV_TELEGRAM_ID, 'x-idempotency-key': idemDirect },
+        body: { product_id: 101 },
+      })
+      assert(d2.status === 201 || d2.status === 200, `unexpected HTTP ${d2.status}`)
+      assert(d2?.data?.code === 0, `unexpected purchaseDirect(2) response: ${JSON.stringify(d2.data)}`)
+      const orderId2 = d2.data.data.order_id
+      assert(orderId2 === orderId1, 'idempotency mismatch for purchaseDirect')
+
+      const idemGroup = `${idemBase}_group_102`
+      const g1 = await http('/purchase/group', {
+        method: 'POST',
+        headers: { 'x-dev-telegram-id': DEV_TELEGRAM_ID, 'x-idempotency-key': idemGroup },
+        body: { product_id: 102 },
+      })
+      assert(g1.status === 201 || g1.status === 200, `unexpected HTTP ${g1.status}`)
+      assert(g1?.data?.code === 0, `unexpected purchaseGroup response: ${JSON.stringify(g1.data)}`)
+      const groupId1 = g1.data.data.group_id
+      assert(groupId1, 'missing group_id')
+
+      const g2 = await http('/purchase/group', {
+        method: 'POST',
+        headers: { 'x-dev-telegram-id': DEV_TELEGRAM_ID, 'x-idempotency-key': idemGroup },
+        body: { product_id: 102 },
+      })
+      assert(g2?.data?.data?.group_id === groupId1, 'idempotency mismatch for purchaseGroup')
+
+      const j1 = await http(`/groups/${encodeURIComponent(groupId1)}/join`, { method: 'POST', body: {}, expectStatus: 201 })
+      assert(j1?.data?.code === 0, `unexpected joinGroup response: ${JSON.stringify(j1.data)}`)
+
+      const idemJoinPay = `${idemBase}_joinpay_${groupId1}`
+      const jp1 = await http(`/groups/${encodeURIComponent(groupId1)}/join_pay`, {
+        method: 'POST',
+        headers: { 'x-idempotency-key': idemJoinPay },
+        body: {},
+        expectStatus: 201,
+      })
+      assert(jp1?.data?.code === 0, `unexpected join_pay response: ${JSON.stringify(jp1.data)}`)
+      assert(String(jp1?.data?.data?.group_id || '') === String(groupId1), 'join_pay group_id mismatch')
+
+      const jp2 = await http(`/groups/${encodeURIComponent(groupId1)}/join_pay`, {
+        method: 'POST',
+        headers: { 'x-idempotency-key': idemJoinPay },
+        body: {},
+        expectStatus: 201,
+      })
+      assert(String(jp2?.data?.data?.group_id || '') === String(groupId1), 'idempotency mismatch for join_pay')
+
+      return { orderId1, groupId1 }
+    })
+    if (!claw.ok) failures.push('claw direct+group+join_pay')
+  } else {
+    process.stdout.write('SKIP claw e2e (E2E_SKIP_CLAW=1)\n')
+  }
 
   process.stdout.write('\n')
   if (failures.length) {
