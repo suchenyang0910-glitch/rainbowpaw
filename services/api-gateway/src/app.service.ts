@@ -2380,7 +2380,13 @@ export class AppService {
   }
 
   async v1OrdersIntake(body: any) {
-    const phone = this.normalizePhone(body?.phone || body?.meta?.phone);
+    const phone = this.normalizePhone(
+      body?.phone ||
+        body?.meta?.phone ||
+        body?.customer?.phone ||
+        body?.customer?.phone_number ||
+        body?.customer?.mobile,
+    );
     if (!phone) throw new BadRequestException('phone required');
     const orderType = String(
       body?.order_type || body?.meta?.order_type || 'service',
@@ -2389,7 +2395,7 @@ export class AppService {
       return this.marketplaceCreateOrder({
         order_type: 'product',
         phone,
-        city: body?.city || body?.meta?.city,
+        city: body?.city || body?.meta?.city || body?.location?.city,
         conversation_channel: 'webapp',
         product_items: body?.product_items || body?.meta?.product_items || [],
       });
@@ -2397,10 +2403,15 @@ export class AppService {
     return this.marketplaceCreateOrder({
       order_type: 'service',
       phone,
-      city: body?.city || body?.meta?.city,
-      pickup_address: body?.pickup_address || body?.meta?.pickup_address,
-      match_mode: body?.match_mode || body?.meta?.match_mode || 'platform',
-      category: body?.category || body?.meta?.category || 'cremation',
+      city: body?.city || body?.meta?.city || body?.location?.city,
+      pickup_address:
+        body?.pickup_address ||
+        body?.meta?.pickup_address ||
+        body?.location?.pickup_address,
+      match_mode:
+        body?.match_mode || body?.meta?.match_mode || body?.service?.match_mode || 'platform',
+      category:
+        body?.category || body?.meta?.category || body?.service?.category || 'cremation',
       conversation_channel: 'webapp',
     });
   }

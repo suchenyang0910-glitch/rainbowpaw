@@ -108,16 +108,22 @@ export class AppController {
   }
 
   @Post('marketplace/orders')
-  marketplaceCreateOrder(@Headers() headers: any, @Body() body: any) {
+  marketplaceCreateOrder(
+    @Headers('x-idempotency-key') idempotencyKey: string,
+    @Body() body: any,
+  ) {
     return this.appService.marketplaceCreateOrder(body || {}, {
-      idempotency_key: String(headers?.['x-idempotency-key'] || ''),
+      idempotency_key: String(idempotencyKey || ''),
     });
   }
 
   @Post('marketplace/checkout')
-  marketplaceCheckout(@Headers() headers: any, @Body() body: any) {
+  marketplaceCheckout(
+    @Headers('x-idempotency-key') idempotencyKey: string,
+    @Body() body: any,
+  ) {
     return this.appService.marketplaceCheckout(body || {}, {
-      idempotency_key: String(headers?.['x-idempotency-key'] || ''),
+      idempotency_key: String(idempotencyKey || ''),
     });
   }
 
@@ -388,10 +394,13 @@ export class AppController {
   }
 
   @Post('payments/plays')
-  createPlaysPayment(@Headers() headers: any, @Body() body: any) {
+  createPlaysPayment(
+    @Headers('x-idempotency-key') idempotencyKey: string,
+    @Body() body: any,
+  ) {
     return this.appService.createPlaysPayment({
       bundle: Number(body?.bundle || 1),
-      idempotency_key: String(headers?.['x-idempotency-key'] || ''),
+      idempotency_key: String(idempotencyKey || ''),
     });
   }
 
