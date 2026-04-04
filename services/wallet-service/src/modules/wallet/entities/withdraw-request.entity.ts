@@ -35,6 +35,12 @@ export class WithdrawRequestEntity {
   status: string;
 
   @Column({ type: 'varchar', length: 64, nullable: true })
+  payout_txid: string | null;
+
+  @Column({ type: 'timestamp', nullable: true })
+  payout_at: Date | null;
+
+  @Column({ type: 'varchar', length: 64, nullable: true })
   reviewed_by: string | null;
 
   @Column({ type: 'timestamp', nullable: true })
@@ -49,4 +55,3 @@ export class WithdrawRequestEntity {
   @Column({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' })
   updated_at: Date;
 }
-

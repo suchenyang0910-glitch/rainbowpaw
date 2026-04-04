@@ -42,7 +42,7 @@ export function UserShowPage() {
       title={false}
       extra={
         <Space>
-          <Button onClick={() => navigate('/admin/users')}>返回列表</Button>
+          <Button onClick={() => navigate('/console/users')}>返回列表</Button>
           <CanAccess resource="users" action="freeze">
             <Button danger disabled={status !== 'active'} onClick={() => toggle('freeze')}>
               冻结

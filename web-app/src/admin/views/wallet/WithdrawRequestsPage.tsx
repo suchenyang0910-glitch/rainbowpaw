@@ -14,7 +14,7 @@ type WithdrawRequestRow = {
 }
 
 export function WithdrawRequestsPage() {
-  const { tableProps } = useTable<WithdrawRequestRow>({ resource: 'withdrawRequests' })
+  const { tableProps, tableQueryResult } = useTable<WithdrawRequestRow>({ resource: 'withdrawRequests' })
   const { mutateAsync, mutation } = useCustomMutation()
 
   const onDecision = async (row: WithdrawRequestRow, action: 'approve' | 'reject') => {
@@ -36,6 +36,28 @@ export function WithdrawRequestsPage() {
       values: {},
     })
     message.success(action === 'approve' ? '已通过' : '已驳回')
+    await tableQueryResult.refetch()
+  }
+
+  const onPaid = async (row: WithdrawRequestRow) => {
+    const ok = await new Promise<boolean>((resolve) => {
+      Modal.confirm({
+        title: '确认标记已打款？',
+        content: `提现单：${String(row.request_no || row.id)}`,
+        okText: '确认',
+        cancelText: '取消',
+        onOk: () => resolve(true),
+        onCancel: () => resolve(false),
+      })
+    })
+    if (!ok) return
+    await mutateAsync({
+      url: `/withdraw-requests/${encodeURIComponent(String(row.id))}/paid`,
+      method: 'post',
+      values: {},
+    })
+    message.success('已标记打款')
+    await tableQueryResult.refetch()
   }
 
   return (
@@ -49,7 +71,11 @@ export function WithdrawRequestsPage() {
           <Table.Column
             dataIndex="status"
             title="状态"
-            render={(value: any) => <Tag color={String(value) === 'pending' ? 'gold' : 'blue'}>{String(value || '-') }</Tag>}
+            render={(value: any) => {
+              const v = String(value || '')
+              const color = v === 'pending' ? 'gold' : v === 'approved' ? 'blue' : v === 'paid' ? 'green' : v === 'rejected' ? 'red' : 'default'
+              return <Tag color={color}>{v || '-'}</Tag>
+            }}
           />
           <Table.Column dataIndex="created_at" title="创建时间" />
           <Table.Column
@@ -64,6 +90,11 @@ export function WithdrawRequestsPage() {
                 <CanAccess resource="withdrawRequests" action="reject">
                   <Button size="small" danger disabled={mutation.isPending || String(row.status) !== 'pending'} onClick={() => onDecision(row, 'reject')}>
                     驳回
+                  </Button>
+                </CanAccess>
+                <CanAccess resource="withdrawRequests" action="paid">
+                  <Button size="small" disabled={mutation.isPending || String(row.status) !== 'approved'} onClick={() => onPaid(row)}>
+                    标记打款
                   </Button>
                 </CanAccess>
               </Space>

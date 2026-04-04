@@ -1,10 +1,11 @@
-import { BadRequestException, Controller, Get, Param, Post, Query } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { success } from '../../common/utils/response';
 import { WalletEntity } from '../wallet/entities/wallet.entity';
 import { WalletLogEntity } from '../wallet/entities/wallet-log.entity';
 import { WithdrawRequestEntity } from '../wallet/entities/withdraw-request.entity';
+import { WalletService } from '../wallet/wallet.service';
 
 @Controller('admin')
 export class AdminController {
@@ -15,6 +16,7 @@ export class AdminController {
     private readonly logsRepo: Repository<WalletLogEntity>,
     @InjectRepository(WithdrawRequestEntity)
     private readonly withdrawRepo: Repository<WithdrawRequestEntity>,
+    private readonly walletService: WalletService,
   ) {}
 
   @Get('wallet/overview')
@@ -109,7 +111,12 @@ export class AdminController {
         global_user_id: r.global_user_id,
         points_cashable_amount: Number(r.points_cashable_amount || 0),
         cash_amount: Number(r.cash_amount || 0),
+        actual_cash_amount: Number(r.actual_cash_amount || 0),
         status: r.status,
+        payout_txid: r.payout_txid || null,
+        payout_at: r.payout_at ? r.payout_at.toISOString() : null,
+        reviewed_by: r.reviewed_by || null,
+        reviewed_at: r.reviewed_at ? r.reviewed_at.toISOString() : null,
         created_at: r.created_at ? r.created_at.toISOString() : null,
       })),
       total,
@@ -122,16 +129,26 @@ export class AdminController {
   async approveWithdraw(@Param('id') id: string) {
     const numId = Number(id);
     if (!Number.isFinite(numId)) throw new BadRequestException('invalid id');
-    await this.withdrawRepo.update({ id: String(numId) }, { status: 'approved', reviewed_by: 'admin', reviewed_at: new Date() });
-    return success({ id: numId, status: 'approved' });
+    const result = await this.walletService.adminApproveWithdrawRequest(numId, 'admin');
+    return success(result);
   }
 
   @Post('withdraw-requests/:id/reject')
-  async rejectWithdraw(@Param('id') id: string) {
+  async rejectWithdraw(@Param('id') id: string, @Body() body: any) {
     const numId = Number(id);
     if (!Number.isFinite(numId)) throw new BadRequestException('invalid id');
-    await this.withdrawRepo.update({ id: String(numId) }, { status: 'rejected', reviewed_by: 'admin', reviewed_at: new Date() });
-    return success({ id: numId, status: 'rejected' });
+    const remark = String(body?.remark || '').trim() || undefined;
+    const result = await this.walletService.adminRejectWithdrawRequest(numId, 'admin', remark);
+    return success(result);
+  }
+
+  @Post('withdraw-requests/:id/paid')
+  async markPaid(@Param('id') id: string, @Body() body: any) {
+    const numId = Number(id);
+    if (!Number.isFinite(numId)) throw new BadRequestException('invalid id');
+    const payoutTxid = String(body?.payout_txid || '').trim() || undefined;
+    const remark = String(body?.remark || '').trim() || undefined;
+    const result = await this.walletService.adminMarkWithdrawPaid(numId, 'admin', payoutTxid, remark);
+    return success(result);
   }
 }
-

@@ -494,4 +494,135 @@ export class WalletService {
       },
     });
   }
+
+  async adminApproveWithdrawRequest(id: number, reviewer: string) {
+    return this.dataSource.transaction(async (manager) => {
+      const withdrawRepo = manager.getRepository(WithdrawRequestEntity);
+      const req = await withdrawRepo.findOne({ where: { id: String(id) } as any });
+      if (!req) throw new BadRequestException('not found');
+      if (req.status !== 'pending') throw new BadRequestException('only pending can be approved');
+      req.status = 'approved';
+      req.reviewed_by = reviewer;
+      req.reviewed_at = new Date();
+      req.updated_at = new Date();
+      await withdrawRepo.save(req);
+      return { id, status: req.status };
+    });
+  }
+
+  async adminRejectWithdrawRequest(id: number, reviewer: string, remark?: string) {
+    return this.dataSource.transaction(async (manager) => {
+      const withdrawRepo = manager.getRepository(WithdrawRequestEntity);
+      const walletRepo = manager.getRepository(WalletEntity);
+      const logRepo = manager.getRepository(WalletLogEntity);
+      const req = await withdrawRepo.findOne({ where: { id: String(id) } as any });
+      if (!req) throw new BadRequestException('not found');
+      if (req.status !== 'pending') throw new BadRequestException('only pending can be rejected');
+
+      const w = await this.ensureWallet(req.global_user_id, manager);
+      const points = this.toCents(req.points_cashable_amount);
+      const actualUsd = this.toCents(req.actual_cash_amount);
+
+      const beforeCashable = this.toCents(w.points_cashable);
+      const afterCashable = beforeCashable + points;
+      await logRepo.save(
+        logRepo.create({
+          global_user_id: w.global_user_id,
+          biz_type: 'withdraw_reject',
+          status: 'succeeded',
+          asset_type: 'points_cashable',
+          change_direction: 'in',
+          amount: this.centsToStr(points),
+          balance_before: this.centsToStr(beforeCashable),
+          balance_after: this.centsToStr(afterCashable),
+          ref_type: 'withdraw',
+          ref_id: req.request_no,
+          remark: remark || null,
+          created_at: new Date(),
+        }),
+      );
+
+      const beforeCash = this.toCents(w.wallet_cash);
+      if (beforeCash < actualUsd) throw new BadRequestException('wallet_cash insufficient for revert');
+      const afterCash = beforeCash - actualUsd;
+      await logRepo.save(
+        logRepo.create({
+          global_user_id: w.global_user_id,
+          biz_type: 'withdraw_reject',
+          status: 'succeeded',
+          asset_type: 'wallet_cash',
+          change_direction: 'out',
+          amount: this.centsToStr(actualUsd),
+          balance_before: this.centsToStr(beforeCash),
+          balance_after: this.centsToStr(afterCash),
+          ref_type: 'withdraw',
+          ref_id: req.request_no,
+          remark: remark || null,
+          created_at: new Date(),
+        }),
+      );
+
+      w.points_cashable = this.centsToStr(afterCashable);
+      w.points_total = this.centsToStr(this.toCents(w.points_locked) + afterCashable);
+      w.wallet_cash = this.centsToStr(afterCash);
+      w.updated_at = new Date();
+      await walletRepo.save(w);
+
+      req.status = 'rejected';
+      req.reviewed_by = reviewer;
+      req.reviewed_at = new Date();
+      req.remark = remark || req.remark;
+      req.updated_at = new Date();
+      await withdrawRepo.save(req);
+      return { id, status: req.status };
+    });
+  }
+
+  async adminMarkWithdrawPaid(id: number, reviewer: string, payoutTxid?: string, remark?: string) {
+    return this.dataSource.transaction(async (manager) => {
+      const withdrawRepo = manager.getRepository(WithdrawRequestEntity);
+      const walletRepo = manager.getRepository(WalletEntity);
+      const logRepo = manager.getRepository(WalletLogEntity);
+      const req = await withdrawRepo.findOne({ where: { id: String(id) } as any });
+      if (!req) throw new BadRequestException('not found');
+      if (req.status !== 'approved') throw new BadRequestException('only approved can be marked paid');
+
+      const w = await this.ensureWallet(req.global_user_id, manager);
+      const actualUsd = this.toCents(req.actual_cash_amount);
+      const beforeCash = this.toCents(w.wallet_cash);
+      if (beforeCash < actualUsd) throw new BadRequestException('wallet_cash insufficient');
+      const afterCash = beforeCash - actualUsd;
+
+      await logRepo.save(
+        logRepo.create({
+          global_user_id: w.global_user_id,
+          biz_type: 'withdraw_paid',
+          status: 'succeeded',
+          asset_type: 'wallet_cash',
+          change_direction: 'out',
+          amount: this.centsToStr(actualUsd),
+          balance_before: this.centsToStr(beforeCash),
+          balance_after: this.centsToStr(afterCash),
+          ref_type: 'withdraw',
+          ref_id: req.request_no,
+          remark: remark || null,
+          created_at: new Date(),
+        }),
+      );
+
+      w.wallet_cash = this.centsToStr(afterCash);
+      w.updated_at = new Date();
+      await walletRepo.save(w);
+
+      req.status = 'paid';
+      req.payout_txid = payoutTxid || null;
+      req.payout_at = new Date();
+      req.reviewed_by = reviewer;
+      req.reviewed_at = new Date();
+      req.remark = remark || req.remark;
+      req.updated_at = new Date();
+      await withdrawRepo.save(req);
+      return { id, status: req.status };
+    });
+  }
 }

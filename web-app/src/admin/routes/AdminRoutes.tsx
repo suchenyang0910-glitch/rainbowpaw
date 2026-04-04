@@ -4,8 +4,10 @@ import { Result } from 'antd'
 import { AdminLayout } from '../layouts/AdminLayout'
 import { AdminLoginPage } from '../views/login/AdminLoginPage'
 import { DashboardPage } from '../views/dashboard/DashboardPage'
+import { DashboardAlertsPage } from '../views/dashboard/DashboardAlertsPage'
 import { UserListPage } from '../views/users/UserListPage'
 import { UserShowPage } from '../views/users/UserShowPage'
+import { UserTagsPage } from '../views/users/UserTagsPage'
 import { BusinessSettingsPage } from '../views/settings/BusinessSettingsPage'
 import { PlaceholderPage } from '../views/shared/PlaceholderPage'
 import { RequirePermission } from '../views/shared/RequirePermission'
@@ -15,13 +17,23 @@ import { WalletLogsPage } from '../views/wallet/WalletLogsPage'
 import { OrderListPage } from '../views/orders/OrderListPage'
 import { ProductListPage } from '../views/store/ProductListPage'
 import { ServiceListPage } from '../views/services/ServiceListPage'
+import { CemeteryPage } from '../views/services/CemeteryPage'
 import { MerchantListPage } from '../views/merchants/MerchantListPage'
+import { MerchantOrdersPage } from '../views/merchants/MerchantOrdersPage'
+import { MerchantSettlementsPage } from '../views/merchants/MerchantSettlementsPage'
 import { BridgeReportsPage } from '../views/ops/BridgeReportsPage'
+import { CampaignsPage } from '../views/ops/CampaignsPage'
+import { ReactivationPage } from '../views/ops/ReactivationPage'
 import { ConsoleOrderPage } from '../views/console/ConsoleOrderPage'
 import { ConsoleReportPage } from '../views/console/ConsoleReportPage'
 import { ClawPoolsPage } from '../views/claw/ClawPoolsPage'
 import { ClawPlaysPage } from '../views/claw/ClawPlaysPage'
+import { ClawRecyclesPage } from '../views/claw/ClawRecyclesPage'
+import { GroupsPage } from '../views/groups/GroupsPage'
+import { ReferralsPage } from '../views/referrals/ReferralsPage'
+import { RewardsPage } from '../views/rewards/RewardsPage'
 import { RiskPage } from '../views/risk/RiskPage'
+import { RiskBlacklistPage } from '../views/risk/RiskBlacklistPage'
 import { RolesPage } from '../views/settings/RolesPage'
 import { AiOpsPage } from '../views/ai/AiOpsPage'
 import { AiGrowthPage } from '../views/ai/AiGrowthPage'
@@ -69,7 +81,7 @@ export function AdminRoutes() {
           path="dashboard/alerts"
           element={
             <RequirePermission permission="page.dashboardAlerts.list">
-              <PlaceholderPage title="实时警报" />
+              <DashboardAlertsPage />
             </RequirePermission>
           }
         />
@@ -95,7 +107,7 @@ export function AdminRoutes() {
           path="users/tags"
           element={
             <RequirePermission permission="page.userTags.list">
-              <PlaceholderPage title="用户标签管理" />
+              <UserTagsPage />
             </RequirePermission>
           }
         />
@@ -145,7 +157,7 @@ export function AdminRoutes() {
           path="claw/recycles"
           element={
             <RequirePermission permission="page.clawRecycles.list">
-              <PlaceholderPage title="回收记录" />
+              <ClawRecyclesPage />
             </RequirePermission>
           }
         />
@@ -154,7 +166,7 @@ export function AdminRoutes() {
           path="groups"
           element={
             <RequirePermission permission="page.groups.list">
-              <PlaceholderPage title="拼团列表" />
+              <GroupsPage />
             </RequirePermission>
           }
         />
@@ -163,7 +175,7 @@ export function AdminRoutes() {
           path="referrals"
           element={
             <RequirePermission permission="page.referrals.list">
-              <PlaceholderPage title="分销列表" />
+              <ReferralsPage />
             </RequirePermission>
           }
         />
@@ -172,7 +184,7 @@ export function AdminRoutes() {
           path="rewards"
           element={
             <RequirePermission permission="page.rewards.list">
-              <PlaceholderPage title="奖励发放记录" />
+              <RewardsPage />
             </RequirePermission>
           }
         />
@@ -225,7 +237,7 @@ export function AdminRoutes() {
           path="services/cemetery"
           element={
             <RequirePermission permission="page.cemetery.list">
-              <PlaceholderPage title="墓位 / 年费服务管理" />
+              <CemeteryPage />
             </RequirePermission>
           }
         />
@@ -242,7 +254,7 @@ export function AdminRoutes() {
           path="merchants/orders"
           element={
             <RequirePermission permission="page.merchantOrders.list">
-              <PlaceholderPage title="商家订单" />
+              <MerchantOrdersPage />
             </RequirePermission>
           }
         />
@@ -251,7 +263,7 @@ export function AdminRoutes() {
           path="merchants/settlements"
           element={
             <RequirePermission permission="page.merchantSettlements.list">
-              <PlaceholderPage title="商家收益" />
+              <MerchantSettlementsPage />
             </RequirePermission>
           }
         />
@@ -260,7 +272,7 @@ export function AdminRoutes() {
           path="ops/campaigns"
           element={
             <RequirePermission permission="page.campaigns.list">
-              <PlaceholderPage title="活动配置" />
+              <CampaignsPage />
             </RequirePermission>
           }
         />
@@ -269,7 +281,7 @@ export function AdminRoutes() {
           path="ops/reactivation"
           element={
             <RequirePermission permission="page.reactivation.list">
-              <PlaceholderPage title="用户激活" />
+              <ReactivationPage />
             </RequirePermission>
           }
         />
@@ -366,7 +378,7 @@ export function AdminRoutes() {
           path="risk/blacklist"
           element={
             <RequirePermission permission="page.riskBlacklist.list">
-              <PlaceholderPage title="冻结 / 黑名单" />
+              <RiskBlacklistPage />
             </RequirePermission>
           }
         />

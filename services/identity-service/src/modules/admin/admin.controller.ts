@@ -1,14 +1,17 @@
-import { Controller, Get, Param, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { success } from '../../common/utils/response';
 import { GlobalUserEntity } from '../global-user/entities/global-user.entity';
+import { UserTagEntity } from '../global-user/entities/user-tag.entity';
 
 @Controller('admin')
 export class AdminController {
   constructor(
     @InjectRepository(GlobalUserEntity)
     private readonly globalUsersRepo: Repository<GlobalUserEntity>,
+    @InjectRepository(UserTagEntity)
+    private readonly userTagsRepo: Repository<UserTagEntity>,
   ) {}
 
   @Get('users')
@@ -75,5 +78,56 @@ export class AdminController {
     await this.globalUsersRepo.update({ global_user_id: globalUserId }, { status: 'active' });
     return success({ global_user_id: globalUserId, status: 'active' });
   }
-}
 
+  @Get('users/:globalUserId')
+  async userDetail(@Param('globalUserId') globalUserId: string) {
+    const u = await this.globalUsersRepo.findOne({ where: { global_user_id: globalUserId } });
+    if (!u) return success(null);
+    const tags = await this.userTagsRepo.find({ where: { global_user_id: globalUserId } });
+    return success({
+      global_user_id: u.global_user_id,
+      telegram_id: u.telegram_id ? Number(u.telegram_id) : null,
+      username: u.username,
+      pet_type: u.pet_type,
+      pet_age: u.pet_age ?? null,
+      spend_total: Number(u.spend_total || 0),
+      spend_level: u.spend_level,
+      activity_score: Number(u.activity_score || 0),
+      status: u.status,
+      last_active_at: u.last_active_at ? u.last_active_at.toISOString() : null,
+      tags: tags.map((t) => ({
+        tag_key: t.tag_key,
+        tag_value: t.tag_value,
+        score: t.score != null ? Number(t.score) : null,
+      })),
+    });
+  }
+
+  @Post('users/:globalUserId/tags/upsert')
+  async upsertTags(@Param('globalUserId') globalUserId: string, @Body() body: any) {
+    const items = Array.isArray(body?.tags) ? body.tags : [];
+    for (const it of items) {
+      const tag_key = String(it?.tag_key || '').trim();
+      if (!tag_key) continue;
+      const tag_value = it?.tag_value != null ? String(it.tag_value) : null;
+      const score = it?.score != null ? Number(it.score) : null;
+      const existed = await this.userTagsRepo.findOne({ where: { global_user_id: globalUserId, tag_key } });
+      if (existed) {
+        existed.tag_value = tag_value;
+        existed.score = score != null && Number.isFinite(score) ? score : null;
+        await this.userTagsRepo.save(existed);
+      } else {
+        await this.userTagsRepo.save(
+          this.userTagsRepo.create({
+            global_user_id: globalUserId,
+            tag_key,
+            tag_value,
+            score: score != null && Number.isFinite(score) ? score : null,
+            created_at: new Date(),
+          }),
+        );
+      }
+    }
+    return success({ ok: true });
+  }
+}

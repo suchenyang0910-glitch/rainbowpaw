@@ -512,6 +512,14 @@ export class AppController {
     return this.appService.adminDashboardSummary();
   }
 
+  @Get('admin/dashboard/alerts')
+  adminDashboardAlerts(
+    @Query('current') current?: string,
+    @Query('pageSize') pageSize?: string,
+  ) {
+    return this.appService.adminDashboardAlerts({ current, pageSize });
+  }
+
   @Get('admin/settings/business')
   adminGetBusinessSettings() {
     return this.appService.adminGetBusinessSettings();
@@ -556,6 +564,11 @@ export class AppController {
     return this.appService.adminUserDetail({ globalUserId });
   }
 
+  @Post('admin/users/:globalUserId/tags/upsert')
+  adminUpsertUserTags(@Param('globalUserId') globalUserId: string, @Body() body: any) {
+    return this.appService.adminUpsertUserTags({ globalUserId, body: body || {} });
+  }
+
   @Get('admin/withdrawRequests')
   adminWithdrawRequests(
     @Query('current') current?: string,
@@ -581,6 +594,11 @@ export class AppController {
     return this.appService.adminWithdrawDecision({ id, action: 'reject' });
   }
 
+  @Post('admin/withdraw-requests/:id/paid')
+  adminMarkWithdrawPaid(@Param('id') id: string, @Body() body: any) {
+    return this.appService.adminWithdrawDecision({ id, action: 'paid', body: body || {} });
+  }
+
   @Get('admin/merchants')
   adminMerchants(
     @Query('current') current?: string,
@@ -588,6 +606,31 @@ export class AppController {
     @Query('status') status?: string,
   ) {
     return this.appService.adminMerchants({ current, pageSize, status });
+  }
+
+  @Get('admin/merchantOrders')
+  adminMerchantOrders(
+    @Query('current') current?: string,
+    @Query('pageSize') pageSize?: string,
+  ) {
+    return this.appService.adminMerchantOrders({ current, pageSize });
+  }
+
+  @Get('admin/merchantSettlements')
+  adminMerchantSettlements(
+    @Query('current') current?: string,
+    @Query('pageSize') pageSize?: string,
+  ) {
+    return this.appService.adminMerchantSettlements({ current, pageSize });
+  }
+
+  @Get('admin/reactivation')
+  adminReactivation(
+    @Query('current') current?: string,
+    @Query('pageSize') pageSize?: string,
+    @Query('inactiveDays') inactiveDays?: string,
+  ) {
+    return this.appService.adminReactivation({ current, pageSize, inactiveDays });
   }
 
   @Post('admin/merchants/:id/approve')
@@ -1129,6 +1172,15 @@ export class AppController {
     return this.appService.adminClawPlays({ current, pageSize });
   }
 
+  @Get('admin/clawRecycles')
+  adminClawRecycles(
+    @Query('current') current?: string,
+    @Query('pageSize') pageSize?: string,
+    @Query('globalUserId') globalUserId?: string,
+  ) {
+    return this.appService.adminClawRecycles({ current, pageSize, globalUserId });
+  }
+
   @Get('admin/risk/summary')
   adminRiskSummary() {
     return this.appService.adminRiskSummary();
@@ -1140,6 +1192,11 @@ export class AppController {
     @Query('pageSize') pageSize?: string,
   ) {
     return this.appService.adminRiskAlerts({ current, pageSize });
+  }
+
+  @Get('admin/ai/config')
+  adminAiConfig() {
+    return this.appService.adminAiConfig();
   }
 
   @Get('admin/ai/ops/daily')

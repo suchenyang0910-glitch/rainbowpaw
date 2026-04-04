@@ -69,8 +69,10 @@ export class GlobalUserService {
                 ? 'rainbowpaw'
                 : null,
           pet_type: 'unknown',
+          pet_age: null,
           spend_total: '0',
           spend_level: 'low',
+          activity_score: '0',
           last_active_at: new Date(),
           status: 'active',
           created_at: new Date(),
@@ -116,8 +118,10 @@ export class GlobalUserService {
       telegram_id: user.telegram_id ? Number(user.telegram_id) : null,
       username: user.username,
       pet_type: user.pet_type,
+      pet_age: (user as any).pet_age ?? null,
       spend_total: Number(user.spend_total || 0),
       spend_level: user.spend_level,
+      activity_score: Number((user as any).activity_score || 0),
       status: user.status,
       tags: tags.map((t) => ({
         tag_key: t.tag_key,

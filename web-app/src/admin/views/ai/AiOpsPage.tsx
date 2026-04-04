@@ -4,8 +4,10 @@ import { Alert, Button, Card, Col, Descriptions, Form, Input, Modal, Row, Space,
 import { useMemo } from 'react'
 
 export function AiOpsPage() {
+  const { result: cfgResult } = useCustom({ url: '/ai/config', method: 'get' } as any)
   const { result, query } = useCustom({ url: '/ai/ops/daily', method: 'get' } as any)
   const daily = useMemo(() => (result as any)?.data || null, [result])
+  const cfg = useMemo(() => (cfgResult as any)?.data || {}, [cfgResult])
   const { mutateAsync, mutation } = useCustomMutation()
   const [form] = Form.useForm()
 
@@ -51,6 +53,14 @@ export function AiOpsPage() {
   return (
     <PageContainer title={false}>
       <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+        {cfg && cfg.ai_orchestrator_url_set === false && (
+          <Alert
+            type="warning"
+            showIcon
+            message="AI 未配置"
+            description="未设置 AI_ORCHESTRATOR_SERVICE_URL，AI 能力将降级为 stub。"
+          />
+        )}
         <Alert
           type="info"
           showIcon

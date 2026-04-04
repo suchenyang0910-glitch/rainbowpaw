@@ -25,11 +25,17 @@ export class GlobalUserEntity {
   @Column({ type: 'varchar', length: 16, nullable: true })
   pet_type: string | null;
 
+  @Column({ type: 'int', nullable: true })
+  pet_age: number | null;
+
   @Column({ type: 'numeric', precision: 12, scale: 2, default: 0 })
   spend_total: string;
 
   @Column({ type: 'varchar', length: 16, default: 'low' })
   spend_level: string;
+
+  @Column({ type: 'numeric', precision: 12, scale: 2, default: 0 })
+  activity_score: string;
 
   @Column({ type: 'timestamp', nullable: true })
   last_active_at: Date | null;
@@ -43,4 +49,3 @@ export class GlobalUserEntity {
   @Column({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' })
   updated_at: Date;
 }
-

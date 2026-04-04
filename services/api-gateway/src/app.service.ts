@@ -1415,42 +1415,130 @@ export class AppService {
 
   async adminDashboardSummary() {
     const now = new Date();
-    const start = new Date(now);
-    start.setHours(0, 0, 0, 0);
-    const startIso = start.toISOString();
+    const yyyy = now.getUTCFullYear();
+    const mm = String(now.getUTCMonth() + 1).padStart(2, '0');
+    const dd = String(now.getUTCDate()).padStart(2, '0');
+    const date = `${yyyy}-${mm}-${dd}`;
+    const start = new Date(`${date}T00:00:00.000Z`);
+    const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
 
-    const allOrders = [] as any[];
-    for (const list of this.ordersByPhone.values()) {
-      if (Array.isArray(list)) allOrders.push(...list);
+    let revenueUsd = 0;
+    let costUsd = 0;
+    let profitUsd = 0;
+    let clawPlays = 0;
+    let conversionRate = 0;
+    let anomalies: any[] = [];
+    let funnel: any = null;
+
+    try {
+      const res = await this.internalGet<any>(`${this.reportBase()}/reports/daily`, { date });
+      const d = res?.data || {};
+      revenueUsd = Number(d?.revenue?.usd || 0);
+      costUsd = Number(d?.cost?.usd || 0);
+      profitUsd = Number(d?.profit?.usd || 0);
+      clawPlays = Number(d?.claw_plays || 0);
+      conversionRate = Number(d?.funnel?.conversion_rate || 0);
+      anomalies = Array.isArray(d?.anomalies) ? d.anomalies : [];
+      funnel = d?.funnel || null;
+    } catch {
+      try {
+        const r = await this.opsQuery<any>(
+          `SELECT
+             COALESCE(SUM(CASE WHEN flow='income' THEN amount ELSE 0 END),0)::float AS income_points,
+             COALESCE(SUM(CASE WHEN flow='expense' THEN amount ELSE 0 END),0)::float AS expense_points
+           FROM orders.orders
+           WHERE currency='points'
+             AND created_at >= $1 AND created_at < $2`,
+          [start, end],
+        );
+        const incomePoints = Number(r.rows?.[0]?.income_points || 0);
+        const expensePoints = Number(r.rows?.[0]?.expense_points || 0);
+        revenueUsd = incomePoints / 2;
+        costUsd = expensePoints / 2;
+        profitUsd = revenueUsd - costUsd;
+
+        const p = await this.opsQuery<any>(
+          `SELECT COUNT(*)::int AS cnt
+           FROM orders.orders
+           WHERE type='claw' AND flow='income' AND (metadata->>'action')='play'
+             AND created_at >= $1 AND created_at < $2`,
+          [start, end],
+        );
+        clawPlays = Number(p.rows?.[0]?.cnt || 0);
+      } catch {}
     }
 
-    const today = allOrders.filter((o) => {
-      const created = String(o?.created_at || '');
-      return created && created >= startIso;
-    });
+    let newUsers = 0;
+    try {
+      const r = await this.opsQuery<any>(
+        `SELECT COUNT(*)::int AS cnt FROM identity.global_users WHERE created_at >= $1 AND created_at < $2`,
+        [start, end],
+      );
+      newUsers = Number(r.rows?.[0]?.cnt || 0);
+    } catch {}
 
-    const revenueCents = today.reduce(
-      (s, o) => s + Number(o?.total_cents || 0),
-      0,
-    );
-    const revenueUsd = revenueCents / 100;
+    let withdrawPending = 0;
+    try {
+      const r = await this.opsQuery<any>(
+        `SELECT COUNT(*)::int AS cnt FROM wallet.withdraw_requests WHERE status IN ('pending','approved')`,
+        [],
+      );
+      withdrawPending = Number(r.rows?.[0]?.cnt || 0);
+    } catch {}
 
-    const rewardCostUsd = 0;
-    const profitRate =
-      revenueUsd > 0 ? (revenueUsd - rewardCostUsd) / revenueUsd : 0;
+    let orders = 0;
+    try {
+      const r = await this.opsQuery<any>(
+        `SELECT COUNT(*)::int AS cnt FROM orders.orders WHERE created_at >= $1 AND created_at < $2`,
+        [start, end],
+      );
+      orders = Number(r.rows?.[0]?.cnt || 0);
+    } catch {}
+
+    let walletOverview: any = null;
+    try {
+      const r = await this.internalGet<any>(`${this.walletBase()}/admin/wallet/overview`);
+      walletOverview = r?.data || null;
+    } catch {}
+
+    let riskSummary: any = null;
+    try {
+      const r = await this.adminRiskSummary();
+      riskSummary = (r as any)?.data || null;
+    } catch {}
+
+    const profitRate = revenueUsd > 0 ? profitUsd / revenueUsd : 0;
 
     return {
       code: 0,
       message: 'ok',
       data: {
+        date,
         revenue_usd: Number.isFinite(revenueUsd) ? revenueUsd : 0,
-        reward_cost_usd: rewardCostUsd,
+        cost_usd: Number.isFinite(costUsd) ? costUsd : 0,
+        profit_usd: Number.isFinite(profitUsd) ? profitUsd : 0,
         profit_rate: Number.isFinite(profitRate) ? profitRate : 0,
-        new_users: 0,
-        plays: 0,
-        orders: today.length,
+        new_users: newUsers,
+        plays: clawPlays,
+        orders,
+        conversion_rate: conversionRate,
+        withdraw_pending: withdrawPending,
+        wallet: walletOverview,
+        risk: riskSummary,
+        anomalies,
+        funnel,
       },
     };
+  }
+
+  async adminDashboardAlerts(opts: { current?: string; pageSize?: string }) {
+    const page = Math.max(1, Number(opts.current || 1));
+    const size = Math.min(200, Math.max(1, Number(opts.pageSize || 20)));
+    const risk = await this.adminRiskAlerts({ current: '1', pageSize: '200' });
+    const list = (risk as any)?.data?.items || [];
+    const start = (page - 1) * size;
+    const items = list.slice(start, start + size);
+    return { code: 0, message: 'ok', data: { items, total: list.length, current: page, pageSize: size } };
   }
 
   async adminGetBusinessSettings() {
@@ -1663,27 +1751,29 @@ export class AppService {
 
   async adminWithdrawDecision(opts: {
     id: string;
-    action: 'approve' | 'reject';
+    action: 'approve' | 'reject' | 'paid';
+    body?: any;
   }) {
     const id = String(opts.id || '').trim();
-    const action = opts.action === 'approve' ? 'approve' : 'reject';
+    const action = opts.action === 'approve' ? 'approve' : opts.action === 'paid' ? 'paid' : 'reject';
     const existed = this.adminWithdrawRequestsStore.get(id);
     if (existed) {
       this.adminWithdrawRequestsStore.set(id, {
         ...existed,
-        status: action === 'approve' ? 'approved' : 'rejected',
+        status: action === 'approve' ? 'approved' : action === 'paid' ? 'paid' : 'rejected',
       });
     }
     try {
       const res = await this.internalPost<any>(
         `${this.walletBase()}/admin/withdraw-requests/${encodeURIComponent(id)}/${action}`,
+        opts.body || {},
       );
       return res;
     } catch {
       return {
         code: 0,
         message: 'ok',
-        data: { id, status: action === 'approve' ? 'approved' : 'rejected' },
+        data: { id, status: action === 'approve' ? 'approved' : action === 'paid' ? 'paid' : 'rejected' },
       };
     }
   }
@@ -1705,6 +1795,81 @@ export class AppService {
       message: 'ok',
       data: { items, total: all.length, current: page, pageSize: size },
     };
+  }
+
+  async adminMerchantOrders(opts: { current?: string; pageSize?: string }) {
+    const page = Math.max(1, Number(opts.current || 1));
+    const size = Math.min(200, Math.max(1, Number(opts.pageSize || 20)));
+    try {
+      const countRes = await this.opsQuery<{ total: string }>(
+        `SELECT COUNT(*)::text AS total FROM orders.orders o WHERE o.type IN ('product','service')`,
+        [],
+      );
+      const total = Number(countRes.rows?.[0]?.total || 0);
+      const listRes = await this.opsQuery<any>(
+        `SELECT o.order_id,o.type,o.status,o.amount,o.currency,o.user_id,o.created_at,o.metadata
+         FROM orders.orders o
+         WHERE o.type IN ('product','service')
+         ORDER BY o.created_at DESC
+         LIMIT $1 OFFSET $2`,
+        [size, (page - 1) * size],
+      );
+      const items = listRes.rows.map((r: any) => ({
+        order_id: r.order_id,
+        type: r.type,
+        status: r.status,
+        amount: Number(r.amount || 0),
+        currency: r.currency,
+        user_id: r.user_id,
+        merchant_id: r.metadata?.merchant_id || null,
+        created_at: this.iso(r.created_at),
+      }));
+      return { code: 0, message: 'ok', data: { items, total, current: page, pageSize: size } };
+    } catch {
+      return { code: 0, message: 'ok', data: { items: [], total: 0, current: page, pageSize: size } };
+    }
+  }
+
+  async adminMerchantSettlements(opts: { current?: string; pageSize?: string }) {
+    const page = Math.max(1, Number(opts.current || 1));
+    const size = Math.min(200, Math.max(1, Number(opts.pageSize || 20)));
+    return { code: 0, message: 'ok', data: { items: [], total: 0, current: page, pageSize: size } };
+  }
+
+  async adminReactivation(opts: { current?: string; pageSize?: string; inactiveDays?: string }) {
+    const page = Math.max(1, Number(opts.current || 1));
+    const size = Math.min(200, Math.max(1, Number(opts.pageSize || 20)));
+    const days = Math.min(365, Math.max(1, Math.floor(Number(opts.inactiveDays || 7))));
+    try {
+      const countRes = await this.opsQuery<{ total: string }>(
+        `SELECT COUNT(*)::text AS total
+         FROM identity.global_users u
+         WHERE u.status='active' AND (u.last_active_at IS NULL OR u.last_active_at < (now() - ($1::int || ' day')::interval))`,
+        [days],
+      );
+      const total = Number(countRes.rows?.[0]?.total || 0);
+      const listRes = await this.opsQuery<any>(
+        `SELECT u.global_user_id,u.telegram_id,u.username,u.pet_type,u.spend_level,u.spend_total,u.last_active_at,u.created_at
+         FROM identity.global_users u
+         WHERE u.status='active' AND (u.last_active_at IS NULL OR u.last_active_at < (now() - ($1::int || ' day')::interval))
+         ORDER BY u.last_active_at NULLS FIRST, u.created_at DESC
+         LIMIT $2 OFFSET $3`,
+        [days, size, (page - 1) * size],
+      );
+      const items = listRes.rows.map((r: any) => ({
+        global_user_id: r.global_user_id,
+        telegram_id: r.telegram_id ? Number(r.telegram_id) : null,
+        username: r.username || null,
+        pet_type: r.pet_type || null,
+        spend_level: r.spend_level || null,
+        spend_total: Number(r.spend_total || 0),
+        last_active_at: this.iso(r.last_active_at),
+        created_at: this.iso(r.created_at),
+      }));
+      return { code: 0, message: 'ok', data: { items, total, current: page, pageSize: size } };
+    } catch {
+      return { code: 0, message: 'ok', data: { items: [], total: 0, current: page, pageSize: size } };
+    }
   }
 
   async adminMerchantDecision(opts: {
@@ -3171,36 +3336,211 @@ export class AppService {
   async adminClawPlays(opts: { current?: string; pageSize?: string }) {
     const page = Math.max(1, Number(opts.current || 1));
     const size = Math.min(200, Math.max(1, Number(opts.pageSize || 20)));
-    return {
-      code: 0,
-      message: 'ok',
-      data: { items: [], total: 0, current: page, pageSize: size },
-    };
+    try {
+      const countRes = await this.opsQuery<{ total: string }>(
+        `SELECT COUNT(*)::text AS total
+         FROM orders.orders o
+         WHERE o.type='claw' AND o.flow='income' AND (o.metadata->>'action')='play'`,
+        [],
+      );
+      const total = Number(countRes.rows?.[0]?.total || 0);
+      const listRes = await this.opsQuery<any>(
+        `SELECT o.order_id,o.user_id,o.amount,o.status,o.created_at,o.metadata
+         FROM orders.orders o
+         WHERE o.type='claw' AND o.flow='income' AND (o.metadata->>'action')='play'
+         ORDER BY o.created_at DESC
+         LIMIT $1 OFFSET $2`,
+        [size, (page - 1) * size],
+      );
+      const items = listRes.rows.map((r: any) => {
+        const meta = r.metadata && typeof r.metadata === 'object' ? r.metadata : {};
+        return {
+          id: String(r.order_id),
+          global_user_id: String(r.user_id),
+          pool_id: meta.pool_id || null,
+          prize_level: meta.prize_level || meta.prize_tier || 'common',
+          prize_name: meta.prize_name || meta?.prize?.display_name || meta?.prize?.name || '普通奖品',
+          consumed_points: Number(r.amount || 0),
+          result_status: r.status,
+          created_at: this.iso(r.created_at),
+        };
+      });
+      return { code: 0, message: 'ok', data: { items, total, current: page, pageSize: size } };
+    } catch {
+      return { code: 0, message: 'ok', data: { items: [], total: 0, current: page, pageSize: size } };
+    }
+  }
+
+  async adminClawRecycles(opts: { current?: string; pageSize?: string; globalUserId?: string }) {
+    const page = Math.max(1, Number(opts.current || 1));
+    const size = Math.min(200, Math.max(1, Number(opts.pageSize || 20)));
+    const gu = String(opts.globalUserId || '').trim();
+    try {
+      const params: any[] = [];
+      let where = `o.type='claw' AND o.flow='expense' AND (o.metadata->>'action')='recycle'`;
+      if (gu) {
+        params.push(gu);
+        where += ` AND o.user_id = $${params.length}`;
+      }
+      const countRes = await this.opsQuery<{ total: string }>(
+        `SELECT COUNT(*)::text AS total FROM orders.orders o WHERE ${where}`,
+        params,
+      );
+      const total = Number(countRes.rows?.[0]?.total || 0);
+      const listRes = await this.opsQuery<any>(
+        `SELECT o.order_id,o.user_id,o.amount,o.status,o.created_at,o.metadata
+         FROM orders.orders o
+         WHERE ${where}
+         ORDER BY o.created_at DESC
+         LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+        [...params, size, (page - 1) * size],
+      );
+      const items = listRes.rows.map((r: any) => {
+        const meta = r.metadata && typeof r.metadata === 'object' ? r.metadata : {};
+        return {
+          id: String(r.order_id),
+          global_user_id: String(r.user_id),
+          amount: Number(r.amount || 0),
+          origin_amount: Number(meta.origin_amount || 0),
+          play_id: meta.play_id || null,
+          status: r.status,
+          created_at: this.iso(r.created_at),
+        };
+      });
+      return { code: 0, message: 'ok', data: { items, total, current: page, pageSize: size } };
+    } catch {
+      return { code: 0, message: 'ok', data: { items: [], total: 0, current: page, pageSize: size } };
+    }
   }
 
   async adminRiskSummary() {
-    return {
-      code: 0,
-      message: 'ok',
-      data: {
-        highRiskUsers: 0,
-        bigPrizeRate: 0,
-        abnormalWithdraws: 0,
-        abnormalGroups: 0,
-      },
-    };
+    try {
+      const withdrawRes = await this.opsQuery<{ cnt: string }>(
+        `SELECT COUNT(*)::text AS cnt
+         FROM wallet.withdraw_requests
+         WHERE status IN ('pending','approved')`,
+        [],
+      );
+      const abnormalWithdraws = Number(withdrawRes.rows?.[0]?.cnt || 0);
+
+      const playsRes = await this.opsQuery<{ total: string; big: string }>(
+        `SELECT COUNT(*)::text AS total,
+                SUM(CASE WHEN (o.metadata->>'prize_level') IN ('epic','legendary') OR (o.metadata->>'prize_tier') IN ('epic','legendary') THEN 1 ELSE 0 END)::text AS big
+         FROM orders.orders o
+         WHERE o.type='claw' AND o.flow='income' AND (o.metadata->>'action')='play'`,
+        [],
+      );
+      const totalPlays = Number(playsRes.rows?.[0]?.total || 0);
+      const bigPlays = Number(playsRes.rows?.[0]?.big || 0);
+      const bigPrizeRate = totalPlays > 0 ? bigPlays / totalPlays : 0;
+
+      const alerts = await this.adminRiskAlerts({ current: '1', pageSize: '500' });
+      const items = (alerts as any)?.data?.items || [];
+      const highRiskUsers = new Set(items.filter((x: any) => String(x.level) === 'high').map((x: any) => String(x.global_user_id))).size;
+      return { code: 0, message: 'ok', data: { highRiskUsers, bigPrizeRate, abnormalWithdraws, abnormalGroups: 0 } };
+    } catch {
+      return { code: 0, message: 'ok', data: { highRiskUsers: 0, bigPrizeRate: 0, abnormalWithdraws: 0, abnormalGroups: 0 } };
+    }
   }
 
   async adminRiskAlerts(opts: { current?: string; pageSize?: string }) {
     const page = Math.max(1, Number(opts.current || 1));
     const size = Math.min(200, Math.max(1, Number(opts.pageSize || 20)));
-    const all = this.riskAlertsStore.map((a: any) => {
+    const now = new Date();
+    const alerts: any[] = [];
+    try {
+      const withdrawRows = await this.opsQuery<any>(
+        `SELECT w.id,w.request_no,w.global_user_id,w.actual_cash_amount,w.status,w.created_at,
+                b.id AS blacklist_id
+         FROM wallet.withdraw_requests w
+         LEFT JOIN ops.blacklist_entries b
+           ON b.subject_type='global_user' AND b.subject_id = w.global_user_id AND b.status='active'
+         WHERE w.status IN ('pending','approved')
+         ORDER BY w.created_at DESC
+         LIMIT 200`,
+        [],
+      );
+      for (const r of withdrawRows.rows || []) {
+        const amount = Number(r.actual_cash_amount || 0);
+        const blacklisted = r.blacklist_id != null;
+        const level = blacklisted || amount >= 50 ? 'high' : amount >= 20 ? 'medium' : 'low';
+        alerts.push({
+          id: `wd_${r.id}`,
+          type: '提现异常',
+          level,
+          title: blacklisted ? '黑名单用户提现' : '待处理提现',
+          description: `request_no=${r.request_no} amount_usd=${amount} status=${r.status}`,
+          global_user_id: r.global_user_id,
+          created_at: this.iso(r.created_at),
+        });
+      }
+
+      const arbRows = await this.opsQuery<any>(
+        `WITH plays AS (
+            SELECT user_id, COUNT(*)::int AS play_cnt
+            FROM orders.orders
+            WHERE type='claw' AND flow='income' AND (metadata->>'action')='play'
+              AND created_at >= (now() - interval '24 hour')
+            GROUP BY user_id
+         )
+         SELECT p.user_id,p.play_cnt
+         FROM plays p
+         JOIN wallet.withdraw_requests w ON w.global_user_id = p.user_id
+         WHERE w.status IN ('pending','approved')
+         ORDER BY p.play_cnt DESC
+         LIMIT 100`,
+        [],
+      );
+      for (const r of arbRows.rows || []) {
+        const playCnt = Number(r.play_cnt || 0);
+        if (playCnt < 20) continue;
+        alerts.push({
+          id: `arb_${r.user_id}`,
+          type: '套利',
+          level: playCnt >= 80 ? 'high' : 'medium',
+          title: '高频抽奖+提现',
+          description: `24h plays=${playCnt} 且存在待处理提现`,
+          global_user_id: r.user_id,
+          created_at: this.iso(now),
+        });
+      }
+
+      const winRows = await this.opsQuery<any>(
+        `WITH plays AS (
+            SELECT user_id,
+                   COUNT(*)::int AS total,
+                   SUM(CASE WHEN (metadata->>'prize_level') IN ('epic','legendary') OR (metadata->>'prize_tier') IN ('epic','legendary') THEN 1 ELSE 0 END)::int AS big
+            FROM orders.orders
+            WHERE type='claw' AND flow='income' AND (metadata->>'action')='play'
+              AND created_at >= (now() - interval '7 day')
+            GROUP BY user_id
+         )
+         SELECT user_id,total,big,(CASE WHEN total>0 THEN big::float/total ELSE 0 END) AS rate
+         FROM plays
+         WHERE total >= 20 AND big::float/total >= 0.2
+         ORDER BY rate DESC,total DESC
+         LIMIT 100`,
+        [],
+      );
+      for (const r of winRows.rows || []) {
+        alerts.push({
+          id: `win_${r.user_id}`,
+          type: '异常中奖',
+          level: Number(r.rate || 0) >= 0.4 ? 'high' : 'medium',
+          title: '大奖比例异常',
+          description: `7d plays=${r.total} big=${r.big} rate=${Number(r.rate || 0).toFixed(3)}`,
+          global_user_id: r.user_id,
+          created_at: this.iso(now),
+        });
+      }
+    } catch {
+      for (const a of this.riskAlertsStore) alerts.push(a);
+    }
+
+    const all = alerts.map((a: any) => {
       const globalUserId = String(a?.global_user_id || '').trim();
       const u = globalUserId ? this.adminUsersStore.get(globalUserId) : null;
-      return {
-        ...a,
-        user_status: u?.status || null,
-      };
+      return { ...a, user_status: u?.status || null };
     });
     const start = (page - 1) * size;
     const items = all.slice(start, start + size);
@@ -3208,6 +3548,19 @@ export class AppService {
       code: 0,
       message: 'ok',
       data: { items, total: all.length, current: page, pageSize: size },
+    };
+  }
+
+  async adminAiConfig() {
+    const aiOrchestrator = String(process.env.AI_ORCHESTRATOR_SERVICE_URL || '').trim();
+    const openaiKey = String(process.env.OPENAI_API_KEY || '').trim();
+    return {
+      code: 0,
+      message: 'ok',
+      data: {
+        ai_orchestrator_url_set: Boolean(aiOrchestrator),
+        openai_api_key_set: Boolean(openaiKey),
+      },
     };
   }
 
@@ -3556,6 +3909,21 @@ export class AppService {
           recent_orders: [],
         },
       };
+    }
+  }
+
+  async adminUpsertUserTags(opts: { globalUserId: string; body: any }) {
+    const id = String(opts.globalUserId || '').trim();
+    if (!id) throw new BadRequestException('globalUserId required');
+    const body = opts.body || {};
+    try {
+      const res = await this.internalPost<any>(
+        `${this.identityBase()}/admin/users/${encodeURIComponent(id)}/tags/upsert`,
+        body,
+      );
+      return res;
+    } catch {
+      return { code: 0, message: 'ok', data: { ok: true } };
     }
   }
 
