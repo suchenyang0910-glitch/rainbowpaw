@@ -1,0 +1,165 @@
+{
+  "name": "RainbowPaw - D0/D1/D3/D7 Followups",
+  "nodes": [
+    {
+      "parameters": {
+        "triggerTimes": {
+          "item": [
+            {
+              "mode": "everyX",
+              "value": 15,
+              "unit": "minutes"
+            }
+          ]
+        }
+      },
+      "name": "Cron",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [
+        280,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{$env.RP_ADMIN_API_BASE_URL}}/crm/followups",
+        "qs": {
+          "parameters": [
+            {
+              "name": "due_before",
+              "value": "={{$now.toISO()}}"
+            },
+            {
+              "name": "status",
+              "value": "pending"
+            },
+            {
+              "name": "limit",
+              "value": "200"
+            }
+          ]
+        },
+        "responseFormat": "json"
+      },
+      "name": "Get Due Followups",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        520,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "const items = Array.isArray($json.items) ? $json.items : []\nreturn items.map((x) => ({ json: x }))\n"
+      },
+      "name": "Explode Items",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 2,
+      "position": [
+        760,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "batchSize": 1
+      },
+      "name": "Split In Batches",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        1000,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.RP_ADMIN_API_BASE_URL}}/crm/followups/{{$json.id}}/execute",
+        "jsonParameters": true,
+        "options": {},
+        "bodyParametersJson": "={\n  \"bot\": \"rainbow\"\n}"
+      },
+      "name": "Execute Followup",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        1240,
+        260
+      ]
+    }
+  ],
+  "connections": {
+    "Cron": {
+      "main": [
+        [
+          {
+            "node": "Get Due Followups",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Due Followups": {
+      "main": [
+        [
+          {
+            "node": "Explode Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Explode Items": {
+      "main": [
+        [
+          {
+            "node": "Split In Batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split In Batches": {
+      "main": [
+        [
+          {
+            "node": "Execute Followup",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Split In Batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Followup": {
+      "main": [
+        [
+          {
+            "node": "Split In Batches",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionTimeout": 3600
+  },
+  "versionId": "1"
+}
+

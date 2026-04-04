@@ -2,6 +2,7 @@ import {
   BadGatewayException,
   BadRequestException,
   Injectable,
+  NotFoundException,
 } from '@nestjs/common';
 import axios from 'axios';
 import { createHash, createHmac, randomUUID } from 'crypto';
@@ -1923,6 +1924,124 @@ export class AppService {
     return { code: 0, message: 'ok', data: { items, total: items.length, limit: size } };
   }
 
+  async adminCrmUpdateLead(body: any) {
+    const pg = this.getOpsPg();
+    if (!pg) return { code: 0, message: 'ok', data: { saved: false, reason: 'no db' } };
+    const leadId = String(body?.leadId || body?.lead_id || '').trim();
+    if (!leadId) throw new BadRequestException('leadId required');
+
+    const patch: Record<string, any> = {};
+    const allowed = new Set([
+      'owner',
+      'stage',
+      'intent',
+      'country',
+      'city',
+      'language',
+      'channel',
+      'next_followup_at',
+    ]);
+    for (const k of Object.keys(body || {})) {
+      if (!allowed.has(k)) continue;
+      patch[k] = body[k];
+    }
+
+    const now = new Date();
+    const existing = await pg.query(`SELECT stage FROM crm.leads WHERE lead_id = $1 LIMIT 1`, [leadId]);
+    const fromStage = existing.rows?.[0]?.stage != null ? String(existing.rows[0].stage) : null;
+
+    const stage = patch.stage != null ? String(patch.stage) : null;
+    const owner = patch.owner != null ? String(patch.owner) : null;
+    const intent = patch.intent != null ? String(patch.intent) : null;
+    const country = patch.country != null ? String(patch.country) : null;
+    const city = patch.city != null ? String(patch.city) : null;
+    const language = patch.language != null ? String(patch.language) : null;
+    const channel = patch.channel != null ? String(patch.channel) : null;
+    const nextFollowupAt =
+      patch.next_followup_at != null && String(patch.next_followup_at).trim()
+        ? new Date(String(patch.next_followup_at))
+        : null;
+
+    await pg.query(
+      `UPDATE crm.leads
+       SET owner = COALESCE($2, owner),
+           stage = COALESCE($3, stage),
+           intent = COALESCE($4, intent),
+           country = COALESCE($5, country),
+           city = COALESCE($6, city),
+           language = COALESCE($7, language),
+           channel = COALESCE($8, channel),
+           next_followup_at = COALESCE($9, next_followup_at),
+           updated_at = $10
+       WHERE lead_id = $1`,
+      [leadId, owner, stage, intent, country, city, language, channel, nextFollowupAt, now],
+    );
+
+    if (stage && stage !== fromStage) {
+      await pg.query(
+        `INSERT INTO crm.lead_stage_logs (lead_id, from_stage, to_stage, reason, created_at)
+         VALUES ($1,$2,$3,$4,$5)`,
+        [leadId, fromStage, stage, String(body?.reason || 'manual'), now],
+      );
+    }
+
+    return { code: 0, message: 'ok', data: { saved: true } };
+  }
+
+  private stableDedupeKey(prefix: string, parts: any) {
+    const p = parts && typeof parts === 'object' ? parts : {};
+    const raw = `${prefix}:${JSON.stringify(p)}`;
+    let h = 2166136261;
+    for (let i = 0; i < raw.length; i += 1) {
+      h ^= raw.charCodeAt(i);
+      h = Math.imul(h, 16777619) >>> 0;
+    }
+    return `${prefix}:${h.toString(16)}`;
+  }
+
+  async adminCrmAppendLeadEvent(body: any) {
+    const pg = this.getOpsPg();
+    if (!pg) return { code: 0, message: 'ok', data: { saved: false, reason: 'no db' } };
+    const leadId = String(body?.leadId || body?.lead_id || '').trim();
+    const eventName = String(body?.event_name || '').trim();
+    if (!leadId || !eventName) throw new BadRequestException('leadId/event_name required');
+
+    const q = await pg.query(`SELECT global_user_id FROM crm.leads WHERE lead_id = $1 LIMIT 1`, [leadId]);
+    const globalUserId = q.rows?.[0]?.global_user_id != null ? String(q.rows[0].global_user_id) : null;
+
+    const eventData = body?.event_data && typeof body.event_data === 'object' ? body.event_data : {};
+    const idem =
+      String(body?.idempotency_key || '').trim() ||
+      this.stableDedupeKey('lead_event', {
+        lead_id: leadId,
+        event_name: eventName,
+        action_id: eventData?.action_id || null,
+        ts_bucket: Math.floor(Date.now() / 1000),
+      });
+
+    const now = new Date();
+    await pg.query(
+      `INSERT INTO crm.lead_events (lead_id, global_user_id, event_name, source_bot, idempotency_key, event_data, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7)`,
+      [
+        leadId,
+        globalUserId,
+        eventName,
+        body?.source_bot != null ? String(body.source_bot) : null,
+        idem,
+        JSON.stringify({ ...eventData, idempotency_key: idem }),
+        now,
+      ],
+    );
+
+    const stage = String(body?.stage || '').trim();
+    if (stage) {
+      await this.adminCrmUpdateLead({ leadId, stage, reason: eventName });
+    }
+
+    return { code: 0, message: 'ok', data: { saved: true, idempotency_key: idem } };
+  }
+
   async adminUpsertAftercarePricebook(body: any) {
     const pg = this.getOpsPg();
     if (!pg)
@@ -2022,7 +2141,7 @@ export class AppService {
     const status = String(opts?.status || '').trim();
 
     const q = await pg.query(
-      `SELECT id, lead_id, channel, status, due_at, template_key, payload, last_error, created_at, updated_at
+      `SELECT id, lead_id, channel, dedupe_key, status, due_at, template_key, payload, last_error, created_at, updated_at
        FROM crm.followups
        WHERE due_at <= $1
          AND ($2::text = '' OR status = $2)
@@ -2034,6 +2153,7 @@ export class AppService {
       id: String(r.id),
       lead_id: String(r.lead_id),
       channel: String(r.channel),
+      dedupe_key: r.dedupe_key != null ? String(r.dedupe_key) : null,
       status: String(r.status),
       due_at: r.due_at ? new Date(r.due_at).toISOString() : null,
       template_key: r.template_key != null ? String(r.template_key) : null,
@@ -2054,15 +2174,493 @@ export class AppService {
     if (!leadId || !dueAt || Number.isNaN(dueAt.getTime()))
       throw new BadRequestException('lead_id/due_at required');
     const templateKey = body?.template_key != null ? String(body.template_key) : null;
+    const dedupeKey = body?.dedupe_key != null ? String(body.dedupe_key) : null;
     const payload = body?.payload && typeof body.payload === 'object' ? body.payload : null;
     const now = new Date();
     const r = await pg.query(
-      `INSERT INTO crm.followups (lead_id, channel, status, due_at, template_key, payload, last_error, created_at, updated_at)
-       VALUES ($1,$2,'pending',$3,$4,$5::jsonb,NULL,$6,$6)
+      `INSERT INTO crm.followups (lead_id, channel, dedupe_key, status, due_at, template_key, payload, last_error, created_at, updated_at)
+       VALUES ($1,$2,$3,'pending',$4,$5,$6::jsonb,NULL,$7,$7)
+       ON CONFLICT (dedupe_key) DO NOTHING
        RETURNING id`,
-      [leadId, channel, dueAt, templateKey, payload ? JSON.stringify(payload) : null, now],
+      [leadId, channel, dedupeKey, dueAt, templateKey, payload ? JSON.stringify(payload) : null, now],
     );
     return { code: 0, message: 'ok', data: { id: r.rows?.[0]?.id != null ? String(r.rows[0].id) : null } };
+  }
+
+  async adminCrmAutoGenerateFollowups(body: any) {
+    const pg = this.getOpsPg();
+    if (!pg) return { code: 0, message: 'ok', data: { inserted: 0, reason: 'no db' } };
+    const country = String(body?.country || '').trim();
+    const stage = String(body?.stage || '').trim();
+    const intent = String(body?.intent || '').trim();
+    const limit = Math.min(500, Math.max(1, Number(body?.limit || 200)));
+    const scheduleDays = Array.isArray(body?.days) && body.days.length ? body.days : [0, 1, 3, 7];
+    const now = new Date();
+
+    const leads = await pg.query(
+      `SELECT lead_id, country, stage, intent
+       FROM crm.leads
+       WHERE ($1::text = '' OR country = $1)
+         AND ($2::text = '' OR stage = $2)
+         AND ($3::text = '' OR intent = $3)
+       ORDER BY updated_at DESC
+       LIMIT $4`,
+      [country, stage, intent, limit],
+    );
+    let inserted = 0;
+    for (const r of leads.rows || []) {
+      const leadId = String(r.lead_id);
+      for (const d of scheduleDays) {
+        const days = Math.max(0, Math.floor(Number(d)));
+        const due = new Date(now.getTime() + days * 86400000);
+        const dedupeKey = this.stableDedupeKey('auto_fu', {
+          lead_id: leadId,
+          days,
+          stage: r.stage || null,
+          country: r.country || null,
+        });
+        const res = await pg.query(
+          `INSERT INTO crm.followups (lead_id, channel, dedupe_key, status, due_at, template_key, payload, last_error, created_at, updated_at)
+           VALUES ($1,'telegram',$2,'pending',$3,$4,$5::jsonb,NULL,$6,$6)
+           ON CONFLICT (dedupe_key) DO NOTHING
+           RETURNING id`,
+          [
+            leadId,
+            dedupeKey,
+            due,
+            days === 0 ? 'D0' : days === 1 ? 'D1' : days === 3 ? 'D3' : days === 7 ? 'D7' : `D${days}`,
+            JSON.stringify({ auto: true, days }),
+            now,
+          ],
+        );
+        if (res.rows?.length) inserted += 1;
+      }
+    }
+    return { code: 0, message: 'ok', data: { inserted } };
+  }
+
+  private publicWebBaseUrl() {
+    const raw = String(process.env.PUBLIC_WEB_BASE_URL || '').trim();
+    if (raw) return raw.replace(/\/+$/, '');
+    return 'http://localhost:5173';
+  }
+
+  private randomToken(len = 24) {
+    const raw = `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`;
+    return raw.replace(/[^a-z0-9]+/gi, '').slice(0, Math.max(12, Math.min(48, len)));
+  }
+
+  private async calcAftercareFromPricebook(pg: any, body: any) {
+    const country = String(body?.country || '').trim();
+    const city = String(body?.city || '').trim();
+    const packageCode = String(body?.package_code || '').trim();
+    if (!country || !city || !packageCode)
+      throw new BadRequestException('country/city/package_code required');
+    const weightKg = Math.max(0, Number(body?.weight_kg || 0));
+    const pb = await pg.query(
+      `SELECT currency, base_price_cents, pickup_fee_cents, weight_fee_rules
+       FROM pricing.aftercare_pricebooks
+       WHERE country = $1 AND city = $2 AND package_code = $3
+       LIMIT 1`,
+      [country, city, packageCode],
+    );
+    if (!pb.rows?.length) throw new BadRequestException('pricebook not found');
+    const row = pb.rows[0];
+    const currency = String(row.currency || 'USD');
+    const base = Math.max(0, Math.floor(Number(row.base_price_cents || 0)));
+    const pickup = Math.max(0, Math.floor(Number(row.pickup_fee_cents || 0)));
+    const rules = row.weight_fee_rules && typeof row.weight_fee_rules === 'object' ? row.weight_fee_rules : null;
+    const weightFee = (() => {
+      if (!rules) return 0;
+      const perKg = Number((rules as any).per_kg_cents || 0);
+      if (Number.isFinite(perKg) && perKg > 0) return Math.floor(weightKg * perKg);
+      return 0;
+    })();
+    const total = base + pickup + weightFee;
+    return { country, city, package_code: packageCode, weight_kg: weightKg, currency, base, pickup, weightFee, total };
+  }
+
+  async adminCreateAftercareQuote(body: any) {
+    const pg = this.getOpsPg();
+    if (!pg) return { code: 0, message: 'ok', data: { saved: false, reason: 'no db' } };
+    const leadId = body?.lead_id != null ? String(body.lead_id) : null;
+    const calc = await this.calcAftercareFromPricebook(pg, body);
+    const now = new Date();
+    const token = this.randomToken(28);
+    const note = body?.note != null ? String(body.note) : null;
+    const r = await pg.query(
+      `INSERT INTO pricing.aftercare_quotes (
+         lead_id, country, city, package_code, weight_kg, currency,
+         base_price_cents, pickup_fee_cents, weight_fee_cents, total_cents,
+         status, note, public_token, created_at, updated_at
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'draft',$11,$12,$13,$13)
+       RETURNING id`,
+      [
+        leadId,
+        calc.country,
+        calc.city,
+        calc.package_code,
+        calc.weight_kg,
+        calc.currency,
+        calc.base,
+        calc.pickup,
+        calc.weightFee,
+        calc.total,
+        note,
+        token,
+        now,
+      ],
+    );
+    const id = r.rows?.[0]?.id != null ? String(r.rows[0].id) : null;
+    const shareUrl = `${this.publicWebBaseUrl()}/rainbowpaw/aftercare/quote/${encodeURIComponent(String(token))}`;
+    if (leadId) {
+      await this.adminCrmAppendLeadEvent({
+        leadId,
+        event_name: 'quote_created',
+        event_data: { quote_id: id, share_url: shareUrl },
+        stage: 'quoted',
+      });
+    }
+    return { code: 0, message: 'ok', data: { id, public_token: token, share_url: shareUrl } };
+  }
+
+  async adminListAftercareQuotes(opts: { leadId?: string; status?: string; limit?: string }) {
+    const pg = this.getOpsPg();
+    const size = Math.min(500, Math.max(1, Number(opts.limit || 200)));
+    if (!pg) return { code: 0, message: 'ok', data: { items: [], total: 0, limit: size } };
+    const leadId = String(opts?.leadId || '').trim();
+    const status = String(opts?.status || '').trim();
+    const q = await pg.query(
+      `SELECT id, lead_id, country, city, package_code, weight_kg, currency, total_cents, status, public_token, sent_at, decided_at, created_at, updated_at
+       FROM pricing.aftercare_quotes
+       WHERE ($1::text = '' OR lead_id = $1)
+         AND ($2::text = '' OR status = $2)
+       ORDER BY id DESC
+       LIMIT $3`,
+      [leadId, status, size],
+    );
+    const items = (q.rows || []).map((r: any) => ({
+      id: String(r.id),
+      lead_id: r.lead_id != null ? String(r.lead_id) : null,
+      country: String(r.country),
+      city: String(r.city),
+      package_code: String(r.package_code),
+      weight_kg: Number(r.weight_kg || 0),
+      currency: String(r.currency || 'USD'),
+      total_cents: Number(r.total_cents || 0),
+      status: String(r.status || 'draft'),
+      public_token: r.public_token != null ? String(r.public_token) : null,
+      share_url: r.public_token ? `${this.publicWebBaseUrl()}/rainbowpaw/aftercare/quote/${encodeURIComponent(String(r.public_token))}` : null,
+      sent_at: r.sent_at ? new Date(r.sent_at).toISOString() : null,
+      decided_at: r.decided_at ? new Date(r.decided_at).toISOString() : null,
+      created_at: r.created_at ? new Date(r.created_at).toISOString() : null,
+      updated_at: r.updated_at ? new Date(r.updated_at).toISOString() : null,
+    }));
+    return { code: 0, message: 'ok', data: { items, total: items.length, limit: size } };
+  }
+
+  async adminGetAftercareQuote(opts: { id: string }) {
+    const pg = this.getOpsPg();
+    if (!pg) return { code: 0, message: 'ok', data: null };
+    const id = Number(opts?.id);
+    if (!Number.isFinite(id)) throw new BadRequestException('id required');
+    const q = await pg.query(
+      `SELECT * FROM pricing.aftercare_quotes WHERE id = $1 LIMIT 1`,
+      [id],
+    );
+    const r = q.rows?.[0];
+    if (!r) throw new NotFoundException('quote not found');
+    const token = r.public_token != null ? String(r.public_token) : null;
+    return {
+      code: 0,
+      message: 'ok',
+      data: {
+        id: String(r.id),
+        lead_id: r.lead_id != null ? String(r.lead_id) : null,
+        country: String(r.country),
+        city: String(r.city),
+        package_code: String(r.package_code),
+        weight_kg: Number(r.weight_kg || 0),
+        currency: String(r.currency || 'USD'),
+        base_price_cents: Number(r.base_price_cents || 0),
+        pickup_fee_cents: Number(r.pickup_fee_cents || 0),
+        weight_fee_cents: Number(r.weight_fee_cents || 0),
+        total_cents: Number(r.total_cents || 0),
+        status: String(r.status || 'draft'),
+        note: r.note != null ? String(r.note) : null,
+        public_token: token,
+        share_url: token ? `${this.publicWebBaseUrl()}/rainbowpaw/aftercare/quote/${encodeURIComponent(token)}` : null,
+        sent_at: r.sent_at ? new Date(r.sent_at).toISOString() : null,
+        decided_at: r.decided_at ? new Date(r.decided_at).toISOString() : null,
+        decision_note: r.decision_note != null ? String(r.decision_note) : null,
+        created_at: r.created_at ? new Date(r.created_at).toISOString() : null,
+        updated_at: r.updated_at ? new Date(r.updated_at).toISOString() : null,
+      },
+    };
+  }
+
+  async adminUpdateAftercareQuote(body: any) {
+    const pg = this.getOpsPg();
+    if (!pg) return { code: 0, message: 'ok', data: { saved: false, reason: 'no db' } };
+    const id = Number(body?.id);
+    if (!Number.isFinite(id)) throw new BadRequestException('id required');
+    const now = new Date();
+
+    const recalc = String(body?.recalc || '').trim() === 'true' || body?.recalc === true;
+    if (recalc) {
+      const current = await pg.query(`SELECT * FROM pricing.aftercare_quotes WHERE id = $1 LIMIT 1`, [id]);
+      const row = current.rows?.[0];
+      if (!row) throw new NotFoundException('quote not found');
+      const calc = await this.calcAftercareFromPricebook(pg, {
+        country: body?.country ?? row.country,
+        city: body?.city ?? row.city,
+        package_code: body?.package_code ?? row.package_code,
+        weight_kg: body?.weight_kg ?? row.weight_kg,
+      });
+      await pg.query(
+        `UPDATE pricing.aftercare_quotes
+         SET country = $2, city = $3, package_code = $4, weight_kg = $5,
+             currency = $6, base_price_cents = $7, pickup_fee_cents = $8, weight_fee_cents = $9, total_cents = $10,
+             note = COALESCE($11, note),
+             updated_at = $12
+         WHERE id = $1`,
+        [id, calc.country, calc.city, calc.package_code, calc.weight_kg, calc.currency, calc.base, calc.pickup, calc.weightFee, calc.total, body?.note != null ? String(body.note) : null, now],
+      );
+    } else {
+      const note = body?.note != null ? String(body.note) : null;
+      await pg.query(
+        `UPDATE pricing.aftercare_quotes
+         SET note = COALESCE($2, note), updated_at = $3
+         WHERE id = $1`,
+        [id, note, now],
+      );
+    }
+    return { code: 0, message: 'ok', data: { saved: true } };
+  }
+
+  async adminSendAftercareQuote(body: any) {
+    const pg = this.getOpsPg();
+    if (!pg) return { code: 0, message: 'ok', data: { sent: false, reason: 'no db' } };
+    const id = Number(body?.id);
+    if (!Number.isFinite(id)) throw new BadRequestException('id required');
+    const q = await pg.query(`SELECT * FROM pricing.aftercare_quotes WHERE id = $1 LIMIT 1`, [id]);
+    const row = q.rows?.[0];
+    if (!row) throw new NotFoundException('quote not found');
+
+    const token = row.public_token != null ? String(row.public_token) : this.randomToken(28);
+    const shareUrl = `${this.publicWebBaseUrl()}/rainbowpaw/aftercare/quote/${encodeURIComponent(token)}`;
+    const currency = String(row.currency || 'USD');
+    const total = Number(row.total_cents || 0) / 100;
+    const msg =
+      String(body?.message || '').trim() ||
+      `善终服务报价（${String(row.country)}-${String(row.city)}）\n套餐：${String(row.package_code)}\n重量：${Number(row.weight_kg || 0)} kg\n合计：${currency} ${total.toFixed(2)}\n\n查看并确认：${shareUrl}`;
+
+    const chatId = String(body?.chat_id || '').trim();
+    if (!chatId) throw new BadRequestException('chat_id required');
+    const bot = String(body?.bot || 'rainbow').trim() || 'rainbow';
+
+    await this.adminOutreachTelegramSend({
+      bot,
+      chat_id: chatId,
+      lead_id: row.lead_id != null ? String(row.lead_id) : null,
+      template_key: 'aftercare_quote',
+      message: msg,
+    });
+
+    const now = new Date();
+    await pg.query(
+      `UPDATE pricing.aftercare_quotes
+       SET status = 'sent', sent_at = $2, updated_at = $2, public_token = COALESCE(public_token, $3)
+       WHERE id = $1`,
+      [id, now, token],
+    );
+
+    if (row.lead_id) {
+      await this.adminCrmAppendLeadEvent({
+        leadId: String(row.lead_id),
+        event_name: 'quote_sent',
+        event_data: { quote_id: String(id), share_url: shareUrl, chat_id: chatId },
+        stage: 'quoted',
+      });
+    }
+
+    return { code: 0, message: 'ok', data: { sent: true, share_url: shareUrl } };
+  }
+
+  async adminVoidAftercareQuote(body: any) {
+    const pg = this.getOpsPg();
+    if (!pg) return { code: 0, message: 'ok', data: { saved: false, reason: 'no db' } };
+    const id = Number(body?.id);
+    if (!Number.isFinite(id)) throw new BadRequestException('id required');
+    const now = new Date();
+    await pg.query(
+      `UPDATE pricing.aftercare_quotes
+       SET status = 'void', updated_at = $2
+       WHERE id = $1`,
+      [id, now],
+    );
+    return { code: 0, message: 'ok', data: { saved: true } };
+  }
+
+  async v1AftercareQuoteByToken(opts: { token: string }) {
+    const pg = this.getOpsPg();
+    if (!pg) throw new BadGatewayException('db unavailable');
+    const token = String(opts?.token || '').trim();
+    if (!token) throw new BadRequestException('token required');
+    const q = await pg.query(
+      `SELECT id, country, city, package_code, weight_kg, currency, base_price_cents, pickup_fee_cents, weight_fee_cents, total_cents, status, note, sent_at, decided_at, decision_note
+       FROM pricing.aftercare_quotes
+       WHERE public_token = $1
+       LIMIT 1`,
+      [token],
+    );
+    const r = q.rows?.[0];
+    if (!r) throw new NotFoundException('quote not found');
+    return {
+      code: 0,
+      message: 'ok',
+      data: {
+        id: String(r.id),
+        country: String(r.country),
+        city: String(r.city),
+        package_code: String(r.package_code),
+        weight_kg: Number(r.weight_kg || 0),
+        currency: String(r.currency || 'USD'),
+        base_price_cents: Number(r.base_price_cents || 0),
+        pickup_fee_cents: Number(r.pickup_fee_cents || 0),
+        weight_fee_cents: Number(r.weight_fee_cents || 0),
+        total_cents: Number(r.total_cents || 0),
+        status: String(r.status || 'draft'),
+        note: r.note != null ? String(r.note) : null,
+        sent_at: r.sent_at ? new Date(r.sent_at).toISOString() : null,
+        decided_at: r.decided_at ? new Date(r.decided_at).toISOString() : null,
+        decision_note: r.decision_note != null ? String(r.decision_note) : null,
+      },
+    };
+  }
+
+  async v1AftercareQuoteDecisionByToken(body: any) {
+    const pg = this.getOpsPg();
+    if (!pg) throw new BadGatewayException('db unavailable');
+    const token = String(body?.token || '').trim();
+    if (!token) throw new BadRequestException('token required');
+    const decision = String(body?.decision || '').trim();
+    if (!['accepted', 'rejected'].includes(decision)) throw new BadRequestException('invalid decision');
+    const note = body?.note != null ? String(body.note) : null;
+    const now = new Date();
+    const q = await pg.query(`SELECT id, lead_id FROM pricing.aftercare_quotes WHERE public_token = $1 LIMIT 1`, [token]);
+    const row = q.rows?.[0];
+    if (!row) throw new NotFoundException('quote not found');
+    await pg.query(
+      `UPDATE pricing.aftercare_quotes
+       SET status = $2, decided_at = $3, decision_note = $4, updated_at = $3
+       WHERE id = $1`,
+      [Number(row.id), decision, now, note],
+    );
+    if (row.lead_id) {
+      await this.adminCrmAppendLeadEvent({
+        leadId: String(row.lead_id),
+        event_name: decision === 'accepted' ? 'quote_accepted' : 'quote_rejected',
+        event_data: { quote_id: String(row.id), note },
+        stage: decision === 'accepted' ? 'paid' : 'quoted',
+      });
+    }
+    return { code: 0, message: 'ok', data: { saved: true } };
+  }
+
+  async adminAiGrowthUpdate(body: any) {
+    const pg = this.getOpsPg();
+    if (!pg) return { code: 0, message: 'ok', data: { saved: false, reason: 'no db' } };
+    const id = Number(body?.id);
+    if (!Number.isFinite(id)) throw new BadRequestException('id required');
+    const status = body?.status != null ? String(body.status) : null;
+    const content = body?.content != null ? String(body.content) : null;
+    const now = new Date();
+    await pg.query(
+      `UPDATE ai.growth_contents
+       SET status = COALESCE($2, status),
+           content = COALESCE($3, content),
+           updated_at = $4
+       WHERE id = $1`,
+      [id, status, content, now],
+    );
+    return { code: 0, message: 'ok', data: { saved: true } };
+  }
+
+  async adminAiTemplates(opts: { scene?: string; enabled?: string; limit?: string }) {
+    const pg = this.getOpsPg();
+    const size = Math.min(500, Math.max(1, Number(opts.limit || 200)));
+    if (!pg) return { code: 0, message: 'ok', data: { items: [], total: 0, limit: size } };
+    const scene = String(opts?.scene || '').trim();
+    const enabledRaw = String(opts?.enabled || '').trim();
+    const enabled = enabledRaw === '' ? null : enabledRaw === 'true';
+    const q = await pg.query(
+      `SELECT id, scene, name, enabled, template_text, variables_schema, created_at, updated_at
+       FROM ai.content_templates
+       WHERE ($1::text = '' OR scene = $1)
+         AND ($2::boolean IS NULL OR enabled = $2)
+       ORDER BY updated_at DESC
+       LIMIT $3`,
+      [scene, enabled, size],
+    );
+    const items = (q.rows || []).map((r: any) => ({
+      id: String(r.id),
+      scene: String(r.scene),
+      name: String(r.name),
+      enabled: Boolean(r.enabled),
+      template_text: String(r.template_text),
+      variables_schema: r.variables_schema || null,
+      created_at: r.created_at ? new Date(r.created_at).toISOString() : null,
+      updated_at: r.updated_at ? new Date(r.updated_at).toISOString() : null,
+    }));
+    return { code: 0, message: 'ok', data: { items, total: items.length, limit: size } };
+  }
+
+  async adminAiCreateTemplate(body: any) {
+    const pg = this.getOpsPg();
+    if (!pg) return { code: 0, message: 'ok', data: { saved: false, reason: 'no db' } };
+    const scene = String(body?.scene || '').trim();
+    const name = String(body?.name || '').trim();
+    const templateText = String(body?.template_text || '').trim();
+    if (!scene || !name || !templateText) throw new BadRequestException('scene/name/template_text required');
+    const enabled = body?.enabled == null ? true : Boolean(body.enabled);
+    const schema = body?.variables_schema && typeof body.variables_schema === 'object' ? body.variables_schema : null;
+    const now = new Date();
+    const r = await pg.query(
+      `INSERT INTO ai.content_templates (scene, name, enabled, template_text, variables_schema, created_at, updated_at)
+       VALUES ($1,$2,$3,$4,$5::jsonb,$6,$6)
+       ON CONFLICT (scene, name) DO UPDATE SET
+         enabled = EXCLUDED.enabled,
+         template_text = EXCLUDED.template_text,
+         variables_schema = EXCLUDED.variables_schema,
+         updated_at = EXCLUDED.updated_at
+       RETURNING id`,
+      [scene, name, enabled, templateText, schema ? JSON.stringify(schema) : null, now],
+    );
+    return { code: 0, message: 'ok', data: { id: r.rows?.[0]?.id != null ? String(r.rows[0].id) : null } };
+  }
+
+  async adminAiUpdateTemplate(body: any) {
+    const pg = this.getOpsPg();
+    if (!pg) return { code: 0, message: 'ok', data: { saved: false, reason: 'no db' } };
+    const id = Number(body?.id);
+    if (!Number.isFinite(id)) throw new BadRequestException('id required');
+    const now = new Date();
+    const enabled = body?.enabled == null ? null : Boolean(body.enabled);
+    const name = body?.name != null ? String(body.name) : null;
+    const templateText = body?.template_text != null ? String(body.template_text) : null;
+    const schema = body?.variables_schema && typeof body.variables_schema === 'object' ? body.variables_schema : null;
+    await pg.query(
+      `UPDATE ai.content_templates
+       SET enabled = COALESCE($2, enabled),
+           name = COALESCE($3, name),
+           template_text = COALESCE($4, template_text),
+           variables_schema = COALESCE($5::jsonb, variables_schema),
+           updated_at = $6
+       WHERE id = $1`,
+      [id, enabled, name, templateText, schema ? JSON.stringify(schema) : null, now],
+    );
+    return { code: 0, message: 'ok', data: { saved: true } };
   }
 
   async adminCrmFollowupResult(body: any) {
@@ -2082,6 +2680,121 @@ export class AppService {
       [status, lastError, now, id],
     );
     return { code: 0, message: 'ok', data: { id: String(id), status } };
+  }
+
+  private async resolveTelegramChatIdForLead(pg: any, leadId: string) {
+    const leadQ = await pg.query(
+      `SELECT global_user_id FROM crm.leads WHERE lead_id = $1 LIMIT 1`,
+      [leadId],
+    );
+    const globalUserId = leadQ.rows?.[0]?.global_user_id != null ? String(leadQ.rows[0].global_user_id) : null;
+    if (globalUserId) {
+      const br = await pg.query(
+        `SELECT telegram_id
+         FROM bridge.bridge_events
+         WHERE global_user_id = $1 AND telegram_id IS NOT NULL
+         ORDER BY id DESC
+         LIMIT 1`,
+        [globalUserId],
+      );
+      const tg = br.rows?.[0]?.telegram_id;
+      if (tg != null) return String(tg);
+    }
+    const ev = await pg.query(
+      `SELECT event_data
+       FROM crm.lead_events
+       WHERE lead_id = $1
+       ORDER BY id DESC
+       LIMIT 50`,
+      [leadId],
+    );
+    for (const r of ev.rows || []) {
+      const d = r?.event_data;
+      if (d && typeof d === 'object') {
+        if (d.telegram_id != null) return String(d.telegram_id);
+        if (d.chat_id != null) return String(d.chat_id);
+      }
+    }
+    return null;
+  }
+
+  async adminCrmExecuteFollowup(body: any) {
+    const pg = this.getOpsPg();
+    if (!pg) return { code: 0, message: 'ok', data: { sent: false, reason: 'no db' } };
+    const id = Number(body?.id);
+    if (!Number.isFinite(id)) throw new BadRequestException('id required');
+    const fq = await pg.query(
+      `SELECT id, lead_id, template_key, payload, status
+       FROM crm.followups
+       WHERE id = $1
+       LIMIT 1`,
+      [id],
+    );
+    const fu = fq.rows?.[0];
+    if (!fu) throw new NotFoundException('followup not found');
+    if (String(fu.status) !== 'pending')
+      return { code: 0, message: 'ok', data: { sent: false, skipped: true, reason: 'not pending' } };
+
+    const payload = fu.payload && typeof fu.payload === 'object' ? fu.payload : {};
+    const bot = String(body?.bot || payload?.bot || 'rainbow').trim() || 'rainbow';
+    const leadId = String(fu.lead_id);
+    const chatId =
+      String(body?.chat_id || '').trim() ||
+      (payload?.chat_id != null ? String(payload.chat_id) : '') ||
+      (await this.resolveTelegramChatIdForLead(pg, leadId));
+    if (!chatId) {
+      await this.adminCrmFollowupResult({ id, status: 'failed', last_error: 'chat_id not found' });
+      return { code: 0, message: 'ok', data: { sent: false, reason: 'chat_id not found' } };
+    }
+
+    let messageText = String(body?.message || '').trim();
+    if (!messageText && payload?.message != null) messageText = String(payload.message || '').trim();
+    if (!messageText) {
+      const tmpl = fu.template_key != null ? String(fu.template_key) : '';
+      const prompt = String(body?.prompt || '').trim() || `生成一条${tmpl || 'D1'}跟进消息，简短、礼貌、带一个提问。`;
+      try {
+        const lead = await pg.query(
+          `SELECT lead_id, country, city, language, channel, intent, stage, owner
+           FROM crm.leads
+           WHERE lead_id = $1
+           LIMIT 1`,
+          [leadId],
+        );
+        const ev = await pg.query(
+          `SELECT event_name, event_data, created_at
+           FROM crm.lead_events
+           WHERE lead_id = $1
+           ORDER BY id DESC
+           LIMIT 10`,
+          [leadId],
+        );
+        const ai = await this.adminAiSupportReply({
+          user_message: prompt,
+          context: { lead: lead.rows?.[0] || null, last_events: ev.rows || [] },
+        });
+        const reply = (ai as any)?.data?.reply != null ? String((ai as any).data.reply) : '';
+        if (reply.trim()) messageText = reply.trim();
+      } catch {
+        void 0;
+      }
+    }
+    if (!messageText)
+      messageText = `你好，我们想确认一下善终服务需求：城市/重量/时间是否方便提供？`;
+
+    try {
+      await this.adminOutreachTelegramSend({
+        bot,
+        chat_id: String(chatId),
+        lead_id: leadId,
+        template_key: fu.template_key != null ? String(fu.template_key) : 'followup',
+        message: messageText,
+      });
+      await this.adminCrmFollowupResult({ id, status: 'sent', last_error: null });
+      return { code: 0, message: 'ok', data: { sent: true, chat_id: String(chatId) } };
+    } catch (e: any) {
+      await this.adminCrmFollowupResult({ id, status: 'failed', last_error: String(e?.message || e) });
+      return { code: 0, message: 'ok', data: { sent: false, reason: 'send failed' } };
+    }
   }
 
   private telegramBotToken(bot: string) {

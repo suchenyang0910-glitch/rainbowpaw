@@ -2,6 +2,7 @@ import type { IResourceItem } from '@refinedev/core'
 import {
   BarChart3,
   Brain,
+  ClipboardList,
   CreditCard,
   Gift,
   Link2,
@@ -154,6 +155,32 @@ export const resources: IResourceItem[] = [
   },
 
   {
+    name: 'crm',
+    list: '/admin/crm/leads',
+    meta: { label: 'CRM与报价', icon: <ClipboardList size={18} /> },
+  },
+  {
+    name: 'crmLeads',
+    list: '/admin/crm/leads',
+    meta: { label: '线索列表', parent: 'crm' },
+  },
+  {
+    name: 'crmFollowups',
+    list: '/admin/crm/followups',
+    meta: { label: '待跟进任务', parent: 'crm' },
+  },
+  {
+    name: 'aftercareQuotes',
+    list: '/admin/crm/aftercare-quotes',
+    meta: { label: '善终报价单', parent: 'crm' },
+  },
+  {
+    name: 'aftercarePricebooks',
+    list: '/admin/crm/aftercare-pricebooks',
+    meta: { label: '价目表（Pricebook）', parent: 'crm' },
+  },
+
+  {
     name: 'ai',
     list: '/admin/ai/ops',
     meta: { label: 'AI 中枢', icon: <Brain size={18} /> },
@@ -167,6 +194,11 @@ export const resources: IResourceItem[] = [
     name: 'aiGrowth',
     list: '/admin/ai/growth',
     meta: { label: 'AI 文案中心', parent: 'ai' },
+  },
+  {
+    name: 'aiTemplates',
+    list: '/admin/ai/templates',
+    meta: { label: 'AI 文案模板', parent: 'ai' },
   },
   {
     name: 'aiRisk',

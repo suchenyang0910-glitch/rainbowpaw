@@ -24,6 +24,7 @@ const defaultRolePermissions: Record<AdminRole, PermissionCode[]> = {
     'menu.store',
     'menu.ops',
     'menu.ai',
+    'menu.crm',
     'menu.settings',
 
     'page.dashboard.list',
@@ -48,7 +49,13 @@ const defaultRolePermissions: Record<AdminRole, PermissionCode[]> = {
     'page.aiOps.list',
     'page.aiGrowth.list',
     'page.aiRisk.list',
+    'page.aiTemplates.list',
     'page.roles.list',
+
+    'page.crmLeads.list',
+    'page.crmFollowups.list',
+    'page.aftercareQuotes.list',
+    'page.aftercarePricebooks.list',
 
     'page.clawPools.list',
     'page.clawPlays.list',
@@ -77,6 +84,11 @@ const defaultRolePermissions: Record<AdminRole, PermissionCode[]> = {
     'button.aiOps.viewLogs',
     'button.aiRisk.summarize',
     'button.aiGrowth.generate',
+    'button.crm.followups.send',
+    'button.crm.followups.update',
+    'button.crm.leads.edit',
+    'button.crm.quotes.create',
+    'button.crm.quotes.send',
   ],
   finance_manager: [
     'menu.dashboard',
@@ -84,6 +96,7 @@ const defaultRolePermissions: Record<AdminRole, PermissionCode[]> = {
     'menu.orders',
     'menu.risk',
     'menu.ai',
+    'menu.crm',
 
     'page.dashboard.list',
     'page.wallet.list',
@@ -94,6 +107,12 @@ const defaultRolePermissions: Record<AdminRole, PermissionCode[]> = {
     'page.risk.list',
     'page.riskBlacklist.list',
     'page.aiRisk.list',
+    'page.aiTemplates.list',
+
+    'page.crmLeads.list',
+    'page.crmFollowups.list',
+    'page.aftercareQuotes.list',
+    'page.aftercarePricebooks.list',
 
     'button.wallet.adjust',
     'button.wallet.freeze',
@@ -103,6 +122,11 @@ const defaultRolePermissions: Record<AdminRole, PermissionCode[]> = {
     'button.risk.freeze',
     'button.risk.unfreeze',
     'button.aiRisk.summarize',
+    'button.crm.followups.send',
+    'button.crm.followups.update',
+    'button.crm.leads.edit',
+    'button.crm.quotes.create',
+    'button.crm.quotes.send',
   ],
   merchant: [
     'menu.orders',
@@ -123,6 +147,7 @@ const defaultRolePermissions: Record<AdminRole, PermissionCode[]> = {
     'menu.users',
     'menu.orders',
     'menu.claw',
+    'menu.crm',
 
     'page.dashboard.list',
     'page.dashboardAlerts.list',
@@ -131,6 +156,11 @@ const defaultRolePermissions: Record<AdminRole, PermissionCode[]> = {
     'page.orders.list',
     'page.orders.show',
     'page.clawPlays.list',
+
+    'page.crmLeads.list',
+    'page.crmFollowups.list',
+    'page.aftercareQuotes.list',
+    'page.aftercarePricebooks.list',
   ],
 }
 

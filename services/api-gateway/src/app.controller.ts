@@ -981,6 +981,16 @@ export class AppController {
     return this.appService.adminCrmLeadEvents({ leadId, limit });
   }
 
+  @Patch('admin/crm/leads/:leadId')
+  adminCrmUpdateLead(@Param('leadId') leadId: string, @Body() body: any) {
+    return this.appService.adminCrmUpdateLead({ leadId, ...(body || {}) });
+  }
+
+  @Post('admin/crm/leads/:leadId/events')
+  adminCrmAppendLeadEvent(@Param('leadId') leadId: string, @Body() body: any) {
+    return this.appService.adminCrmAppendLeadEvent({ leadId, ...(body || {}) });
+  }
+
   @Get('admin/crm/followups')
   adminCrmFollowups(
     @Query('due_before') dueBefore?: string,
@@ -995,9 +1005,19 @@ export class AppController {
     return this.appService.adminCrmCreateFollowup(body || {});
   }
 
+  @Post('admin/crm/followups/auto-generate')
+  adminCrmAutoGenerateFollowups(@Body() body: any) {
+    return this.appService.adminCrmAutoGenerateFollowups(body || {});
+  }
+
   @Post('admin/crm/followups/:id/result')
   adminCrmFollowupResult(@Param('id') id: string, @Body() body: any) {
     return this.appService.adminCrmFollowupResult({ id, ...(body || {}) });
+  }
+
+  @Post('admin/crm/followups/:id/execute')
+  adminCrmExecuteFollowup(@Param('id') id: string, @Body() body: any) {
+    return this.appService.adminCrmExecuteFollowup({ id, ...(body || {}) });
   }
 
   @Post('admin/outreach/telegram/send')
@@ -1024,9 +1044,53 @@ export class AppController {
     return this.appService.adminListAftercarePricebooks({ country, city, limit });
   }
 
+  @Post('admin/pricing/aftercare/quotes')
+  adminCreateAftercareQuote(@Body() body: any) {
+    return this.appService.adminCreateAftercareQuote(body || {});
+  }
+
+  @Get('admin/pricing/aftercare/quotes')
+  adminListAftercareQuotes(
+    @Query('lead_id') leadId?: string,
+    @Query('status') status?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.appService.adminListAftercareQuotes({ leadId, status, limit });
+  }
+
+  @Get('admin/pricing/aftercare/quotes/:id')
+  adminGetAftercareQuote(@Param('id') id: string) {
+    return this.appService.adminGetAftercareQuote({ id });
+  }
+
+  @Patch('admin/pricing/aftercare/quotes/:id')
+  adminUpdateAftercareQuote(@Param('id') id: string, @Body() body: any) {
+    return this.appService.adminUpdateAftercareQuote({ id, ...(body || {}) });
+  }
+
+  @Post('admin/pricing/aftercare/quotes/:id/send')
+  adminSendAftercareQuote(@Param('id') id: string, @Body() body: any) {
+    return this.appService.adminSendAftercareQuote({ id, ...(body || {}) });
+  }
+
+  @Post('admin/pricing/aftercare/quotes/:id/void')
+  adminVoidAftercareQuote(@Param('id') id: string, @Body() body: any) {
+    return this.appService.adminVoidAftercareQuote({ id, ...(body || {}) });
+  }
+
   @Post('v1/aftercare/quote')
   v1AftercareQuote(@Body() body: any) {
     return this.appService.v1AftercareQuote(body || {});
+  }
+
+  @Get('v1/aftercare/quotes/by_token/:token')
+  v1AftercareQuoteByToken(@Param('token') token: string) {
+    return this.appService.v1AftercareQuoteByToken({ token });
+  }
+
+  @Post('v1/aftercare/quotes/by_token/:token/decision')
+  v1AftercareQuoteDecisionByToken(@Param('token') token: string, @Body() body: any) {
+    return this.appService.v1AftercareQuoteDecisionByToken({ token, ...(body || {}) });
   }
 
   @Get('admin/clawPools')
@@ -1110,6 +1174,30 @@ export class AppController {
     @Query('limit') limit?: string,
   ) {
     return this.appService.adminAiGrowthContents({ status, country, limit });
+  }
+
+  @Patch('admin/ai/growth/contents/:id')
+  adminAiGrowthUpdate(@Param('id') id: string, @Body() body: any) {
+    return this.appService.adminAiGrowthUpdate({ id, ...(body || {}) });
+  }
+
+  @Get('admin/ai/templates')
+  adminAiTemplates(
+    @Query('scene') scene?: string,
+    @Query('enabled') enabled?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.appService.adminAiTemplates({ scene, enabled, limit });
+  }
+
+  @Post('admin/ai/templates')
+  adminAiCreateTemplate(@Body() body: any) {
+    return this.appService.adminAiCreateTemplate(body || {});
+  }
+
+  @Patch('admin/ai/templates/:id')
+  adminAiUpdateTemplate(@Param('id') id: string, @Body() body: any) {
+    return this.appService.adminAiUpdateTemplate({ id, ...(body || {}) });
   }
 
   @Post('admin/ai/risk/summarize')

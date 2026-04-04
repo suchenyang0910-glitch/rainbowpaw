@@ -4032,6 +4032,15 @@ export default function RainbowPawMiniApp() {
     const tgInitData = typeof window !== 'undefined' && window.Telegram?.WebApp && typeof window.Telegram.WebApp.initData === 'string'
       ? window.Telegram.WebApp.initData.trim()
       : ''
+    const showCrmConsole = (() => {
+      try {
+        const qs = typeof window !== 'undefined' ? window.location.search : ''
+        const p = new URLSearchParams(qs)
+        return p.get('crm') === '1'
+      } catch {
+        return false
+      }
+    })()
 
     return (
       <div className="pb-20 rp-page-bg min-h-screen">
@@ -4071,7 +4080,8 @@ export default function RainbowPawMiniApp() {
           </div>
         </div>
         <div className="mt-8 px-4 flex flex-col gap-2">
-          {[
+          {(
+            [
             { icon: <Pencil size={18} />, label: t('profile.editProfile'), action: () => setPage('profile_edit') },
             { icon: <PawPrint size={18} />, label: t('profile.myPets'), action: () => setPage('pets') },
             { icon: <Package size={18} />, label: t('profile.myOrders'), action: () => setPage('orders') },
@@ -4079,7 +4089,24 @@ export default function RainbowPawMiniApp() {
             { icon: <CreditCard size={18} />, label: t('profile.payments'), action: () => setPage('payments') },
             { icon: <Settings size={18} />, label: t('profile.settings'), action: () => setPage('settings') },
             { icon: <Store size={18} />, label: t('profile.switchMerchant'), action: setMerchantView },
-          ].map((item, idx) => (
+            ...(showCrmConsole
+              ? [
+                  {
+                    icon: <BarChart3 size={18} />,
+                    label: 'CRM 工作台',
+                    action: () => {
+                      try {
+                        window.location.assign('/rainbowpaw/crm')
+                      } catch {
+                        void 0
+                      }
+                    },
+                  },
+                ]
+              : []),
+          ]
+            )
+            .map((item, idx) => (
             <button
               key={idx}
               type="button"

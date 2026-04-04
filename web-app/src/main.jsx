@@ -9,6 +9,9 @@ import MerchantPortalPage from './pages/MerchantPortalPage.jsx'
 import MarketplacePage from './pages/MarketplacePage.jsx'
 import ProductDetailPage from './pages/ProductDetailPage.jsx'
 import CartPage from './pages/CartPage.jsx'
+import SalesCrmDashboardPage from './pages/SalesCrmDashboardPage.jsx'
+import SalesCrmLeadPage from './pages/SalesCrmLeadPage.jsx'
+import AftercareQuoteCustomerPage from './pages/AftercareQuoteCustomerPage.jsx'
 import AdminApp from './admin/AdminApp'
 import { LocaleHome, RootRedirect } from './routing/LocaleRoutes.jsx'
 
@@ -22,6 +25,9 @@ createRoot(document.getElementById('root')).render(
         <Route path="/rainbowpawclaw" element={<App />} />
 
         <Route path="/rainbowpaw" element={<MiniAppPage />} />
+        <Route path="/rainbowpaw/crm" element={<SalesCrmDashboardPage />} />
+        <Route path="/rainbowpaw/crm/leads/:leadId" element={<SalesCrmLeadPage />} />
+        <Route path="/rainbowpaw/aftercare/quote/:token" element={<AftercareQuoteCustomerPage />} />
         <Route path="/rainbowpaw/merchant" element={<MerchantPortalPage />} />
         <Route path="/rainbowpaw/marketplace" element={<MarketplacePage />} />
         <Route path="/rainbowpaw/marketplace/product/:productId" element={<ProductDetailPage />} />

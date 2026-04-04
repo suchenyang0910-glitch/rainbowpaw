@@ -193,11 +193,13 @@ CREATE TABLE IF NOT EXISTS ai.growth_contents (
   content TEXT NOT NULL,
   raw_json JSONB,
   model_hint VARCHAR(128),
-  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_ai_growth_contents_created_at ON ai.growth_contents(created_at);
 CREATE INDEX IF NOT EXISTS idx_ai_growth_contents_status ON ai.growth_contents(status);
+CREATE INDEX IF NOT EXISTS idx_ai_growth_contents_updated_at ON ai.growth_contents(updated_at);
 
 
 -- 5. marketplace schema
@@ -298,6 +300,7 @@ CREATE TABLE IF NOT EXISTS crm.followups (
   id BIGSERIAL PRIMARY KEY,
   lead_id VARCHAR(32) NOT NULL,
   channel VARCHAR(32) NOT NULL,
+  dedupe_key VARCHAR(128),
   status VARCHAR(16) NOT NULL DEFAULT 'pending',
   due_at TIMESTAMP NOT NULL,
   template_key VARCHAR(64),
@@ -309,6 +312,7 @@ CREATE TABLE IF NOT EXISTS crm.followups (
 
 CREATE INDEX IF NOT EXISTS idx_crm_followups_due_at ON crm.followups(due_at);
 CREATE INDEX IF NOT EXISTS idx_crm_followups_status_due_at ON crm.followups(status, due_at);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_crm_followups_dedupe_key ON crm.followups(dedupe_key) WHERE dedupe_key IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS crm.outreach_logs (
   id BIGSERIAL PRIMARY KEY,
@@ -325,6 +329,46 @@ CREATE TABLE IF NOT EXISTS crm.outreach_logs (
 
 CREATE INDEX IF NOT EXISTS idx_crm_outreach_logs_lead_id ON crm.outreach_logs(lead_id);
 CREATE INDEX IF NOT EXISTS idx_crm_outreach_logs_created_at ON crm.outreach_logs(created_at);
+
+CREATE TABLE IF NOT EXISTS pricing.aftercare_quotes (
+  id BIGSERIAL PRIMARY KEY,
+  lead_id VARCHAR(32),
+  country VARCHAR(8) NOT NULL,
+  city VARCHAR(64) NOT NULL,
+  package_code VARCHAR(32) NOT NULL,
+  weight_kg NUMERIC(10,3) NOT NULL DEFAULT 0,
+  currency VARCHAR(16) NOT NULL DEFAULT 'USD',
+  base_price_cents INT NOT NULL DEFAULT 0,
+  pickup_fee_cents INT NOT NULL DEFAULT 0,
+  weight_fee_cents INT NOT NULL DEFAULT 0,
+  total_cents INT NOT NULL DEFAULT 0,
+  status VARCHAR(16) NOT NULL DEFAULT 'draft',
+  note TEXT,
+  public_token VARCHAR(48) UNIQUE,
+  sent_at TIMESTAMP,
+  decided_at TIMESTAMP,
+  decision_note TEXT,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_aftercare_quotes_lead_id ON pricing.aftercare_quotes(lead_id);
+CREATE INDEX IF NOT EXISTS idx_aftercare_quotes_status ON pricing.aftercare_quotes(status);
+
+CREATE TABLE IF NOT EXISTS ai.content_templates (
+  id BIGSERIAL PRIMARY KEY,
+  scene VARCHAR(32) NOT NULL,
+  name VARCHAR(64) NOT NULL,
+  enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  template_text TEXT NOT NULL,
+  variables_schema JSONB,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(scene, name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_content_templates_scene ON ai.content_templates(scene);
+CREATE INDEX IF NOT EXISTS idx_ai_content_templates_enabled ON ai.content_templates(enabled);
 
 
 -- 7. pricing schema

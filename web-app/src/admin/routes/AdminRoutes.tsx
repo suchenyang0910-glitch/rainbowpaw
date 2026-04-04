@@ -24,6 +24,11 @@ import { RolesPage } from '../views/settings/RolesPage'
 import { AiOpsPage } from '../views/ai/AiOpsPage'
 import { AiGrowthPage } from '../views/ai/AiGrowthPage'
 import { AiRiskPage } from '../views/ai/AiRiskPage'
+import { AiTemplatesPage } from '../views/ai/AiTemplatesPage'
+import { CrmLeadsPage } from '../views/crm/CrmLeadsPage'
+import { CrmFollowupsPage } from '../views/crm/CrmFollowupsPage'
+import { AftercarePricebooksPage } from '../views/crm/AftercarePricebooksPage'
+import { AftercareQuotesPage } from '../views/crm/AftercareQuotesPage'
 
 export function AdminRoutes() {
   return (
@@ -250,6 +255,42 @@ export function AdminRoutes() {
         />
 
         <Route
+          path="crm/leads"
+          element={
+            <RequirePermission permission="page.crmLeads.list">
+              <CrmLeadsPage />
+            </RequirePermission>
+          }
+        />
+
+        <Route
+          path="crm/followups"
+          element={
+            <RequirePermission permission="page.crmFollowups.list">
+              <CrmFollowupsPage />
+            </RequirePermission>
+          }
+        />
+
+        <Route
+          path="crm/aftercare-quotes"
+          element={
+            <RequirePermission permission="page.aftercareQuotes.list">
+              <AftercareQuotesPage />
+            </RequirePermission>
+          }
+        />
+
+        <Route
+          path="crm/aftercare-pricebooks"
+          element={
+            <RequirePermission permission="page.aftercarePricebooks.list">
+              <AftercarePricebooksPage />
+            </RequirePermission>
+          }
+        />
+
+        <Route
           path="ai/ops"
           element={
             <RequirePermission permission="page.aiOps.list">
@@ -263,6 +304,15 @@ export function AdminRoutes() {
           element={
             <RequirePermission permission="page.aiGrowth.list">
               <AiGrowthPage />
+            </RequirePermission>
+          }
+        />
+
+        <Route
+          path="ai/templates"
+          element={
+            <RequirePermission permission="page.aiTemplates.list">
+              <AiTemplatesPage />
             </RequirePermission>
           }
         />
