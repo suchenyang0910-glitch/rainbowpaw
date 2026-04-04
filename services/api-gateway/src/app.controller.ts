@@ -981,6 +981,35 @@ export class AppController {
     return this.appService.adminCrmLeadEvents({ leadId, limit });
   }
 
+  @Get('admin/crm/followups')
+  adminCrmFollowups(
+    @Query('due_before') dueBefore?: string,
+    @Query('status') status?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.appService.adminCrmFollowups({ dueBefore, status, limit });
+  }
+
+  @Post('admin/crm/followups')
+  adminCrmCreateFollowup(@Body() body: any) {
+    return this.appService.adminCrmCreateFollowup(body || {});
+  }
+
+  @Post('admin/crm/followups/:id/result')
+  adminCrmFollowupResult(@Param('id') id: string, @Body() body: any) {
+    return this.appService.adminCrmFollowupResult({ id, ...(body || {}) });
+  }
+
+  @Post('admin/outreach/telegram/send')
+  adminOutreachTelegramSend(@Body() body: any) {
+    return this.appService.adminOutreachTelegramSend(body || {});
+  }
+
+  @Post('admin/ai/support/reply')
+  adminAiSupportReply(@Body() body: any) {
+    return this.appService.adminAiSupportReply(body || {});
+  }
+
   @Post('admin/pricing/aftercare/pricebooks')
   adminUpsertAftercarePricebook(@Body() body: any) {
     return this.appService.adminUpsertAftercarePricebook(body || {});

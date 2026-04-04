@@ -282,6 +282,50 @@ CREATE INDEX IF NOT EXISTS idx_crm_lead_events_lead_id ON crm.lead_events(lead_i
 CREATE INDEX IF NOT EXISTS idx_crm_lead_events_event_name ON crm.lead_events(event_name);
 CREATE INDEX IF NOT EXISTS idx_crm_lead_events_created_at ON crm.lead_events(created_at);
 
+CREATE TABLE IF NOT EXISTS crm.lead_stage_logs (
+  id BIGSERIAL PRIMARY KEY,
+  lead_id VARCHAR(32) NOT NULL,
+  from_stage VARCHAR(16),
+  to_stage VARCHAR(16) NOT NULL,
+  reason VARCHAR(64),
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_crm_lead_stage_logs_lead_id ON crm.lead_stage_logs(lead_id);
+CREATE INDEX IF NOT EXISTS idx_crm_lead_stage_logs_created_at ON crm.lead_stage_logs(created_at);
+
+CREATE TABLE IF NOT EXISTS crm.followups (
+  id BIGSERIAL PRIMARY KEY,
+  lead_id VARCHAR(32) NOT NULL,
+  channel VARCHAR(32) NOT NULL,
+  status VARCHAR(16) NOT NULL DEFAULT 'pending',
+  due_at TIMESTAMP NOT NULL,
+  template_key VARCHAR(64),
+  payload JSONB,
+  last_error TEXT,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_crm_followups_due_at ON crm.followups(due_at);
+CREATE INDEX IF NOT EXISTS idx_crm_followups_status_due_at ON crm.followups(status, due_at);
+
+CREATE TABLE IF NOT EXISTS crm.outreach_logs (
+  id BIGSERIAL PRIMARY KEY,
+  lead_id VARCHAR(32),
+  channel VARCHAR(32) NOT NULL,
+  to_id VARCHAR(128) NOT NULL,
+  template_key VARCHAR(64),
+  message TEXT NOT NULL,
+  status VARCHAR(16) NOT NULL,
+  provider_message_id VARCHAR(64),
+  error TEXT,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_crm_outreach_logs_lead_id ON crm.outreach_logs(lead_id);
+CREATE INDEX IF NOT EXISTS idx_crm_outreach_logs_created_at ON crm.outreach_logs(created_at);
+
 
 -- 7. pricing schema
 CREATE SCHEMA IF NOT EXISTS pricing;

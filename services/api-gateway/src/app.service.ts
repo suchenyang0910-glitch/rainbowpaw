@@ -772,6 +772,9 @@ export class AppService {
       String(eventData?.idempotency_key || '').trim() ||
       '';
 
+    const normalizedEventData = this.normalizeEventData(eventName, eventData);
+    this.assertEventData(eventName, normalizedEventData);
+
     let globalUserId = String(opts?.body?.global_user_id || '').trim();
     let tg: TelegramUserInfo | null = null;
     if (!globalUserId) {
@@ -796,8 +799,8 @@ export class AppService {
           }
         : {}),
       event_data: {
-        ...eventData,
-        idempotency_key: idem || eventData?.idempotency_key || null,
+        ...normalizedEventData,
+        idempotency_key: idem || normalizedEventData?.idempotency_key || null,
       },
     };
 
@@ -809,6 +812,55 @@ export class AppService {
 
     void this.crmUpsertFromEvent(eventPayload).catch(() => void 0);
     return { code: 0, message: 'ok', data: { accepted: true } };
+  }
+
+  private normalizeEventData(_eventName: string, raw: any) {
+    const obj = raw && typeof raw === 'object' ? raw : {};
+    const utm = obj.utm && typeof obj.utm === 'object' ? obj.utm : {};
+    const ref = obj.ref && typeof obj.ref === 'object' ? obj.ref : {};
+    const country = obj.country != null ? String(obj.country).trim() : '';
+    const city = obj.city != null ? String(obj.city).trim() : '';
+    const language = obj.language != null ? String(obj.language).trim() : '';
+    const sessionId = obj.session_id != null ? String(obj.session_id).trim() : '';
+    return {
+      ...obj,
+      country: country || null,
+      city: city || null,
+      language: language || null,
+      session_id: sessionId || null,
+      utm,
+      ref,
+    };
+  }
+
+  private isEventStrictMode() {
+    return String(process.env.EVENT_STRICT || '').trim() === 'true';
+  }
+
+  private assertEventData(eventName: string, data: any) {
+    if (!this.isEventStrictMode()) return;
+    const critical = new Set([
+      'ad_click',
+      'landing_view',
+      'lead_submit',
+      'chat_started',
+      'quote_sent',
+      'order_created',
+      'payment_proof_uploaded',
+      'aftercare_intake_submitted',
+    ]);
+    if (!critical.has(eventName)) return;
+    const country = String(data?.country || '').trim();
+    const language = String(data?.language || '').trim();
+    const sessionId = String(data?.session_id || '').trim();
+    const utmOk = data?.utm && typeof data.utm === 'object';
+    const refOk = data?.ref && typeof data.ref === 'object';
+    if (!country || !['VN', 'KH', 'TH'].includes(country))
+      throw new BadRequestException('event_data.country required');
+    if (!language) throw new BadRequestException('event_data.language required');
+    if (!sessionId) throw new BadRequestException('event_data.session_id required');
+    if (!utmOk) throw new BadRequestException('event_data.utm required');
+    if (!refOk) throw new BadRequestException('event_data.ref required');
   }
 
   private stableLeadId(input: string) {
@@ -910,6 +962,14 @@ export class AppService {
         now,
       ],
     );
+
+    if (stage) {
+      await pg.query(
+        `INSERT INTO crm.lead_stage_logs (lead_id, from_stage, to_stage, reason, created_at)
+         VALUES ($1,$2,$3,$4,$5)`,
+        [leadId, null, stage, eventName, now],
+      );
+    }
 
     await pg.query(
       `INSERT INTO crm.lead_events (lead_id, global_user_id, event_name, source_bot, idempotency_key, event_data, created_at)
@@ -1945,6 +2005,171 @@ export class AppService {
       updated_at: r.updated_at ? new Date(r.updated_at).toISOString() : null,
     }));
     return { code: 0, message: 'ok', data: { items, total: items.length, limit: size } };
+  }
+
+  async adminCrmFollowups(opts: {
+    dueBefore?: string;
+    status?: string;
+    limit?: string;
+  }) {
+    const pg = this.getOpsPg();
+    const size = Math.min(500, Math.max(1, Number(opts.limit || 200)));
+    if (!pg)
+      return { code: 0, message: 'ok', data: { items: [], total: 0, limit: size } };
+
+    const dueBefore = String(opts?.dueBefore || '').trim();
+    const due = dueBefore ? new Date(dueBefore) : new Date();
+    const status = String(opts?.status || '').trim();
+
+    const q = await pg.query(
+      `SELECT id, lead_id, channel, status, due_at, template_key, payload, last_error, created_at, updated_at
+       FROM crm.followups
+       WHERE due_at <= $1
+         AND ($2::text = '' OR status = $2)
+       ORDER BY due_at ASC
+       LIMIT $3`,
+      [due, status, size],
+    );
+    const items = (q.rows || []).map((r: any) => ({
+      id: String(r.id),
+      lead_id: String(r.lead_id),
+      channel: String(r.channel),
+      status: String(r.status),
+      due_at: r.due_at ? new Date(r.due_at).toISOString() : null,
+      template_key: r.template_key != null ? String(r.template_key) : null,
+      payload: r.payload || null,
+      last_error: r.last_error != null ? String(r.last_error) : null,
+      created_at: r.created_at ? new Date(r.created_at).toISOString() : null,
+      updated_at: r.updated_at ? new Date(r.updated_at).toISOString() : null,
+    }));
+    return { code: 0, message: 'ok', data: { items, total: items.length, limit: size } };
+  }
+
+  async adminCrmCreateFollowup(body: any) {
+    const pg = this.getOpsPg();
+    if (!pg) return { code: 0, message: 'ok', data: { saved: false, reason: 'no db' } };
+    const leadId = String(body?.lead_id || '').trim();
+    const channel = String(body?.channel || 'telegram').trim() || 'telegram';
+    const dueAt = body?.due_at ? new Date(body.due_at) : null;
+    if (!leadId || !dueAt || Number.isNaN(dueAt.getTime()))
+      throw new BadRequestException('lead_id/due_at required');
+    const templateKey = body?.template_key != null ? String(body.template_key) : null;
+    const payload = body?.payload && typeof body.payload === 'object' ? body.payload : null;
+    const now = new Date();
+    const r = await pg.query(
+      `INSERT INTO crm.followups (lead_id, channel, status, due_at, template_key, payload, last_error, created_at, updated_at)
+       VALUES ($1,$2,'pending',$3,$4,$5::jsonb,NULL,$6,$6)
+       RETURNING id`,
+      [leadId, channel, dueAt, templateKey, payload ? JSON.stringify(payload) : null, now],
+    );
+    return { code: 0, message: 'ok', data: { id: r.rows?.[0]?.id != null ? String(r.rows[0].id) : null } };
+  }
+
+  async adminCrmFollowupResult(body: any) {
+    const pg = this.getOpsPg();
+    if (!pg) return { code: 0, message: 'ok', data: { saved: false, reason: 'no db' } };
+    const id = Number(body?.id);
+    if (!Number.isFinite(id)) throw new BadRequestException('id required');
+    const status = String(body?.status || '').trim();
+    if (!['pending', 'sent', 'failed', 'skipped', 'done'].includes(status))
+      throw new BadRequestException('invalid status');
+    const lastError = body?.last_error != null ? String(body.last_error) : null;
+    const now = new Date();
+    await pg.query(
+      `UPDATE crm.followups
+       SET status = $1, last_error = $2, updated_at = $3
+       WHERE id = $4`,
+      [status, lastError, now, id],
+    );
+    return { code: 0, message: 'ok', data: { id: String(id), status } };
+  }
+
+  private telegramBotToken(bot: string) {
+    const key = String(bot || '').trim();
+    if (key === 'claw') return String(process.env.CLAW_BOT_TOKEN || '').trim();
+    return String(process.env.RAINBOW_BOT_TOKEN || '').trim();
+  }
+
+  async adminOutreachTelegramSend(body: any) {
+    const pg = this.getOpsPg();
+    const bot = String(body?.bot || 'rainbow').trim() || 'rainbow';
+    const token = this.telegramBotToken(bot);
+    if (!token) throw new BadRequestException('bot token not configured');
+
+    const chatId = String(body?.chat_id || body?.to || '').trim();
+    const message = String(body?.message || '').trim();
+    if (!chatId || !message) throw new BadRequestException('chat_id/message required');
+
+    const leadId = body?.lead_id != null ? String(body.lead_id) : null;
+    const templateKey = body?.template_key != null ? String(body.template_key) : null;
+
+    try {
+      const res = await axios.post(
+        `https://api.telegram.org/bot${encodeURIComponent(token)}/sendMessage`,
+        {
+          chat_id: chatId,
+          text: message,
+          parse_mode: 'HTML',
+          disable_web_page_preview: true,
+        },
+        { timeout: 15000 },
+      );
+      const ok = Boolean(res?.data?.ok);
+      const msgId = res?.data?.result?.message_id != null ? String(res.data.result.message_id) : null;
+      if (pg) {
+        await pg.query(
+          `INSERT INTO crm.outreach_logs (lead_id, channel, to_id, template_key, message, status, provider_message_id, error, created_at)
+           VALUES ($1,'telegram',$2,$3,$4,$5,$6,$7,$8)`,
+          [leadId, chatId, templateKey, message, ok ? 'sent' : 'failed', msgId, ok ? null : JSON.stringify(res?.data || {}), new Date()],
+        );
+      }
+      if (!ok) throw new BadGatewayException('telegram send failed');
+      return { code: 0, message: 'ok', data: { sent: true, message_id: msgId } };
+    } catch (e: any) {
+      const errMsg = axios.isAxiosError(e)
+        ? e.response?.data
+          ? JSON.stringify(e.response.data)
+          : e.message
+        : String(e?.message || e);
+      if (pg) {
+        await pg.query(
+          `INSERT INTO crm.outreach_logs (lead_id, channel, to_id, template_key, message, status, provider_message_id, error, created_at)
+           VALUES ($1,'telegram',$2,$3,$4,'failed',NULL,$5,$6)`,
+          [leadId, chatId, templateKey, message, errMsg, new Date()],
+        );
+      }
+      throw new BadGatewayException('telegram send failed');
+    }
+  }
+
+  async adminAiSupportReply(body: any) {
+    const userMessage = String(body?.user_message || '').trim();
+    if (!userMessage) throw new BadRequestException('user_message required');
+    const aiBase = this.aiBase();
+    if (!aiBase) throw new BadGatewayException('ai orchestrator unavailable');
+    const res = await this.internalPost<any>(
+      `${aiBase}/ai/support/reply`,
+      {
+        user_message: userMessage,
+        user_profile: body?.user_profile && typeof body.user_profile === 'object' ? body.user_profile : {},
+        context: body?.context && typeof body.context === 'object' ? body.context : {},
+      },
+      { 'x-global-user-id': 'admin' },
+    );
+    const ai = res?.data || {};
+    const reply = String(ai?.reply || ai?.message || ai?.content || '').trim() || JSON.stringify(ai);
+    if (body?.send) {
+      const chatId = String(body?.chat_id || '').trim();
+      if (!chatId) throw new BadRequestException('chat_id required for send');
+      await this.adminOutreachTelegramSend({
+        bot: body?.bot || 'rainbow',
+        chat_id: chatId,
+        lead_id: body?.lead_id || null,
+        template_key: 'ai_support_reply',
+        message: reply,
+      });
+    }
+    return { code: 0, message: 'ok', data: { reply, raw_json: ai } };
   }
 
   async v1AftercareQuote(body: any) {

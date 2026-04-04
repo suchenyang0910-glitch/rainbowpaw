@@ -26,6 +26,76 @@ export function apiBaseUrl() {
   return `${base}/api`
 }
 
+function getOrCreateSessionId() {
+  try {
+    const key = 'rp_session_id'
+    const existed = localStorage.getItem(key)
+    if (existed) return String(existed)
+    const sid = `s_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`
+    localStorage.setItem(key, sid)
+    return sid
+  } catch {
+    return `s_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`
+  }
+}
+
+function getUtmFromUrl() {
+  try {
+    const sp = window && window.location ? new URLSearchParams(window.location.search || '') : null
+    if (!sp) return {}
+    const pick = (k) => {
+      const v = String(sp.get(k) || '').trim()
+      return v ? v : null
+    }
+    const utm = {
+      source: pick('utm_source'),
+      medium: pick('utm_medium'),
+      campaign: pick('utm_campaign'),
+      content: pick('utm_content'),
+      term: pick('utm_term'),
+    }
+    const has = Object.values(utm).some(Boolean)
+    return has ? utm : {}
+  } catch {
+    return {}
+  }
+}
+
+function getRefFromUrl() {
+  try {
+    const referrer = typeof document !== 'undefined' ? String(document.referrer || '').trim() : ''
+    const landing_url = window && window.location ? String(window.location.href || '').trim() : ''
+    const page_path = window && window.location ? String(window.location.pathname || '').trim() : ''
+    return {
+      referrer: referrer || null,
+      landing_url: landing_url || null,
+      page_path: page_path || null,
+    }
+  } catch {
+    return {}
+  }
+}
+
+function fnv1a32(input) {
+  const str = String(input || '')
+  let h = 0x811c9dc5
+  for (let i = 0; i < str.length; i += 1) {
+    h ^= str.charCodeAt(i)
+    h = (h * 0x01000193) >>> 0
+  }
+  return h >>> 0
+}
+
+function makeIdempotencyKey({ event_name, session_id, ts, stable_parts }) {
+  const e = String(event_name || '').trim()
+  const s = String(session_id || '').trim()
+  const t = Number.isFinite(Number(ts)) ? Number(ts) : Date.now()
+  const bucket = Math.floor(t / 1000)
+  const parts = stable_parts && typeof stable_parts === 'object' ? stable_parts : {}
+  const seed = `${e}|${s}|${bucket}|${JSON.stringify(parts)}`
+  return `evt_${fnv1a32(seed).toString(16)}`
+}
+
 export async function apiFetch(path, opts = {}) {
   const method = opts && typeof opts.method === 'string' ? opts.method : undefined
   const body = opts && typeof opts.body !== 'undefined' ? opts.body : undefined
@@ -116,11 +186,39 @@ export const api = {
     if (!name) return Promise.resolve({ accepted: false })
     const source = String(opts && (opts.source_bot || opts.source) ? (opts.source_bot || opts.source) : '').trim()
     const global_user_id = String(opts && opts.global_user_id ? opts.global_user_id : '').trim()
+    const session_id = getOrCreateSessionId()
+    const merged = {
+      ...(event_data && typeof event_data === 'object' ? event_data : {}),
+      session_id,
+      utm: {
+        ...getUtmFromUrl(),
+        ...(event_data && event_data.utm && typeof event_data.utm === 'object' ? event_data.utm : {}),
+      },
+      ref: {
+        ...getRefFromUrl(),
+        ...(event_data && event_data.ref && typeof event_data.ref === 'object' ? event_data.ref : {}),
+      },
+    }
+    const idempotency_key =
+      String(opts && opts.idempotency_key ? opts.idempotency_key : '').trim() ||
+      String(merged && merged.idempotency_key ? merged.idempotency_key : '').trim() ||
+      makeIdempotencyKey({
+        event_name: name,
+        session_id,
+        ts: Date.now(),
+        stable_parts: {
+          page_path: merged?.ref?.page_path || null,
+          utm_campaign: merged?.utm?.campaign || null,
+          utm_source: merged?.utm?.source || null,
+        },
+      })
+
     const body = {
       event_name: name,
       ...(source ? { source_bot: source } : {}),
       ...(global_user_id ? { global_user_id } : {}),
-      event_data: event_data && typeof event_data === 'object' ? event_data : {},
+      idempotency_key,
+      event_data: { ...merged, idempotency_key },
     }
     return apiFetch('/events', { method: 'POST', body })
   },
