@@ -48,6 +48,14 @@ export function AdminRoutes() {
       >
         <Route index element={<Navigate to="dashboard" replace />} />
 
+        <Route path="claw" element={<Navigate to="claw/pools" replace />} />
+        <Route path="console" element={<Navigate to="order" replace />} />
+        <Route path="store" element={<Navigate to="store/products" replace />} />
+        <Route path="ops" element={<Navigate to="ops/campaigns" replace />} />
+        <Route path="crm" element={<Navigate to="crm/leads" replace />} />
+        <Route path="ai" element={<Navigate to="ai/ops" replace />} />
+        <Route path="settings" element={<Navigate to="settings/business" replace />} />
+
         <Route
           path="dashboard"
           element={

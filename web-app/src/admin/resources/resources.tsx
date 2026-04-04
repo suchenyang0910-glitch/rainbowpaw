@@ -57,7 +57,7 @@ export const resources: IResourceItem[] = [
   },
   {
     name: 'claw',
-    list: `${BASE}/claw/pools`,
+    list: `${BASE}/claw`,
     meta: { label: '抽奖系统', icon: <Gift size={18} /> },
   },
   {
@@ -101,7 +101,7 @@ export const resources: IResourceItem[] = [
 
   {
     name: 'console',
-    list: `${BASE}/order`,
+    list: `${BASE}/console`,
     meta: { label: '业务控制台', icon: <MonitorCog size={18} /> },
   },
   {
@@ -117,7 +117,7 @@ export const resources: IResourceItem[] = [
 
   {
     name: 'store',
-    list: `${BASE}/store/products`,
+    list: `${BASE}/store`,
     meta: { label: '商城与服务', icon: <Store size={18} /> },
   },
   {
@@ -154,7 +154,7 @@ export const resources: IResourceItem[] = [
 
   {
     name: 'ops',
-    list: `${BASE}/ops/campaigns`,
+    list: `${BASE}/ops`,
     meta: { label: '运营中心', icon: <Link2 size={18} /> },
   },
   {
@@ -175,7 +175,7 @@ export const resources: IResourceItem[] = [
 
   {
     name: 'crm',
-    list: `${BASE}/crm/leads`,
+    list: `${BASE}/crm`,
     meta: { label: 'CRM与报价', icon: <ClipboardList size={18} /> },
   },
   {
@@ -201,7 +201,7 @@ export const resources: IResourceItem[] = [
 
   {
     name: 'ai',
-    list: `${BASE}/ai/ops`,
+    list: `${BASE}/ai`,
     meta: { label: 'AI 中枢', icon: <Brain size={18} /> },
   },
   {
@@ -238,7 +238,7 @@ export const resources: IResourceItem[] = [
 
   {
     name: 'settings',
-    list: `${BASE}/settings/business`,
+    list: `${BASE}/settings`,
     meta: { label: '系统设置', icon: <Settings size={18} /> },
   },
   {

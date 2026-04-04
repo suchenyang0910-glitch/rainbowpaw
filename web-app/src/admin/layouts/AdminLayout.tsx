@@ -2,7 +2,7 @@ import { ProLayout } from '@ant-design/pro-components'
 import { Button } from 'antd'
 import { LogOut } from 'lucide-react'
 import type { ReactNode } from 'react'
-import { useMemo } from 'react'
+import React from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useGetIdentity, useLogout } from '@refinedev/core'
 import { loadSession, hasPermission } from '../providers/adminSession'
@@ -52,7 +52,7 @@ export function AdminLayout({ children }: { children: ReactNode }) {
   const { mutate: logout } = useLogout()
   const { data: identity } = useGetIdentity()
 
-  const menu = useMemo(() => buildMenu(), [])
+  const menu = buildMenu()
 
   return (
     <ProLayout
