@@ -26,7 +26,7 @@ export function AftercareQuotesPage() {
   const [sendForm] = Form.useForm()
   const { mutateAsync, mutation } = useCustomMutation()
 
-  const { result, refetch, isFetching } = useCustom({
+  const { result, query } = useCustom({
     url: '/pricing/aftercare/quotes',
     method: 'get',
     query: filters,
@@ -85,7 +85,7 @@ export function AftercareQuotesPage() {
     if (share) await navigator.clipboard.writeText(String(share)).catch(() => void 0)
     message.success('已发送（分享链接已复制）')
     setSendOpen(false)
-    refetch()
+    void query.refetch()
   }
 
   const voidQuote = async () => {
@@ -96,7 +96,7 @@ export function AftercareQuotesPage() {
       values: {},
     } as any)
     message.success('已作废')
-    refetch()
+    void query.refetch()
     setActive(null)
   }
 
@@ -106,7 +106,7 @@ export function AftercareQuotesPage() {
         title="善终报价单"
         extra={
           <Space>
-            <Button onClick={() => refetch()} loading={isFetching}>
+            <Button onClick={() => void query.refetch()} loading={query.isFetching}>
               刷新
             </Button>
           </Space>
@@ -115,7 +115,7 @@ export function AftercareQuotesPage() {
         <Space wrap style={{ marginBottom: 12 }}>
           <Input placeholder="lead_id" value={filters.lead_id} onChange={(e) => setFilters((s) => ({ ...s, lead_id: e.target.value }))} style={{ width: 200 }} allowClear />
           <Input placeholder="status" value={filters.status} onChange={(e) => setFilters((s) => ({ ...s, status: e.target.value }))} style={{ width: 160 }} allowClear />
-          <Button type="primary" onClick={() => refetch()}>
+          <Button type="primary" onClick={() => void query.refetch()}>
             查询
           </Button>
         </Space>
@@ -123,7 +123,7 @@ export function AftercareQuotesPage() {
           rowKey={(r) => String(r.id)}
           columns={columns as any}
           dataSource={items}
-          loading={isFetching}
+          loading={query.isFetching}
           scroll={{ x: 1200 }}
           pagination={{ pageSize: 50 }}
         />
@@ -183,4 +183,3 @@ export function AftercareQuotesPage() {
     </PageContainer>
   )
 }
-

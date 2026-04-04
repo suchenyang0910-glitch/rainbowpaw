@@ -26,7 +26,7 @@ export function CrmLeadsPage() {
   const [quoteForm] = Form.useForm()
   const { mutateAsync, mutation } = useCustomMutation()
 
-  const { result, refetch, isFetching } = useCustom({
+  const { result, query } = useCustom({
     url: '/crm/leads',
     method: 'get',
     query: filters,
@@ -112,7 +112,7 @@ export function CrmLeadsPage() {
       },
     } as any)
     message.success('已保存')
-    refetch()
+    void query.refetch()
     setActive({ ...active, ...v, next_followup_at: v.next_followup_at ? (v.next_followup_at as any).toISOString() : null })
   }
 
@@ -156,7 +156,7 @@ export function CrmLeadsPage() {
   return (
     <PageContainer title={false}>
       <Space direction="vertical" size="middle" style={{ width: '100%' }}>
-        <Card title="线索列表" extra={<Button onClick={() => refetch()} loading={isFetching}>刷新</Button>}>
+        <Card title="线索列表" extra={<Button onClick={() => void query.refetch()} loading={query.isFetching}>刷新</Button>}>
           <Space wrap style={{ marginBottom: 12 }}>
             <Input
               placeholder="搜索 lead/global_user/channel"
@@ -181,7 +181,7 @@ export function CrmLeadsPage() {
                 { value: 'closed', label: 'closed' },
               ]}
             />
-            <Button type="primary" onClick={() => refetch()}>
+            <Button type="primary" onClick={() => void query.refetch()}>
               查询
             </Button>
           </Space>
@@ -189,7 +189,7 @@ export function CrmLeadsPage() {
             rowKey={(r) => r.lead_id}
             columns={columns as any}
             dataSource={items}
-            loading={isFetching}
+            loading={query.isFetching}
             scroll={{ x: 1100 }}
             pagination={{ pageSize: 50 }}
           />
@@ -312,4 +312,3 @@ export function CrmLeadsPage() {
     </PageContainer>
   )
 }
-

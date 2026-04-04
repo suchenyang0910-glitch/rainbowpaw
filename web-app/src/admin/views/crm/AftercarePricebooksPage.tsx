@@ -22,7 +22,7 @@ export function AftercarePricebooksPage() {
   const [form] = Form.useForm()
   const { mutateAsync, mutation } = useCustomMutation()
 
-  const { result, refetch, isFetching } = useCustom({
+  const { result, query } = useCustom({
     url: '/pricing/aftercare/pricebooks',
     method: 'get',
     query: filters,
@@ -94,7 +94,7 @@ export function AftercarePricebooksPage() {
     } as any)
     message.success('已保存')
     setOpen(false)
-    refetch()
+    void query.refetch()
   }
 
   return (
@@ -112,7 +112,7 @@ export function AftercarePricebooksPage() {
             >
               新增/覆盖
             </Button>
-            <Button onClick={() => refetch()} loading={isFetching}>
+            <Button onClick={() => void query.refetch()} loading={query.isFetching}>
               刷新
             </Button>
           </Space>
@@ -121,7 +121,7 @@ export function AftercarePricebooksPage() {
         <Space wrap style={{ marginBottom: 12 }}>
           <Input placeholder="country" value={filters.country} onChange={(e) => setFilters((s) => ({ ...s, country: e.target.value }))} style={{ width: 120 }} allowClear />
           <Input placeholder="city" value={filters.city} onChange={(e) => setFilters((s) => ({ ...s, city: e.target.value }))} style={{ width: 160 }} allowClear />
-          <Button type="primary" onClick={() => refetch()}>
+          <Button type="primary" onClick={() => void query.refetch()}>
             查询
           </Button>
         </Space>
@@ -129,7 +129,7 @@ export function AftercarePricebooksPage() {
           rowKey={(r) => String(r.id)}
           columns={columns as any}
           dataSource={items}
-          loading={isFetching}
+          loading={query.isFetching}
           scroll={{ x: 1100 }}
           pagination={{ pageSize: 50 }}
         />
@@ -174,4 +174,3 @@ export function AftercarePricebooksPage() {
     </PageContainer>
   )
 }
-

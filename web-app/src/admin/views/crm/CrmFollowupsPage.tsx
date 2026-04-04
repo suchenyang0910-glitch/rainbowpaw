@@ -1,6 +1,6 @@
 import { PageContainer } from '@ant-design/pro-components'
 import { useCustom, useCustomMutation } from '@refinedev/core'
-import { Button, Card, DatePicker, Form, Input, Modal, Space, Table, Tag, Typography, message } from 'antd'
+import { Button, Card, DatePicker, Form, Input, Modal, Select, Space, Table, Tag, Typography, message } from 'antd'
 import dayjs from 'dayjs'
 import { useMemo, useState } from 'react'
 
@@ -26,7 +26,7 @@ export function CrmFollowupsPage() {
   const [autoForm] = Form.useForm()
   const { mutateAsync, mutation } = useCustomMutation()
 
-  const { result, refetch, isFetching } = useCustom({
+  const { result, query } = useCustom({
     url: '/crm/followups',
     method: 'get',
     query: filters,
@@ -67,7 +67,7 @@ export function CrmFollowupsPage() {
     message.success('已发送并写回状态')
     setSendOpen(false)
     setSendTarget(null)
-    refetch()
+    void query.refetch()
   }
 
   const markDone = async (r: Followup) => {
@@ -77,7 +77,7 @@ export function CrmFollowupsPage() {
       values: { status: 'done' },
     } as any)
     message.success('已标记完成')
-    refetch()
+    void query.refetch()
   }
 
   const autoGenerate = async () => {
@@ -101,7 +101,7 @@ export function CrmFollowupsPage() {
     } as any)
     message.success(`已生成：${Number((res as any)?.data?.inserted || 0)} 条`) 
     setAutoOpen(false)
-    refetch()
+    void query.refetch()
   }
 
   const columns = useMemo(
@@ -141,7 +141,7 @@ export function CrmFollowupsPage() {
           extra={
             <Space>
               <Button onClick={() => setAutoOpen(true)}>自动生成</Button>
-              <Button onClick={() => refetch()} loading={isFetching}>
+              <Button onClick={() => void query.refetch()} loading={query.isFetching}>
                 刷新
               </Button>
             </Space>
@@ -159,7 +159,7 @@ export function CrmFollowupsPage() {
               onChange={(e) => setFilters((s) => ({ ...s, status: e.target.value }))}
               style={{ width: 140 }}
             />
-            <Button type="primary" onClick={() => refetch()}>
+            <Button type="primary" onClick={() => void query.refetch()}>
               查询
             </Button>
           </Space>
@@ -168,7 +168,7 @@ export function CrmFollowupsPage() {
             rowKey={(r) => String(r.id)}
             columns={columns as any}
             dataSource={items}
-            loading={isFetching}
+            loading={query.isFetching}
             scroll={{ x: 980 }}
             pagination={{ pageSize: 50 }}
           />
@@ -230,4 +230,3 @@ export function CrmFollowupsPage() {
     </PageContainer>
   )
 }
-

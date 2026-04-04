@@ -17,6 +17,8 @@ import { ProductListPage } from '../views/store/ProductListPage'
 import { ServiceListPage } from '../views/services/ServiceListPage'
 import { MerchantListPage } from '../views/merchants/MerchantListPage'
 import { BridgeReportsPage } from '../views/ops/BridgeReportsPage'
+import { ConsoleOrderPage } from '../views/console/ConsoleOrderPage'
+import { ConsoleReportPage } from '../views/console/ConsoleReportPage'
 import { ClawPoolsPage } from '../views/claw/ClawPoolsPage'
 import { ClawPlaysPage } from '../views/claw/ClawPlaysPage'
 import { RiskPage } from '../views/risk/RiskPage'
@@ -37,7 +39,7 @@ export function AdminRoutes() {
 
       <Route
         element={
-          <Authenticated key="admin" redirectOnFail="/admin/login">
+          <Authenticated key="admin" redirectOnFail="/console/login">
             <AdminLayout>
               <Outlet />
             </AdminLayout>
@@ -172,6 +174,24 @@ export function AdminRoutes() {
           element={
             <RequirePermission permission="page.orders.list">
               <OrderListPage />
+            </RequirePermission>
+          }
+        />
+
+        <Route
+          path="order"
+          element={
+            <RequirePermission permission="page.consoleOrder.list">
+              <ConsoleOrderPage />
+            </RequirePermission>
+          }
+        />
+
+        <Route
+          path="report"
+          element={
+            <RequirePermission permission="page.consoleReport.list">
+              <ConsoleReportPage />
             </RequirePermission>
           }
         />

@@ -17,7 +17,7 @@ export default function AdminApp() {
       title: 'RainbowPaw Admin | 管理后台',
       description: 'RainbowPaw 管理后台：运营配置、订单、商家与风控管理。',
       robots: 'noindex, nofollow',
-      canonicalPath: '/admin/',
+      canonicalPath: '/console/',
       ogType: 'website',
       ogImagePath: '/logo.png',
     })

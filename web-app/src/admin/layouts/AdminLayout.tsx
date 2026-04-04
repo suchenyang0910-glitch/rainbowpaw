@@ -67,7 +67,7 @@ export function AdminLayout({ children }: { children: ReactNode }) {
             href={item.path}
             onClick={(e) => {
               e.preventDefault()
-              navigate(item.path || '/admin/dashboard')
+              navigate(item.path || '/console/dashboard')
             }}
           >
             {dom}
@@ -99,4 +99,3 @@ export function AdminLayout({ children }: { children: ReactNode }) {
     </ProLayout>
   )
 }
-

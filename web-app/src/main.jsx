@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client'
 import './index.css'
 import './rainbowpaw.css'
 import App from './App.jsx'
-import { BrowserRouter, Route, Routes } from 'react-router-dom'
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import MiniAppPage from './pages/MiniAppPage.jsx'
 import MerchantPortalPage from './pages/MerchantPortalPage.jsx'
 import MarketplacePage from './pages/MarketplacePage.jsx'
@@ -14,6 +14,13 @@ import SalesCrmLeadPage from './pages/SalesCrmLeadPage.jsx'
 import AftercareQuoteCustomerPage from './pages/AftercareQuoteCustomerPage.jsx'
 import AdminApp from './admin/AdminApp'
 import { LocaleHome, RootRedirect } from './routing/LocaleRoutes.jsx'
+
+function AdminLegacyRedirect() {
+  const location = useLocation()
+  const nextPathname = String(location.pathname || '').replace(/^\/admin(\/|$)/, '/console$1')
+  const next = `${nextPathname}${location.search || ''}${location.hash || ''}`
+  return <Navigate to={next} replace />
+}
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>
@@ -33,7 +40,8 @@ createRoot(document.getElementById('root')).render(
         <Route path="/rainbowpaw/marketplace/product/:productId" element={<ProductDetailPage />} />
         <Route path="/rainbowpaw/marketplace/cart" element={<CartPage />} />
 
-        <Route path="/admin/*" element={<AdminApp />} />
+        <Route path="/console/*" element={<AdminApp />} />
+        <Route path="/admin/*" element={<AdminLegacyRedirect />} />
       </Routes>
     </BrowserRouter>
   </StrictMode>,

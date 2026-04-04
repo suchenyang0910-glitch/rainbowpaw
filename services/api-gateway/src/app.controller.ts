@@ -1228,4 +1228,40 @@ export class AppController {
       refId,
     });
   }
+
+  @Get('admin/console/orders')
+  adminConsoleOrders(
+    @Query('user_id') user_id?: string,
+    @Query('type') type?: string,
+    @Query('status') status?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+  ) {
+    return this.appService.adminConsoleOrders({
+      user_id,
+      type,
+      status,
+      from,
+      to,
+      page,
+      pageSize,
+    });
+  }
+
+  @Get('admin/console/orders/:orderId')
+  adminConsoleOrder(@Param('orderId') orderId: string) {
+    return this.appService.adminConsoleOrder({ orderId });
+  }
+
+  @Get('admin/reports/daily')
+  adminReportDaily(@Query('date') date?: string) {
+    return this.appService.adminReportDaily({ date });
+  }
+
+  @Get('admin/reports/profit')
+  adminReportProfit(@Query('days') days?: string) {
+    return this.appService.adminReportProfit({ days });
+  }
 }

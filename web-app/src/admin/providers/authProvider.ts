@@ -10,15 +10,15 @@ export const authProvider: AuthProvider = {
     const role = (params?.role || 'super_admin') as AdminRole
     const session = buildSession(role)
     saveSession(session)
-    return { success: true, redirectTo: '/admin/dashboard' }
+    return { success: true, redirectTo: '/console/dashboard' }
   },
   logout: async () => {
     clearSession()
-    return { success: true, redirectTo: '/admin/login' }
+    return { success: true, redirectTo: '/console/login' }
   },
   check: async () => {
     const session = loadSession()
-    if (!session) return { authenticated: false, redirectTo: '/admin/login' }
+    if (!session) return { authenticated: false, redirectTo: '/console/login' }
     return { authenticated: true }
   },
   getPermissions: async () => {
@@ -32,4 +32,3 @@ export const authProvider: AuthProvider = {
   },
   onError: async () => ({ error: undefined }),
 }
-

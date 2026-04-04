@@ -12,7 +12,7 @@ export function AiGrowthPage() {
   const [editTarget, setEditTarget] = useState<any | null>(null)
   const [editForm] = Form.useForm()
 
-  const { result, refetch, isFetching } = useCustom({
+  const { result, query } = useCustom({
     url: '/ai/growth/contents',
     method: 'get',
     query: filters,
@@ -24,7 +24,7 @@ export function AiGrowthPage() {
     const res = await mutateAsync({ url: '/ai/growth/generate', method: 'post', values: v })
     setOut((res as any)?.data || null)
     message.success('已生成')
-    if (v.save) refetch()
+    if (v.save) void query.refetch()
   }
 
   const saveEdit = async () => {
@@ -38,7 +38,7 @@ export function AiGrowthPage() {
     message.success('已更新')
     setEditOpen(false)
     setEditTarget(null)
-    refetch()
+    void query.refetch()
   }
 
   return (
@@ -99,7 +99,7 @@ export function AiGrowthPage() {
           title="内容池（draft）"
           extra={
             <Space>
-              <Button onClick={() => refetch()} loading={isFetching}>
+              <Button onClick={() => void query.refetch()} loading={query.isFetching}>
                 刷新
               </Button>
             </Space>
@@ -123,7 +123,7 @@ export function AiGrowthPage() {
               style={{ width: 160 }}
               allowClear
             />
-            <Button type="primary" onClick={() => refetch()}>
+            <Button type="primary" onClick={() => void query.refetch()}>
               查询
             </Button>
           </Space>

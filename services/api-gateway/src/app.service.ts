@@ -307,6 +307,10 @@ export class AppService {
     return process.env.ORDER_SERVICE_URL || 'http://localhost:3006/api';
   }
 
+  private reportBase() {
+    return process.env.REPORT_SERVICE_URL || 'http://localhost:3004/api';
+  }
+
   private aiBase() {
     return String(process.env.AI_ORCHESTRATOR_SERVICE_URL || '').trim();
   }
@@ -3605,6 +3609,82 @@ export class AppService {
         message: 'ok',
         data: { items: [], total: 0, current: page, pageSize: size },
       };
+    }
+  }
+
+  async adminConsoleOrders(opts: {
+    user_id?: string;
+    type?: string;
+    status?: string;
+    from?: string;
+    to?: string;
+    page?: string;
+    pageSize?: string;
+  }) {
+    try {
+      const page = Math.max(1, Number(opts.page || 1));
+      const pageSize = Math.min(200, Math.max(1, Number(opts.pageSize || 20)));
+      const res = await this.internalGet<any>(`${this.orderBase()}/orders`, {
+        user_id: opts.user_id,
+        type: opts.type,
+        status: opts.status,
+        from: opts.from,
+        to: opts.to,
+        page,
+        pageSize,
+      });
+      return res;
+    } catch {
+      const page = Math.max(1, Number(opts.page || 1));
+      const pageSize = Math.min(200, Math.max(1, Number(opts.pageSize || 20)));
+      return { code: 0, message: 'ok', data: { items: [], total: 0, page, pageSize } };
+    }
+  }
+
+  async adminConsoleOrder(opts: { orderId: string }) {
+    const orderId = String(opts.orderId || '').trim();
+    if (!orderId) return { code: 0, message: 'ok', data: null };
+    try {
+      const res = await this.internalGet<any>(
+        `${this.orderBase()}/orders/${encodeURIComponent(orderId)}`,
+      );
+      return res;
+    } catch {
+      return { code: 0, message: 'ok', data: null };
+    }
+  }
+
+  async adminReportDaily(opts: { date?: string }) {
+    try {
+      const res = await this.internalGet<any>(`${this.reportBase()}/reports/daily`, {
+        date: opts.date,
+      });
+      return res;
+    } catch {
+      return {
+        code: 0,
+        message: 'ok',
+        data: {
+          date: '',
+          revenue: { points: 0, usd: 0 },
+          cost: { points: 0, usd: 0 },
+          profit: { usd: 0 },
+          claw_plays: 0,
+          funnel: { clicks: 0, landings: 0, leads: 0, conversions: 0, conversion_rate: 0 },
+          anomalies: [],
+        },
+      };
+    }
+  }
+
+  async adminReportProfit(opts: { days?: string }) {
+    try {
+      const res = await this.internalGet<any>(`${this.reportBase()}/reports/profit`, {
+        days: opts.days,
+      });
+      return res;
+    } catch {
+      return { code: 0, message: 'ok', data: { days: 0, items: [] } };
     }
   }
 
