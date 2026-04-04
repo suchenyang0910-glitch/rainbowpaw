@@ -15,6 +15,10 @@ export class BridgeEventDto {
 
   @IsOptional()
   @IsString()
+  idempotency_key?: string;
+
+  @IsOptional()
+  @IsString()
   source_user_id?: string;
 
   @IsOptional()

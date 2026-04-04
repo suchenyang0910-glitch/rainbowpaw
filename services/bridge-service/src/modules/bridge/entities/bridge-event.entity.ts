@@ -16,6 +16,10 @@ export class BridgeEventEntity {
   @Column({ type: 'varchar', length: 32 })
   source_bot: string;
 
+  @Index({ unique: true, where: "idempotency_key IS NOT NULL AND idempotency_key <> ''" })
+  @Column({ type: 'varchar', length: 128, nullable: true })
+  idempotency_key: string | null;
+
   @Column({ type: 'varchar', length: 64, nullable: true })
   source_user_id: string | null;
 
@@ -28,4 +32,3 @@ export class BridgeEventEntity {
   @Column({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' })
   created_at: Date;
 }
-

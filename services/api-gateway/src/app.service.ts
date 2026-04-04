@@ -767,6 +767,11 @@ export class AppService {
         ? opts.body.event_data
         : {};
 
+    const idem =
+      String(opts?.body?.idempotency_key || '').trim() ||
+      String(eventData?.idempotency_key || '').trim() ||
+      '';
+
     let globalUserId = String(opts?.body?.global_user_id || '').trim();
     let tg: TelegramUserInfo | null = null;
     if (!globalUserId) {
@@ -779,24 +784,146 @@ export class AppService {
 
     if (!globalUserId) return { code: 0, message: 'ok', data: { accepted: false } };
 
+    const eventPayload: any = {
+      event_name: eventName,
+      global_user_id: globalUserId,
+      source_bot: sourceBot,
+      idempotency_key: idem || null,
+      ...(tg
+        ? {
+            source_user_id: String(tg.telegram_id),
+            telegram_id: tg.telegram_id,
+          }
+        : {}),
+      event_data: {
+        ...eventData,
+        idempotency_key: idem || eventData?.idempotency_key || null,
+      },
+    };
+
     await this.internalPost(
       `${this.bridgeBase()}/bridge/events`,
-      {
-        event_name: eventName,
-        global_user_id: globalUserId,
-        source_bot: sourceBot,
-        ...(tg
-          ? {
-              source_user_id: String(tg.telegram_id),
-              telegram_id: tg.telegram_id,
-            }
-          : {}),
-        event_data: eventData,
-      },
+      eventPayload,
       {},
     );
 
+    void this.crmUpsertFromEvent(eventPayload).catch(() => void 0);
     return { code: 0, message: 'ok', data: { accepted: true } };
+  }
+
+  private stableLeadId(input: string) {
+    const s = String(input || '').trim();
+    if (!s) return '';
+    return createHash('sha256').update(s).digest('hex').slice(0, 16);
+  }
+
+  private async crmUpsertFromEvent(payload: any) {
+    const pg = this.getOpsPg();
+    if (!pg) return;
+
+    const eventName = String(payload?.event_name || '').trim();
+    const globalUserId = String(payload?.global_user_id || '').trim();
+    if (!eventName || !globalUserId) return;
+
+    const data =
+      payload?.event_data && typeof payload.event_data === 'object'
+        ? payload.event_data
+        : {};
+
+    const country = String(data?.country || '').trim() || null;
+    const city = String(data?.city || '').trim() || null;
+    const language = String(data?.language || '').trim() || null;
+    const channel =
+      String(data?.utm?.source || data?.channel || payload?.source_bot || '').trim() || null;
+    const sessionId = String(data?.session_id || '').trim() || null;
+    const leadId =
+      String(data?.lead_id || '').trim() ||
+      this.stableLeadId(
+        [globalUserId, sessionId || '', channel || ''].filter(Boolean).join(':'),
+      );
+    if (!leadId) return;
+
+    const intent =
+      eventName.includes('aftercare')
+        ? 'aftercare'
+        : eventName.includes('order') || eventName.includes('checkout')
+          ? 'shop'
+          : null;
+
+    const stage =
+      eventName === 'lead_submit' || eventName === 'chat_started'
+        ? 'new'
+        : eventName === 'quote_sent'
+          ? 'quoted'
+          : eventName === 'order_created' || eventName === 'checkout_completed'
+            ? 'ordered'
+            : eventName === 'payment_confirmed'
+              ? 'paid'
+              : null;
+
+    const utm = data?.utm && typeof data.utm === 'object' ? data.utm : null;
+    const ref = data?.ref && typeof data.ref === 'object' ? data.ref : null;
+    const now = new Date();
+
+    await pg.query(
+      `INSERT INTO crm.leads (
+          lead_id,
+          global_user_id,
+          country,
+          city,
+          language,
+          channel,
+          intent,
+          stage,
+          session_id,
+          utm,
+          ref,
+          last_event_at,
+          created_at,
+          updated_at
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11::jsonb,$12,$12,$12)
+        ON CONFLICT (lead_id) DO UPDATE SET
+          global_user_id = EXCLUDED.global_user_id,
+          country = COALESCE(EXCLUDED.country, crm.leads.country),
+          city = COALESCE(EXCLUDED.city, crm.leads.city),
+          language = COALESCE(EXCLUDED.language, crm.leads.language),
+          channel = COALESCE(EXCLUDED.channel, crm.leads.channel),
+          intent = COALESCE(EXCLUDED.intent, crm.leads.intent),
+          stage = COALESCE(EXCLUDED.stage, crm.leads.stage),
+          session_id = COALESCE(EXCLUDED.session_id, crm.leads.session_id),
+          utm = COALESCE(EXCLUDED.utm, crm.leads.utm),
+          ref = COALESCE(EXCLUDED.ref, crm.leads.ref),
+          last_event_at = EXCLUDED.last_event_at,
+          updated_at = EXCLUDED.updated_at`,
+      [
+        leadId,
+        globalUserId,
+        country,
+        city,
+        language,
+        channel,
+        intent,
+        stage,
+        sessionId,
+        utm ? JSON.stringify(utm) : null,
+        ref ? JSON.stringify(ref) : null,
+        now,
+      ],
+    );
+
+    await pg.query(
+      `INSERT INTO crm.lead_events (lead_id, global_user_id, event_name, source_bot, idempotency_key, event_data, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7)`,
+      [
+        leadId,
+        globalUserId,
+        eventName,
+        String(payload?.source_bot || ''),
+        String(payload?.idempotency_key || '') || null,
+        JSON.stringify(data || {}),
+        now,
+      ],
+    );
   }
 
   async products() {
@@ -1534,10 +1661,374 @@ export class AppService {
   }
 
   async adminBridgeSummary() {
+    const pg = this.getOpsPg();
+    if (!pg)
+      return {
+        code: 0,
+        message: 'ok',
+        data: { scenes: [], clicks: 0, landings: 0, leads: 0, conversions: 0 },
+      };
+
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const q = await pg.query(
+      `SELECT
+        event_name,
+        COALESCE(event_data->'utm'->>'campaign', event_data->>'campaign', event_data->'utm'->>'source', source_bot) AS scene,
+        COUNT(*)::int AS cnt
+      FROM bridge.bridge_events
+      WHERE created_at >= $1
+      GROUP BY event_name, scene
+      ORDER BY cnt DESC
+      LIMIT 200`,
+      [since],
+    );
+
+    const rows = q.rows || [];
+    const sumByEvent = (name: string) =>
+      rows
+        .filter((r: any) => String(r.event_name) === name)
+        .reduce((s: number, r: any) => s + Number(r.cnt || 0), 0);
+
+    const clicks = sumByEvent('ad_click');
+    const landings = sumByEvent('landing_view');
+    const leads = sumByEvent('lead_submit') + sumByEvent('chat_started');
+    const conversions =
+      sumByEvent('order_created') +
+      sumByEvent('checkout_completed') +
+      sumByEvent('payment_confirmed');
+
+    const byScene = new Map<string, any>();
+    for (const r of rows) {
+      const scene = String(r.scene || 'unknown');
+      if (!byScene.has(scene))
+        byScene.set(scene, {
+          scene,
+          clicks: 0,
+          landings: 0,
+          leads: 0,
+          conversions: 0,
+        });
+      const rec = byScene.get(scene);
+      const ev = String(r.event_name || '');
+      const n = Number(r.cnt || 0);
+      if (ev === 'ad_click') rec.clicks += n;
+      else if (ev === 'landing_view') rec.landings += n;
+      else if (ev === 'lead_submit' || ev === 'chat_started') rec.leads += n;
+      else if (
+        ev === 'order_created' ||
+        ev === 'checkout_completed' ||
+        ev === 'payment_confirmed'
+      )
+        rec.conversions += n;
+    }
+    const scenes = Array.from(byScene.values()).sort(
+      (a: any, b: any) => b.conversions - a.conversions || b.leads - a.leads,
+    );
+
     return {
       code: 0,
       message: 'ok',
-      data: { scenes: [], clicks: 0, conversions: 0 },
+      data: { scenes, clicks, landings, leads, conversions, since: since.toISOString() },
+    };
+  }
+
+  async adminBridgeEvents(opts: {
+    since?: string;
+    eventName?: string;
+    limit?: string;
+  }) {
+    const pg = this.getOpsPg();
+    const size = Math.min(500, Math.max(1, Number(opts.limit || 200)));
+    if (!pg)
+      return {
+        code: 0,
+        message: 'ok',
+        data: { items: [], total: 0, limit: size },
+      };
+
+    const since = String(opts?.since || '').trim();
+    const sinceDate = since ? new Date(since) : new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const ev = String(opts?.eventName || '').trim();
+
+    const q = await pg.query(
+      `SELECT id, event_name, global_user_id, source_bot, source_user_id, telegram_id, idempotency_key, event_data, created_at
+       FROM bridge.bridge_events
+       WHERE created_at >= $1
+         AND ($2::text = '' OR event_name = $2)
+       ORDER BY id DESC
+       LIMIT $3`,
+      [sinceDate, ev, size],
+    );
+    const items = (q.rows || []).map((r: any) => ({
+      id: String(r.id),
+      event_name: String(r.event_name),
+      global_user_id: String(r.global_user_id),
+      source_bot: String(r.source_bot),
+      source_user_id: r.source_user_id != null ? String(r.source_user_id) : null,
+      telegram_id: r.telegram_id != null ? String(r.telegram_id) : null,
+      idempotency_key: r.idempotency_key != null ? String(r.idempotency_key) : null,
+      event_data: r.event_data || null,
+      created_at: r.created_at ? new Date(r.created_at).toISOString() : null,
+    }));
+    return { code: 0, message: 'ok', data: { items, total: items.length, limit: size } };
+  }
+
+  async adminCrmLeads(opts: {
+    country?: string;
+    city?: string;
+    stage?: string;
+    q?: string;
+    limit?: string;
+  }) {
+    const pg = this.getOpsPg();
+    const size = Math.min(500, Math.max(1, Number(opts.limit || 200)));
+    if (!pg)
+      return {
+        code: 0,
+        message: 'ok',
+        data: { items: [], total: 0, limit: size },
+      };
+
+    const country = String(opts?.country || '').trim();
+    const city = String(opts?.city || '').trim();
+    const stage = String(opts?.stage || '').trim();
+    const q = String(opts?.q || '').trim();
+
+    const rows = await pg.query(
+      `SELECT lead_id, global_user_id, country, city, language, channel, intent, stage, session_id, utm, ref, last_event_at, owner, next_followup_at, created_at, updated_at
+       FROM crm.leads
+       WHERE ($1::text = '' OR country = $1)
+         AND ($2::text = '' OR city = $2)
+         AND ($3::text = '' OR stage = $3)
+         AND (
+           $4::text = ''
+           OR lead_id ILIKE ('%'||$4||'%')
+           OR global_user_id ILIKE ('%'||$4||'%')
+           OR channel ILIKE ('%'||$4||'%')
+         )
+       ORDER BY updated_at DESC
+       LIMIT $5`,
+      [country, city, stage, q, size],
+    );
+    const items = (rows.rows || []).map((r: any) => ({
+      lead_id: String(r.lead_id),
+      global_user_id: r.global_user_id != null ? String(r.global_user_id) : null,
+      country: r.country != null ? String(r.country) : null,
+      city: r.city != null ? String(r.city) : null,
+      language: r.language != null ? String(r.language) : null,
+      channel: r.channel != null ? String(r.channel) : null,
+      intent: r.intent != null ? String(r.intent) : null,
+      stage: r.stage != null ? String(r.stage) : null,
+      session_id: r.session_id != null ? String(r.session_id) : null,
+      utm: r.utm || null,
+      ref: r.ref || null,
+      last_event_at: r.last_event_at ? new Date(r.last_event_at).toISOString() : null,
+      owner: r.owner != null ? String(r.owner) : null,
+      next_followup_at: r.next_followup_at ? new Date(r.next_followup_at).toISOString() : null,
+      created_at: r.created_at ? new Date(r.created_at).toISOString() : null,
+      updated_at: r.updated_at ? new Date(r.updated_at).toISOString() : null,
+    }));
+    return { code: 0, message: 'ok', data: { items, total: items.length, limit: size } };
+  }
+
+  async adminCrmLeadEvents(opts: { leadId: string; limit?: string }) {
+    const pg = this.getOpsPg();
+    const size = Math.min(500, Math.max(1, Number(opts.limit || 200)));
+    if (!pg)
+      return {
+        code: 0,
+        message: 'ok',
+        data: { items: [], total: 0, limit: size },
+      };
+    const leadId = String(opts.leadId || '').trim();
+    if (!leadId) throw new BadRequestException('leadId required');
+    const q = await pg.query(
+      `SELECT id, lead_id, global_user_id, event_name, source_bot, idempotency_key, event_data, created_at
+       FROM crm.lead_events
+       WHERE lead_id = $1
+       ORDER BY id DESC
+       LIMIT $2`,
+      [leadId, size],
+    );
+    const items = (q.rows || []).map((r: any) => ({
+      id: String(r.id),
+      lead_id: String(r.lead_id),
+      global_user_id: r.global_user_id != null ? String(r.global_user_id) : null,
+      event_name: String(r.event_name),
+      source_bot: r.source_bot != null ? String(r.source_bot) : null,
+      idempotency_key: r.idempotency_key != null ? String(r.idempotency_key) : null,
+      event_data: r.event_data || null,
+      created_at: r.created_at ? new Date(r.created_at).toISOString() : null,
+    }));
+    return { code: 0, message: 'ok', data: { items, total: items.length, limit: size } };
+  }
+
+  async adminUpsertAftercarePricebook(body: any) {
+    const pg = this.getOpsPg();
+    if (!pg)
+      return { code: 0, message: 'ok', data: { saved: false, reason: 'no db' } };
+
+    const country = String(body?.country || '').trim();
+    const city = String(body?.city || '').trim();
+    const packageCode = String(body?.package_code || '').trim();
+    if (!country || !city || !packageCode)
+      throw new BadRequestException('country/city/package_code required');
+
+    const currency = String(body?.currency || 'USD').trim() || 'USD';
+    const base = Math.max(0, Math.floor(Number(body?.base_price_cents || 0)));
+    const pickup = Math.max(0, Math.floor(Number(body?.pickup_fee_cents || 0)));
+    const weightRules =
+      body?.weight_fee_rules && typeof body.weight_fee_rules === 'object'
+        ? body.weight_fee_rules
+        : null;
+    const now = new Date();
+
+    const r = await pg.query(
+      `INSERT INTO pricing.aftercare_pricebooks (
+          country, city, package_code, currency, base_price_cents, pickup_fee_cents, weight_fee_rules, updated_at
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8)
+        ON CONFLICT (country, city, package_code) DO UPDATE SET
+          currency = EXCLUDED.currency,
+          base_price_cents = EXCLUDED.base_price_cents,
+          pickup_fee_cents = EXCLUDED.pickup_fee_cents,
+          weight_fee_rules = EXCLUDED.weight_fee_rules,
+          updated_at = EXCLUDED.updated_at
+        RETURNING id`,
+      [
+        country,
+        city,
+        packageCode,
+        currency,
+        base,
+        pickup,
+        weightRules ? JSON.stringify(weightRules) : null,
+        now,
+      ],
+    );
+
+    return {
+      code: 0,
+      message: 'ok',
+      data: { id: r.rows?.[0]?.id != null ? String(r.rows[0].id) : null },
+    };
+  }
+
+  async adminListAftercarePricebooks(opts: {
+    country?: string;
+    city?: string;
+    limit?: string;
+  }) {
+    const pg = this.getOpsPg();
+    const size = Math.min(500, Math.max(1, Number(opts.limit || 200)));
+    if (!pg)
+      return { code: 0, message: 'ok', data: { items: [], total: 0, limit: size } };
+    const country = String(opts?.country || '').trim();
+    const city = String(opts?.city || '').trim();
+    const q = await pg.query(
+      `SELECT id, country, city, package_code, currency, base_price_cents, pickup_fee_cents, weight_fee_rules, updated_at
+       FROM pricing.aftercare_pricebooks
+       WHERE ($1::text = '' OR country = $1)
+         AND ($2::text = '' OR city = $2)
+       ORDER BY updated_at DESC
+       LIMIT $3`,
+      [country, city, size],
+    );
+    const items = (q.rows || []).map((r: any) => ({
+      id: String(r.id),
+      country: String(r.country),
+      city: String(r.city),
+      package_code: String(r.package_code),
+      currency: String(r.currency || 'USD'),
+      base_price_cents: Number(r.base_price_cents || 0),
+      pickup_fee_cents: Number(r.pickup_fee_cents || 0),
+      weight_fee_rules: r.weight_fee_rules || null,
+      updated_at: r.updated_at ? new Date(r.updated_at).toISOString() : null,
+    }));
+    return { code: 0, message: 'ok', data: { items, total: items.length, limit: size } };
+  }
+
+  async v1AftercareQuote(body: any) {
+    const country = String(body?.country || '').trim();
+    const city = String(body?.city || '').trim();
+    const packageCode = String(body?.package_code || '').trim();
+    if (!country || !city || !packageCode)
+      throw new BadRequestException('country/city/package_code required');
+
+    const pg = this.getOpsPg();
+    if (!pg)
+      return {
+        code: 0,
+        message: 'ok',
+        data: {
+          found: false,
+          country,
+          city,
+          package_code: packageCode,
+          currency: 'USD',
+          base_price_cents: 0,
+          pickup_fee_cents: 0,
+          weight_fee_cents: 0,
+          total_cents: 0,
+        },
+      };
+
+    const q = await pg.query(
+      `SELECT currency, base_price_cents, pickup_fee_cents, weight_fee_rules
+       FROM pricing.aftercare_pricebooks
+       WHERE country = $1 AND city = $2 AND package_code = $3
+       LIMIT 1`,
+      [country, city, packageCode],
+    );
+    const r: any = q.rows && q.rows[0] ? q.rows[0] : null;
+    if (!r)
+      return {
+        code: 0,
+        message: 'ok',
+        data: {
+          found: false,
+          country,
+          city,
+          package_code: packageCode,
+          currency: 'USD',
+          base_price_cents: 0,
+          pickup_fee_cents: 0,
+          weight_fee_cents: 0,
+          total_cents: 0,
+        },
+      };
+
+    const weightKg = typeof body?.weight_kg === 'number' ? body.weight_kg : Number(body?.weight_kg || 0);
+    let weightFee = 0;
+    const rules = r.weight_fee_rules && typeof r.weight_fee_rules === 'object' ? r.weight_fee_rules : null;
+    if (rules && Array.isArray(rules.bands)) {
+      for (const b of rules.bands) {
+        const min = Number(b?.min_kg);
+        const max = Number(b?.max_kg);
+        const fee = Math.max(0, Math.floor(Number(b?.fee_cents || 0)));
+        if (Number.isFinite(min) && Number.isFinite(max) && weightKg >= min && weightKg < max) {
+          weightFee = fee;
+          break;
+        }
+      }
+    }
+    const base = Math.max(0, Number(r.base_price_cents || 0));
+    const pickup = Math.max(0, Number(r.pickup_fee_cents || 0));
+    const total = base + pickup + weightFee;
+
+    return {
+      code: 0,
+      message: 'ok',
+      data: {
+        found: true,
+        country,
+        city,
+        package_code: packageCode,
+        currency: String(r.currency || 'USD'),
+        base_price_cents: base,
+        pickup_fee_cents: pickup,
+        weight_fee_cents: weightFee,
+        total_cents: total,
+      },
     };
   }
 
@@ -1807,6 +2298,10 @@ export class AppService {
     const kind = String(body?.kind || 'push').trim();
     const tone = String(body?.tone || 'warm').trim();
     const topic = String(body?.topic || '拼团召回').trim();
+    const country = String(body?.country || '').trim() || null;
+    const city = String(body?.city || '').trim() || null;
+    const language = String(body?.language || '').trim() || null;
+    const save = Boolean(body?.save);
 
     const aiBase = this.aiBase();
     if (aiBase) {
@@ -1830,7 +2325,7 @@ export class AppService {
             : `【Push｜${topic}】\n${String(ai?.push_message || '')}\n\n裂变：${String(ai?.viral_copy || '')}\n\n策略：${String(
                 ai?.strategy || '',
               )}`;
-        return {
+        const out = {
           code: 0,
           message: 'ok',
           data: {
@@ -1843,6 +2338,8 @@ export class AppService {
             model_hint: String(ai?.model_hint || 'ai-orchestrator'),
           },
         };
+        if (save) await this.adminAiGrowthSave({ ...out.data, country, city, language });
+        return out;
       } catch {}
     }
 
@@ -1857,7 +2354,72 @@ export class AppService {
           : `【Push｜${topic}】\n别让奖励过期～你的拼团还差最后一步，点我立即完成。\n语气：${tone}`,
       model_hint: 'nvidia_build (preferred) / fallback: stub',
     };
+    if (save) await this.adminAiGrowthSave({ ...out, country, city, language, raw_json: null });
     return { code: 0, message: 'ok', data: out };
+  }
+
+  private async adminAiGrowthSave(rec: any) {
+    const pg = this.getOpsPg();
+    if (!pg) return;
+    const kind = String(rec?.kind || '').trim();
+    if (!kind) return;
+    const tone = rec?.tone != null ? String(rec.tone) : null;
+    const topic = rec?.topic != null ? String(rec.topic) : null;
+    const country = rec?.country != null ? String(rec.country) : null;
+    const city = rec?.city != null ? String(rec.city) : null;
+    const language = rec?.language != null ? String(rec.language) : null;
+    const content = String(rec?.content || '').trim();
+    if (!content) return;
+    const modelHint = rec?.model_hint != null ? String(rec.model_hint) : null;
+    const rawJson = rec?.raw_json && typeof rec.raw_json === 'object' ? rec.raw_json : null;
+    await pg.query(
+      `INSERT INTO ai.growth_contents (kind, tone, topic, country, city, language, status, content, raw_json, model_hint, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,'draft',$7,$8::jsonb,$9,$10)`,
+      [
+        kind,
+        tone,
+        topic,
+        country,
+        city,
+        language,
+        content,
+        rawJson ? JSON.stringify(rawJson) : null,
+        modelHint,
+        new Date(),
+      ],
+    );
+  }
+
+  async adminAiGrowthContents(opts: { status?: string; country?: string; limit?: string }) {
+    const pg = this.getOpsPg();
+    const size = Math.min(500, Math.max(1, Number(opts.limit || 200)));
+    if (!pg)
+      return { code: 0, message: 'ok', data: { items: [], total: 0, limit: size } };
+    const status = String(opts?.status || '').trim();
+    const country = String(opts?.country || '').trim();
+    const q = await pg.query(
+      `SELECT id, kind, tone, topic, country, city, language, status, content, model_hint, created_at
+       FROM ai.growth_contents
+       WHERE ($1::text = '' OR status = $1)
+         AND ($2::text = '' OR country = $2)
+       ORDER BY id DESC
+       LIMIT $3`,
+      [status, country, size],
+    );
+    const items = (q.rows || []).map((r: any) => ({
+      id: String(r.id),
+      kind: String(r.kind),
+      tone: r.tone != null ? String(r.tone) : null,
+      topic: r.topic != null ? String(r.topic) : null,
+      country: r.country != null ? String(r.country) : null,
+      city: r.city != null ? String(r.city) : null,
+      language: r.language != null ? String(r.language) : null,
+      status: String(r.status || 'draft'),
+      content: String(r.content || ''),
+      model_hint: r.model_hint != null ? String(r.model_hint) : null,
+      created_at: r.created_at ? new Date(r.created_at).toISOString() : null,
+    }));
+    return { code: 0, message: 'ok', data: { items, total: items.length, limit: size } };
   }
 
   async adminAiRiskSummarize(body: any) {

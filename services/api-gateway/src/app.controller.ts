@@ -953,6 +953,53 @@ export class AppController {
     return this.appService.adminBridgeSummary();
   }
 
+  @Get('admin/bridge/events')
+  adminBridgeEvents(
+    @Query('since') since?: string,
+    @Query('event_name') eventName?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.appService.adminBridgeEvents({ since, eventName, limit });
+  }
+
+  @Get('admin/crm/leads')
+  adminCrmLeads(
+    @Query('country') country?: string,
+    @Query('city') city?: string,
+    @Query('stage') stage?: string,
+    @Query('q') q?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.appService.adminCrmLeads({ country, city, stage, q, limit });
+  }
+
+  @Get('admin/crm/leads/:leadId/events')
+  adminCrmLeadEvents(
+    @Param('leadId') leadId: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.appService.adminCrmLeadEvents({ leadId, limit });
+  }
+
+  @Post('admin/pricing/aftercare/pricebooks')
+  adminUpsertAftercarePricebook(@Body() body: any) {
+    return this.appService.adminUpsertAftercarePricebook(body || {});
+  }
+
+  @Get('admin/pricing/aftercare/pricebooks')
+  adminListAftercarePricebooks(
+    @Query('country') country?: string,
+    @Query('city') city?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.appService.adminListAftercarePricebooks({ country, city, limit });
+  }
+
+  @Post('v1/aftercare/quote')
+  v1AftercareQuote(@Body() body: any) {
+    return this.appService.v1AftercareQuote(body || {});
+  }
+
   @Get('admin/clawPools')
   adminClawPools(
     @Query('current') current?: string,
@@ -1025,6 +1072,15 @@ export class AppController {
   @Post('admin/ai/growth/generate')
   adminAiGrowthGenerate(@Body() body: any) {
     return this.appService.adminAiGrowthGenerate(body || {});
+  }
+
+  @Get('admin/ai/growth/contents')
+  adminAiGrowthContents(
+    @Query('status') status?: string,
+    @Query('country') country?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.appService.adminAiGrowthContents({ status, country, limit });
   }
 
   @Post('admin/ai/risk/summarize')

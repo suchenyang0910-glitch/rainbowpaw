@@ -17,11 +17,19 @@ export class BridgeService {
   ) {}
 
   async reportEvent(dto: BridgeEventDto) {
+    const idem = String(dto.idempotency_key || '').trim();
+    if (idem) {
+      const existed = await this.eventRepo.findOne({ where: { idempotency_key: idem } });
+      if (existed)
+        return { recorded: false, deduped: true, event_name: existed.event_name };
+    }
+
     await this.eventRepo.save(
       this.eventRepo.create({
         event_name: dto.event_name,
         global_user_id: dto.global_user_id,
         source_bot: dto.source_bot,
+        idempotency_key: idem || null,
         source_user_id: dto.source_user_id || null,
         telegram_id: typeof dto.telegram_id === 'number' ? String(dto.telegram_id) : null,
         event_data: dto.event_data || null,

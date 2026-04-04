@@ -129,12 +129,16 @@ CREATE TABLE IF NOT EXISTS bridge.bridge_events (
   source_bot VARCHAR(32) NOT NULL,
   source_user_id VARCHAR(64),
   telegram_id BIGINT,
+  idempotency_key VARCHAR(128),
   event_data JSONB,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_bridge_events_global_user_id ON bridge.bridge_events(global_user_id);
 CREATE INDEX IF NOT EXISTS idx_bridge_events_event_name ON bridge.bridge_events(event_name);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_bridge_events_idempotency_key
+  ON bridge.bridge_events(idempotency_key)
+  WHERE idempotency_key IS NOT NULL AND idempotency_key <> '';
 
 CREATE TABLE IF NOT EXISTS bridge.deep_link_tokens (
   id BIGSERIAL PRIMARY KEY,
@@ -177,6 +181,24 @@ CREATE INDEX IF NOT EXISTS idx_ai_call_logs_global_user_id ON ai.call_logs(globa
 CREATE INDEX IF NOT EXISTS idx_ai_call_logs_role ON ai.call_logs(role);
 CREATE INDEX IF NOT EXISTS idx_ai_call_logs_created_at ON ai.call_logs(created_at);
 
+CREATE TABLE IF NOT EXISTS ai.growth_contents (
+  id BIGSERIAL PRIMARY KEY,
+  kind VARCHAR(32) NOT NULL,
+  tone VARCHAR(32),
+  topic VARCHAR(128),
+  country VARCHAR(8),
+  city VARCHAR(64),
+  language VARCHAR(16),
+  status VARCHAR(16) NOT NULL DEFAULT 'draft',
+  content TEXT NOT NULL,
+  raw_json JSONB,
+  model_hint VARCHAR(128),
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_growth_contents_created_at ON ai.growth_contents(created_at);
+CREATE INDEX IF NOT EXISTS idx_ai_growth_contents_status ON ai.growth_contents(status);
+
 
 -- 5. marketplace schema
 CREATE SCHEMA IF NOT EXISTS marketplace;
@@ -216,3 +238,65 @@ CREATE TABLE IF NOT EXISTS marketplace.product_i18n (
 
 CREATE INDEX IF NOT EXISTS idx_marketplace_product_i18n_product_id ON marketplace.product_i18n(product_id);
 CREATE INDEX IF NOT EXISTS idx_marketplace_product_i18n_lang ON marketplace.product_i18n(lang);
+
+
+-- 6. crm schema
+CREATE SCHEMA IF NOT EXISTS crm;
+
+CREATE TABLE IF NOT EXISTS crm.leads (
+  lead_id VARCHAR(32) PRIMARY KEY,
+  global_user_id VARCHAR(64),
+  country VARCHAR(8),
+  city VARCHAR(64),
+  language VARCHAR(16),
+  channel VARCHAR(32),
+  intent VARCHAR(16),
+  stage VARCHAR(16),
+  session_id VARCHAR(64),
+  utm JSONB,
+  ref JSONB,
+  last_event_at TIMESTAMP,
+  owner VARCHAR(64),
+  next_followup_at TIMESTAMP,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_crm_leads_global_user_id ON crm.leads(global_user_id);
+CREATE INDEX IF NOT EXISTS idx_crm_leads_stage ON crm.leads(stage);
+CREATE INDEX IF NOT EXISTS idx_crm_leads_country_city ON crm.leads(country, city);
+CREATE INDEX IF NOT EXISTS idx_crm_leads_updated_at ON crm.leads(updated_at);
+
+CREATE TABLE IF NOT EXISTS crm.lead_events (
+  id BIGSERIAL PRIMARY KEY,
+  lead_id VARCHAR(32) NOT NULL,
+  global_user_id VARCHAR(64),
+  event_name VARCHAR(64) NOT NULL,
+  source_bot VARCHAR(32),
+  idempotency_key VARCHAR(128),
+  event_data JSONB,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_crm_lead_events_lead_id ON crm.lead_events(lead_id);
+CREATE INDEX IF NOT EXISTS idx_crm_lead_events_event_name ON crm.lead_events(event_name);
+CREATE INDEX IF NOT EXISTS idx_crm_lead_events_created_at ON crm.lead_events(created_at);
+
+
+-- 7. pricing schema
+CREATE SCHEMA IF NOT EXISTS pricing;
+
+CREATE TABLE IF NOT EXISTS pricing.aftercare_pricebooks (
+  id BIGSERIAL PRIMARY KEY,
+  country VARCHAR(8) NOT NULL,
+  city VARCHAR(64) NOT NULL,
+  package_code VARCHAR(32) NOT NULL,
+  currency VARCHAR(16) NOT NULL DEFAULT 'USD',
+  base_price_cents INT NOT NULL DEFAULT 0,
+  pickup_fee_cents INT NOT NULL DEFAULT 0,
+  weight_fee_rules JSONB,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(country, city, package_code)
+);
+
+CREATE INDEX IF NOT EXISTS idx_aftercare_pricebooks_country_city ON pricing.aftercare_pricebooks(country, city);
