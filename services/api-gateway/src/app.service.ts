@@ -303,8 +303,22 @@ export class AppService {
     return process.env.BRIDGE_SERVICE_URL || 'http://localhost:3003/api';
   }
 
+  private orderBase() {
+    return process.env.ORDER_SERVICE_URL || 'http://localhost:3006/api';
+  }
+
   private aiBase() {
     return String(process.env.AI_ORCHESTRATOR_SERVICE_URL || '').trim();
+  }
+
+  private async orderCreate(body: any, idempotencyKey?: string) {
+    const idem = String(idempotencyKey || '').trim();
+    const res = await this.internalPost<any>(
+      `${this.orderBase()}/orders`,
+      body || {},
+      idem ? { 'x-idempotency-key': idem } : undefined,
+    );
+    return res?.data;
   }
 
   private enableRecommendOnPlay() {
@@ -683,11 +697,17 @@ export class AppService {
     const plays = [] as any[];
 
     for (let i = 0; i < m; i += 1) {
+      const ts = Date.now();
+      const playId = `p_${tg.telegram_id}_${ts}_${i}`;
+      const orderExternalId = `o_${tg.telegram_id}_${ts}_${i}`;
+      const spendIdem = `playSpend:${orderExternalId}`;
+      const recycleIdem = `playRecycle:${orderExternalId}`;
+
       try {
         await this.walletSpend(
           linked.global_user_id,
           3,
-          `playSpend:${tg.telegram_id}:${i}:${Date.now()}`,
+          spendIdem,
           'claw_consume',
         );
       } catch (e: any) {
@@ -695,14 +715,53 @@ export class AppService {
           throw new BadRequestException('no plays left');
         throw new BadGatewayException('wallet service unavailable');
       }
+
+      await this.orderCreate(
+        {
+          order_id: orderExternalId,
+          type: 'claw',
+          status: 'paid',
+          amount: 3,
+          currency: 'points',
+          flow: 'income',
+          user_id: linked.global_user_id,
+          metadata: {
+            action: 'play',
+            play_id: playId,
+            telegram_id: tg.telegram_id,
+            source_bot: tg.source_bot,
+          },
+        },
+        spendIdem,
+      ).catch(() => null);
+
       await this.walletRecycle(
         linked.global_user_id,
         2.4,
-        `playRecycle:${tg.telegram_id}:${i}:${Date.now()}`,
+        recycleIdem,
       );
+
+      await this.orderCreate(
+        {
+          order_id: `${orderExternalId}_recycle`,
+          type: 'claw',
+          status: 'posted',
+          amount: 2.4,
+          currency: 'points',
+          flow: 'expense',
+          user_id: linked.global_user_id,
+          metadata: {
+            action: 'recycle',
+            play_id: playId,
+            origin_amount: 3,
+          },
+        },
+        recycleIdem,
+      ).catch(() => null);
+
       plays.push({
-        play_id: `p_${tg.telegram_id}_${Date.now()}_${i}`,
-        order_id: `o_${tg.telegram_id}_${Date.now()}_${i}`,
+        play_id: playId,
+        order_id: orderExternalId,
         tier: 'common',
         near_miss_tier: null,
         prize: { name: '普通奖品', display_name: '普通奖品' },
@@ -1228,7 +1287,7 @@ export class AppService {
         (s: number, x: any) => s + x.unit_price_cents * x.quantity,
         0,
       );
-      this.pushOrder(phone, {
+      const legacy = {
         order_id: orderId,
         phone,
         order_type: 'product',
@@ -1238,11 +1297,26 @@ export class AppService {
         currency: 'USD',
         created_at: now.toISOString(),
         items: details,
-      });
+      };
+      this.pushOrder(phone, legacy);
+
+      await this.orderCreate(
+        {
+          order_id: orderId,
+          type: 'product',
+          status: 'created',
+          amount: total / 100,
+          currency: 'usd',
+          flow: 'income',
+          user_id: phone,
+          metadata: legacy,
+        },
+        idemKey,
+      ).catch(() => null);
       return { code: 0, message: 'ok', data: { order_id: orderId } };
     }
 
-    this.pushOrder(phone, {
+    const legacy = {
       order_id: orderId,
       phone,
       order_type: 'service',
@@ -1256,7 +1330,22 @@ export class AppService {
         match_mode: String(body?.match_mode || 'platform'),
         category: String(body?.category || ''),
       },
-    });
+    };
+    this.pushOrder(phone, legacy);
+
+    await this.orderCreate(
+      {
+        order_id: orderId,
+        type: 'service',
+        status: 'created',
+        amount: 0,
+        currency: 'usd',
+        flow: 'income',
+        user_id: phone,
+        metadata: legacy,
+      },
+      idemKey,
+    ).catch(() => null);
     return { code: 0, message: 'ok', data: { order_id: orderId } };
     });
   }
@@ -1284,7 +1373,7 @@ export class AppService {
         quantity: x.quantity,
       }));
 
-      this.pushOrder(phone, {
+      const legacy = {
         order_id: orderId,
         phone,
         order_type: 'checkout',
@@ -1297,7 +1386,23 @@ export class AppService {
         meta: {
           conversation_channel: String(body?.conversation_channel || 'web'),
         },
-      });
+      };
+
+      this.pushOrder(phone, legacy);
+
+      await this.orderCreate(
+        {
+          order_id: orderId,
+          type: 'product',
+          status: 'created',
+          amount: total / 100,
+          currency: 'usd',
+          flow: 'income',
+          user_id: phone,
+          metadata: legacy,
+        },
+        idemKey,
+      ).catch(() => null);
 
       cart.items = cart.items.filter((x: any) => !x.selected);
       return { code: 0, message: 'ok', data: { order_id: orderId } };

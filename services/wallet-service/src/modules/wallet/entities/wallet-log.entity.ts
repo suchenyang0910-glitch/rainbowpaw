@@ -12,6 +12,9 @@ export class WalletLogEntity {
   @Column({ type: 'varchar', length: 32 })
   biz_type: string;
 
+  @Column({ type: 'varchar', length: 16, default: 'posted' })
+  status: string;
+
   @Column({ type: 'varchar', length: 32 })
   asset_type: string;
 
@@ -41,4 +44,3 @@ export class WalletLogEntity {
   @Column({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' })
   created_at: Date;
 }
-

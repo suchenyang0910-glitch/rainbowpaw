@@ -26,6 +26,16 @@ function registerRainbowStartRoute() {
     const token = match[1];
 
     try {
+      const linked = await identityService
+        .linkUser({
+          source_bot: 'rainbowpaw_bot',
+          source_user_id: String(msg.from.id),
+          telegram_id: msg.from.id,
+          username: msg.from.username || '',
+          first_source: 'telegram',
+        })
+        .catch(() => null);
+
       if (!token) {
         return await rainbowBot.sendMessage(
           chatId,
@@ -55,7 +65,7 @@ function registerRainbowStartRoute() {
 
       let parsed = null;
       try {
-        parsed = await bridgeService.parseDeepLink(token);
+        parsed = await bridgeService.parseDeepLink(token, { to_bot: 'rainbowpaw_bot', consume: true });
       } catch {
         parsed = null;
       }
@@ -77,7 +87,8 @@ function registerRainbowStartRoute() {
         );
       }
 
-      const profile = await identityService.getProfile(parsed.global_user_id).catch(() => null);
+      const effectiveGlobalUserId = parsed.global_user_id || (linked && linked.global_user_id);
+      const profile = await identityService.getProfile(effectiveGlobalUserId).catch(() => null);
 
       let text = '🌈 欢迎来到 RainbowPaw\n\n';
       if (parsed.scene === 'memorial') {

@@ -98,11 +98,17 @@ export class WalletService {
   async getWallet(globalUserId: string) {
     if (!globalUserId) throw new NotFoundException('global_user_id required');
     const w = await this.ensureWallet(globalUserId);
+    const points_total = Number(w.points_total || 0);
+    const points_locked = Number(w.points_locked || 0);
+    const points_cashable = Number(w.points_cashable || 0);
     return {
       global_user_id: w.global_user_id,
-      points_total: Number(w.points_total || 0),
-      points_locked: Number(w.points_locked || 0),
-      points_cashable: Number(w.points_cashable || 0),
+      total_points: points_total,
+      locked_points: points_locked,
+      cashable_points: points_cashable,
+      points_total,
+      points_locked,
+      points_cashable,
       wallet_cash: Number(w.wallet_cash || 0),
     };
   }
@@ -121,7 +127,9 @@ export class WalletService {
     return {
       logs: list.map((l) => ({
         id: l.id,
+        type: l.biz_type,
         biz_type: l.biz_type,
+        status: l.status || 'posted',
         asset_type: l.asset_type,
         change_direction: l.change_direction,
         amount: Number(l.amount || 0),
@@ -164,6 +172,7 @@ export class WalletService {
                 logRepo.create({
                   global_user_id: w.global_user_id,
                   biz_type: dto.biz_type,
+                  status: 'succeeded',
                   asset_type: 'points_locked',
                   change_direction: 'in',
                   amount: this.centsToStr(amt),
@@ -182,6 +191,7 @@ export class WalletService {
                 logRepo.create({
                   global_user_id: w.global_user_id,
                   biz_type: dto.biz_type,
+                  status: 'succeeded',
                   asset_type: 'points_cashable',
                   change_direction: 'in',
                   amount: this.centsToStr(amt),
@@ -200,6 +210,7 @@ export class WalletService {
                 logRepo.create({
                   global_user_id: w.global_user_id,
                   biz_type: dto.biz_type,
+                  status: 'succeeded',
                   asset_type: 'wallet_cash',
                   change_direction: 'in',
                   amount: this.centsToStr(amt),
@@ -228,6 +239,9 @@ export class WalletService {
           return {
             wallet: {
               global_user_id: w.global_user_id,
+              total_points: Number(w.points_total || 0),
+              locked_points: Number(w.points_locked || 0),
+              cashable_points: Number(w.points_cashable || 0),
               points_total: Number(w.points_total || 0),
               points_locked: Number(w.points_locked || 0),
               points_cashable: Number(w.points_cashable || 0),
@@ -272,6 +286,7 @@ export class WalletService {
               logRepo.create({
                 global_user_id: w.global_user_id,
                 biz_type: dto.biz_type,
+                status: 'succeeded',
                 asset_type: 'points_locked',
                 change_direction: 'out',
                 amount: this.centsToStr(useLocked),
@@ -293,6 +308,7 @@ export class WalletService {
               logRepo.create({
                 global_user_id: w.global_user_id,
                 biz_type: dto.biz_type,
+                status: 'succeeded',
                 asset_type: 'points_cashable',
                 change_direction: 'out',
                 amount: this.centsToStr(left),
@@ -321,6 +337,9 @@ export class WalletService {
             },
             wallet: {
               global_user_id: w.global_user_id,
+              total_points: Number(w.points_total || 0),
+              locked_points: Number(w.points_locked || 0),
+              cashable_points: Number(w.points_cashable || 0),
               points_total: Number(w.points_total || 0),
               points_locked: Number(w.points_locked || 0),
               points_cashable: Number(w.points_cashable || 0),
@@ -406,6 +425,7 @@ export class WalletService {
             logRepo.create({
               global_user_id: w.global_user_id,
               biz_type: 'withdraw_apply',
+              status: 'pending',
               asset_type: 'points_cashable',
               change_direction: 'out',
               amount: this.centsToStr(points),
@@ -424,6 +444,7 @@ export class WalletService {
             logRepo.create({
               global_user_id: w.global_user_id,
               biz_type: 'withdraw_apply',
+              status: 'pending',
               asset_type: 'wallet_cash',
               change_direction: 'in',
               amount: this.centsToStr(actualUsdCents),

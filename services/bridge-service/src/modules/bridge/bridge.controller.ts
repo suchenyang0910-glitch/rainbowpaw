@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
 import { BridgeService } from './bridge.service';
 import { success } from '../../common/utils/response';
 import { BridgeEventDto } from './dto/bridge-event.dto';
@@ -21,8 +21,15 @@ export class BridgeController {
   }
 
   @Get('deep-link/:token')
-  async parseDeepLink(@Param('token') token: string) {
-    const result = await this.bridgeService.parseDeepLink(token);
+  async parseDeepLink(
+    @Param('token') token: string,
+    @Query('to_bot') toBot?: string,
+    @Query('consume') consume?: string,
+  ) {
+    const result = await this.bridgeService.parseDeepLink(token, {
+      to_bot: toBot,
+      consume: String(consume || '').toLowerCase() === 'true',
+    });
     return success(result);
   }
 }

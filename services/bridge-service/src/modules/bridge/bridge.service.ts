@@ -62,7 +62,7 @@ export class BridgeService {
     return { token, deep_link: `https://t.me/RainbowPawbot?start=${token}` };
   }
 
-  async parseDeepLink(token: string) {
+  async parseDeepLink(token: string, opts?: { to_bot?: string; consume?: boolean }) {
     if (!token) throw new NotFoundException('token not found');
 
     const rec = await this.tokenRepo.findOne({ where: { token } });
@@ -70,7 +70,18 @@ export class BridgeService {
 
     const now = Date.now();
     const exp = rec.expires_at ? rec.expires_at.getTime() : NaN;
-    const valid = !Number.isFinite(exp) || exp > now;
+    const notExpired = !Number.isFinite(exp) || exp > now;
+
+    const expectedToBot = String(opts?.to_bot || '').trim();
+    const toBotOk = !expectedToBot || expectedToBot === rec.to_bot;
+
+    const valid = notExpired && toBotOk;
+
+    let used_at = rec.used_at;
+    if (opts?.consume && valid && !used_at) {
+      used_at = new Date();
+      await this.tokenRepo.update({ token: rec.token }, { used_at });
+    }
 
     return {
       valid,
@@ -79,6 +90,8 @@ export class BridgeService {
       to_bot: rec.to_bot,
       scene: rec.scene,
       extra_data: rec.extra_data || {},
+      used_at,
+      error_reason: valid ? null : !notExpired ? 'expired' : !toBotOk ? 'to_bot_mismatch' : 'invalid',
     };
   }
 }

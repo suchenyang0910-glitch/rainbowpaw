@@ -75,11 +75,17 @@ async function generateLink(payload) {
   }
 }
 
-async function parseDeepLink(token) {
+async function parseDeepLink(token, opts) {
   try {
-    const { data } = await client.get(
-      `/bridge/deep-link/${encodeURIComponent(String(token || '').trim())}`,
-    );
+    const rawToken = String(token || '').trim();
+    const params = new URLSearchParams();
+    if (opts && typeof opts === 'object') {
+      if (opts.to_bot) params.set('to_bot', String(opts.to_bot));
+      if (typeof opts.consume === 'boolean') params.set('consume', String(opts.consume));
+    }
+
+    const qs = params.toString();
+    const { data } = await client.get(`/bridge/deep-link/${encodeURIComponent(rawToken)}${qs ? `?${qs}` : ''}`);
     return data.data;
   } catch (error) {
     console.error('bridgeService.parseDeepLink error:', error.response?.data || error.message);

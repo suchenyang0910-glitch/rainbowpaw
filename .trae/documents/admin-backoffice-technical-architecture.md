@@ -6,6 +6,7 @@ graph TD
   B --> ID["identity service"]
   B --> WA["wallet service"]
   B --> BR["bridge service"]
+  B --> OR["order service"]
   B --> RE["report service"]
   B --> RI["risk service"]
   B --> DB["PostgreSQL (RBAC & Audit)"]
@@ -20,6 +21,7 @@ graph TD
     ID
     WA
     BR
+    OR
     RE
     RI
   end
@@ -45,7 +47,8 @@ graph TD
 | /console/identity | identity 查询与必要操作 |
 | /console/wallet | wallet 查询与资金类操作 |
 | /console/bridge | bridge 单据查询与重试/补偿 |
-| /console/report | 报表生成、下载、导出 |
+| /console/order | 订单查询、订单详情展示（对齐报表筛选字段） |
+| /console/report | 报表任务生成、状态查询、下载/导出（字段与 order 对齐） |
 | /console/risk | 风控命中队列与审批 |
 | /audit | 审计日志检索与导出 |
 | /settings | 系统配置与服务健康 |
@@ -69,6 +72,37 @@ export interface MeResponse {
   roles: RoleKey[]
   resources: Array<Pick<Resource,'type'|'code'|'route'>>
 }
+export type ISODateTimeString = string
+
+export interface OrderSummary {
+  orderId: string
+  bizTime: ISODateTimeString // 订单业务时间（用于报表口径）
+  status: string
+  amount: string // decimal as string
+  currency: string
+  customerId?: string
+}
+
+export interface OrderDetail extends OrderSummary {
+  items?: Array<{ skuId: string; name: string; qty: number; unitPrice: string }>
+  raw?: Record<string, unknown> // 详情抽屉 JSON 视图
+}
+
+export interface ReportTask {
+  taskId: string
+  reportType: string
+  status: 'pending' | 'running' | 'success' | 'failed'
+  params: {
+    orderId?: string
+    bizTimeFrom?: ISODateTimeString
+    bizTimeTo?: ISODateTimeString
+  }
+  fileName?: string
+  fileUrl?: string
+  errorMessage?: string
+  createdAt: ISODateTimeString
+}
+
 export interface AuditLog {
   id: string
   userId: string
@@ -88,12 +122,37 @@ export interface AuditLog {
   - PATCH /api/rbac/users/:id/roles
   - CRUD /api/rbac/roles
   - CRUD /api/rbac/resources
-- 业务聚合（对接五类服务；BFF 负责鉴权、签名/头部拼装、审计落库、错误码统一）
+- 业务聚合（对接六类服务；BFF 负责鉴权、签名/头部拼装、审计落库、错误码统一）
   - POST /api/console/wallet/adjust
   - POST /api/console/wallet/freeze
   - POST /api/console/bridge/retry
-  - POST /api/console/report/export
+  - GET /api/console/orders
+  - GET /api/console/orders/:orderId
+  - POST /api/console/report/tasks
+  - GET /api/console/report/tasks
+  - GET /api/console/report/tasks/:taskId/download
   - POST /api/console/risk/decision
+
+### 4.3 字段对齐（前端页面 vs 服务返回）
+
+Order 页面（order-service）核心字段对齐：
+| 前端字段（UI） | TypeScript 字段 | order-service 字段（建议） | 说明 |
+|---|---|---|---|
+| 订单号 | orderId | order_id | 全局唯一订单标识 |
+| 业务时间 | bizTime | biz_time | 报表统计口径优先使用 |
+| 状态 | status | status | 统一枚举字符串（由服务定义） |
+| 金额 | amount | amount | decimal 建议以 string 传输避免精度问题 |
+| 币种 | currency | currency | ISO 货币码 |
+
+Report 页面（report-service）任务字段对齐：
+| 前端字段（UI） | TypeScript 字段 | report-service 字段（建议） | 说明 |
+|---|---|---|---|
+| 任务ID | taskId | task_id | 用于查询/下载 |
+| 报表类型 | reportType | report_type | 如 daily/settlement 等（由服务定义） |
+| 任务状态 | status | status | pending/running/success/failed |
+| 筛选参数 | params | params | 需支持 orderId、bizTimeFrom、bizTimeTo |
+| 下载地址 | fileUrl | file_url | success 时返回；或由 download 接口返回 |
+| 失败原因 | errorMessage | error_message | failed 时用于展示与排障 |
 
 ## 6.Data model(if applicable)
 ### 6.1 Data model definition
