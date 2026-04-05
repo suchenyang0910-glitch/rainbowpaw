@@ -166,7 +166,6 @@ const defaultRolePermissions: Record<AdminRole, PermissionCode[]> = {
     'page.orders.list',
     'page.orders.show',
     'page.consoleOrder.list',
-    'page.consoleReport.list',
     'page.clawPlays.list',
 
     'page.crmLeads.list',

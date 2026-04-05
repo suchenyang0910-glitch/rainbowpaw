@@ -1,8 +1,9 @@
 import { PageContainer } from '@ant-design/pro-components'
 import { Alert, Card, Col, Divider, Progress, Row, Space, Statistic, Table, Tag } from 'antd'
-import { useCustom } from '@refinedev/core'
+import { CanAccess, useCustom } from '@refinedev/core'
 import { useMemo } from 'react'
 import { MultiLineTrendChart, SimpleBarChart, SimpleStackBar } from '../../components/charts/SimpleCharts'
+import { hasPermission, loadSession } from '../../providers/adminSession'
 
 type DashboardSummary = {
   date?: string
@@ -48,6 +49,11 @@ type DashboardAlerts = {
 }
 
 export function DashboardPage() {
+  const session = loadSession()
+  const canWithdraw = hasPermission(session, 'page.withdrawRequests.list') || hasPermission(session, 'menu.wallet')
+  const canRisk = hasPermission(session, 'page.risk.list') || hasPermission(session, 'menu.risk')
+  const canReport = hasPermission(session, 'page.consoleReport.list') || hasPermission(session, 'menu.report')
+
   const { query, result } = useCustom<DashboardSummary>({
     url: '/dashboard/summary',
     method: 'get',
@@ -58,14 +64,14 @@ export function DashboardPage() {
     url: '/reports/profit',
     method: 'get',
     query: { days: 7 },
-    queryOptions: { retry: false },
+    queryOptions: { retry: false, enabled: canReport } as any,
   } as any)
 
   const { result: alertsResult } = useCustom<DashboardAlerts>({
     url: '/dashboard/alerts',
     method: 'get',
     query: { current: 1, pageSize: 10 },
-    queryOptions: { retry: false },
+    queryOptions: { retry: false, enabled: canRisk } as any,
   } as any)
 
   const summary = result.data || {}
@@ -76,6 +82,7 @@ export function DashboardPage() {
   const alerts = useMemo(() => ((alertsResult as any)?.data?.items as any[]) || [], [alertsResult])
 
   const profitItems = useMemo(() => {
+    if (!canReport) return []
     const items = ((profitResult as any)?.data?.items as any[]) || []
     return items
       .slice()
@@ -86,7 +93,7 @@ export function DashboardPage() {
         cost_usd: Number(x?.cost?.usd || 0),
         profit_usd: Number(x?.profit?.usd || 0),
       }))
-  }, [profitResult])
+  }, [profitResult, canReport])
 
   const profitSeries = useMemo(() => {
     return {
@@ -127,6 +134,46 @@ export function DashboardPage() {
       ) : null}
 
       <Row gutter={[16, 16]} style={{ marginTop: 12 }}>
+        <Col xs={24}>
+          <CanAccess resource="wallet" action="list">
+            <Card title="平台钱包概览" loading={query.isPending}>
+              <Row gutter={[16, 16]}>
+                <Col xs={24} lg={10}>
+                  {walletPie.length ? <SimpleStackBar segments={walletPie} /> : null}
+                </Col>
+                <Col xs={24} lg={14}>
+                  <Row gutter={[16, 16]}>
+                    <Col xs={24} sm={12} md={6}>
+                      <Statistic title="可提现积分" value={Number(wallet?.points_cashable ?? 0)} />
+                    </Col>
+                    <Col xs={24} sm={12} md={6}>
+                      <Statistic title="冻结积分" value={Number(wallet?.points_locked ?? 0)} />
+                    </Col>
+                    <Col xs={24} sm={12} md={6}>
+                      <Statistic title="现金池" value={Number(wallet?.wallet_cash ?? 0)} prefix="$" precision={2} />
+                    </Col>
+                    <Col xs={24} sm={12} md={6}>
+                      <Statistic title="待处理提现" value={canWithdraw ? Number(summary.withdraw_pending ?? 0) : 0} />
+                    </Col>
+                  </Row>
+                  <Divider style={{ margin: '12px 0' }} />
+                  <Row gutter={[16, 16]}>
+                    <Col xs={24} sm={12} md={8}>
+                      <Statistic title="累计赚取" value={Number(wallet?.total_earned ?? 0)} />
+                    </Col>
+                    <Col xs={24} sm={12} md={8}>
+                      <Statistic title="累计消耗" value={Number(wallet?.total_spent ?? 0)} />
+                    </Col>
+                    <Col xs={24} sm={12} md={8}>
+                      <Statistic title="净资产（估算）" value={Number((wallet?.points_cashable ?? 0) + (wallet?.points_locked ?? 0))} />
+                    </Col>
+                  </Row>
+                </Col>
+              </Row>
+            </Card>
+          </CanAccess>
+        </Col>
+
         <Col xs={24} lg={16}>
           <Row gutter={[16, 16]}>
             <Col xs={24} sm={12} md={8}>
@@ -166,17 +213,20 @@ export function DashboardPage() {
             </Col>
             <Col xs={24} sm={12} md={8}>
               <Card loading={query.isPending}>
-                <Statistic title="待处理提现" value={summary.withdraw_pending ?? 0} />
-              </Card>
-            </Col>
-            <Col xs={24} sm={12} md={8}>
-              <Card loading={query.isPending}>
                 <Statistic title="转化率" value={conversionRate * 100} suffix="%" precision={2} />
               </Card>
             </Col>
+            <CanAccess resource="withdrawRequests" action="list">
+              <Col xs={24} sm={12} md={8}>
+                <Card loading={query.isPending}>
+                  <Statistic title="待处理提现" value={summary.withdraw_pending ?? 0} />
+                </Card>
+              </Col>
+            </CanAccess>
           </Row>
 
-          <Card style={{ marginTop: 16 }} loading={query.isPending} title="漏斗（今日）">
+          <CanAccess resource="consoleReport" action="list">
+            <Card style={{ marginTop: 16 }} loading={query.isPending} title="漏斗（今日）">
             <Row gutter={[16, 16]}>
               <Col xs={24} md={14}>
                 <SimpleBarChart data={funnelData} height={220} />
@@ -191,9 +241,11 @@ export function DashboardPage() {
                 </Space>
               </Col>
             </Row>
-          </Card>
+            </Card>
+          </CanAccess>
 
-          <Card style={{ marginTop: 16 }} title="近 7 天趋势" loading={false}>
+          <CanAccess resource="consoleReport" action="list">
+            <Card style={{ marginTop: 16 }} title="近 7 天趋势" loading={false}>
             <MultiLineTrendChart
               height={260}
               series={[
@@ -209,23 +261,13 @@ export function DashboardPage() {
               <Table.Column dataIndex="cost_usd" title="成本" width={140} render={(v: any) => `$${Number(v || 0).toFixed(2)}`} />
               <Table.Column dataIndex="profit_usd" title="利润" width={140} render={(v: any) => `$${Number(v || 0).toFixed(2)}`} />
             </Table>
-          </Card>
+            </Card>
+          </CanAccess>
         </Col>
 
         <Col xs={24} lg={8}>
-          <Card title="钱包概览" loading={query.isPending}>
-            <Space direction="vertical" style={{ width: '100%' }} size="middle">
-              {walletPie.length ? <SimpleStackBar segments={walletPie} /> : null}
-              <Statistic title="可提现积分" value={Number(wallet?.points_cashable ?? 0)} />
-              <Statistic title="冻结积分" value={Number(wallet?.points_locked ?? 0)} />
-              <Statistic title="现金池（wallet_cash）" value={Number(wallet?.wallet_cash ?? 0)} prefix="$" precision={2} />
-              <Divider style={{ margin: 0 }} />
-              <Statistic title="累计赚取" value={Number(wallet?.total_earned ?? 0)} />
-              <Statistic title="累计消耗" value={Number(wallet?.total_spent ?? 0)} />
-            </Space>
-          </Card>
-
-          <Card style={{ marginTop: 16 }} title="风控概览" loading={query.isPending}>
+          <CanAccess resource="risk" action="list">
+            <Card style={{ marginTop: 16 }} title="风控概览" loading={query.isPending}>
             <Row gutter={[16, 16]}>
               <Col span={12}>
                 <Statistic title="高风险用户" value={Number(risk?.highRiskUsers ?? 0)} />
@@ -240,9 +282,11 @@ export function DashboardPage() {
                 <Statistic title="异常拼团" value={Number(risk?.abnormalGroups ?? 0)} />
               </Col>
             </Row>
-          </Card>
+            </Card>
+          </CanAccess>
 
-          <Card style={{ marginTop: 16 }} title="异常与告警" loading={query.isPending}>
+          <CanAccess resource="consoleReport" action="list">
+            <Card style={{ marginTop: 16 }} title="异常与告警" loading={query.isPending}>
             {anomalies.length ? (
               <Table
                 dataSource={anomalies.map((a: any, i: number) => ({ key: i, ...a }))}
@@ -260,9 +304,11 @@ export function DashboardPage() {
             ) : (
               <Alert type="success" showIcon message="暂无异常" />
             )}
-          </Card>
+            </Card>
+          </CanAccess>
 
-          <Card style={{ marginTop: 16 }} title="最新风险警报" loading={false}>
+          <CanAccess resource="risk" action="list">
+            <Card style={{ marginTop: 16 }} title="最新风险警报" loading={false}>
             <Table dataSource={alerts} rowKey="id" size="small" pagination={false}>
               <Table.Column dataIndex="type" title="类型" width={110} />
               <Table.Column
@@ -276,10 +322,9 @@ export function DashboardPage() {
               />
               <Table.Column dataIndex="title" title="标题" />
             </Table>
-          </Card>
+            </Card>
+          </CanAccess>
         </Col>
-      </Row>
-      <Row gutter={[16, 16]} style={{ marginTop: 12 }}>
       </Row>
     </PageContainer>
   )
