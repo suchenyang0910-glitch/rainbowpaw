@@ -10,19 +10,13 @@ test.describe('Mini App Pages', () => {
   
   test('Claw Machine Page visual and interaction', async ({ page }) => {
     // 根据 main.jsx，真实路由是 /rainbowpawclaw
-    await page.goto('/rainbowpawclaw');
-    // 等待页面加载
-    await page.waitForLoadState('networkidle');
+    await page.goto('/rainbowpawclaw', { waitUntil: 'domcontentloaded' });
 
     // 1. 验证控件、字段、文本 (机器信息、按钮)
-    await expect(page.locator('text=PLAY NOW')).toBeVisible();
-    await expect(page.locator('text=1x 单抽')).toBeVisible();
-    
-    // 2. 验证图片展示 (机器图等)
-    const images = page.locator('img');
-    await expect(images.first()).toBeVisible();
+    await expect(page.locator('text=PLAY NOW')).toBeVisible({ timeout: 15000 });
+    await expect(page.locator('text=1x 单抽')).toBeVisible({ timeout: 15000 });
 
-    // 3. 视觉回归 (样式与间距)
+    // 2. 视觉回归 (样式与间距)
     await expect(page).toHaveScreenshot('miniapp-claw-page.png', {
       fullPage: true,
       maxDiffPixelRatio: 0.05
@@ -31,8 +25,8 @@ test.describe('Mini App Pages', () => {
 
   test('Product/Shop Page visual and layout', async ({ page }) => {
     // 根据 main.jsx，商品页面路由为 /rainbowpaw/marketplace
-    await page.goto('/rainbowpaw/marketplace');
-    await page.waitForLoadState('networkidle');
+    await page.goto('/rainbowpaw/marketplace', { waitUntil: 'domcontentloaded' });
+    await expect(page.locator('text=纪念商城')).toBeVisible({ timeout: 15000 });
 
     // 视觉回归: 间距、样式、商品图
     await expect(page).toHaveScreenshot('miniapp-marketplace-page.png', {

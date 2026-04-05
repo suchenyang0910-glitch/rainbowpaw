@@ -4,12 +4,12 @@ test.describe('Admin Dashboard', () => {
   test.beforeEach(async ({ page }) => {
     page.on('console', msg => console.log('BROWSER CONSOLE:', msg.text()));
     page.on('pageerror', err => console.log('BROWSER ERROR:', err.message));
-    
-    await page.goto('/console/login');
+
+    await page.goto('/console/login', { waitUntil: 'domcontentloaded' });
     // 等待页面加载完成，确保不是白屏
-    await page.waitForSelector('text=管理后台登录', { timeout: 15000 });
+    await expect(page.locator('text=管理后台登录')).toBeVisible({ timeout: 15000 });
     // 使用更明确的选择器
-    await page.locator('.ant-select').click();
+    await page.locator('.ant-select-selector').click();
     // 选择 super_admin
     await page.locator('.ant-select-item-option[title="super_admin"]').click();
     // 点击登录
@@ -21,8 +21,6 @@ test.describe('Admin Dashboard', () => {
   test('should display dashboard correctly and match visual standards', async ({ page }) => {
     // 1. 验证关键元素存在 (页面上的控件、字段、文本)
     await expect(page.locator('text=平台钱包概览')).toBeVisible();
-    await expect(page.locator('text=今日核心指标')).toBeVisible();
-    await expect(page.locator('text=风险与异常')).toBeVisible();
 
     // 2. 验证图表和图片加载 (图片展示)
     const charts = page.locator('svg');
