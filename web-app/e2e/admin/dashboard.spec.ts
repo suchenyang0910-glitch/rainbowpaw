@@ -1,0 +1,52 @@
+import { test, expect } from '@playwright/test';
+
+test.describe('Admin Dashboard', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/console/login');
+    // Assuming there's a quick login mechanism, e.g., selecting super_admin and submitting
+    await page.selectOption('select', 'super_admin');
+    await page.click('button[type="submit"]');
+    // Wait for redirect to dashboard
+    await page.waitForURL('/console/dashboard');
+  });
+
+  test('should display dashboard correctly and match visual standards', async ({ page }) => {
+    // 1. 验证关键元素存在 (页面上的控件、字段、文本)
+    await expect(page.locator('text=平台钱包概览')).toBeVisible();
+    await expect(page.locator('text=今日核心指标')).toBeVisible();
+    await expect(page.locator('text=风险与异常')).toBeVisible();
+
+    // 2. 验证图表和图片加载 (图片展示)
+    const charts = page.locator('svg');
+    await expect(charts.first()).toBeVisible();
+
+    // 3. 验证样式和间距标准 (截屏对比视觉回归，覆盖间距、样式)
+    // 使用 mask 遮罩动态数据，避免测试因为数据变动而 fail
+    await expect(page).toHaveScreenshot('admin-dashboard-layout.png', {
+      fullPage: true,
+      mask: [page.locator('.ant-statistic-content-value'), page.locator('table')],
+      maxDiffPixelRatio: 0.05
+    });
+  });
+
+  test('should navigate through major admin pages', async ({ page }) => {
+    // 验证侧边栏菜单控件
+    const menus = ['订单管理', '提现审核', '风控大盘', 'AI 运营助理'];
+    
+    for (const menu of menus) {
+      await page.click(`text=${menu}`);
+      // 等待加载状态消失
+      await page.waitForTimeout(500); // 简化等待
+      // 验证页面基本元素
+      const pageHeader = page.locator('.ant-page-header-heading-title, h1').first();
+      await expect(pageHeader).toBeVisible();
+      
+      // 验证页面的样式、间距标准 (截屏)
+      await expect(page).toHaveScreenshot(`admin-page-${menu}.png`, {
+        fullPage: true,
+        mask: [page.locator('table'), page.locator('.ant-table-tbody')],
+        maxDiffPixelRatio: 0.05
+      });
+    }
+  });
+});
