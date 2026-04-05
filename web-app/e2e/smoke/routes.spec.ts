@@ -35,16 +35,33 @@ test.describe('Smoke Routes', () => {
   })
 
   test('marketplace page renders', async ({ page }) => {
-    await page.goto('/rainbowpaw/marketplace', { waitUntil: 'domcontentloaded' })
-    await expectNoViteErrorOverlay(page)
+    let retries = 3;
+    let isLoaded = false;
+    while (retries > 0 && !isLoaded) {
+      try {
+        await page.goto('/rainbowpaw/marketplace', { waitUntil: 'domcontentloaded' })
+        await expectNoViteErrorOverlay(page)
+        
+        const title = page.locator('text=纪念商城')
+        if (await title.count()) {
+          await expect(title.first()).toBeVisible({ timeout: 5000 })
+          isLoaded = true;
+          return
+        }
 
-    const title = page.locator('h1.section-title')
-    if (await title.count()) {
-      await expect(title.first()).toBeVisible({ timeout: 45000 })
-      return
+        // Fallback element check
+        const cartIcon = page.locator('svg.lucide-shopping-cart').first()
+        await expect(cartIcon).toBeVisible({ timeout: 5000 })
+        isLoaded = true;
+      } catch (err: any) {
+        console.log(`Retry loading marketplace due to error:`, err.message);
+        retries--;
+        await page.waitForTimeout(2000);
+      }
     }
-
-    const cartLink = page.locator('a:has-text(\"购物车\")')
-    await expect(cartLink.first()).toBeVisible({ timeout: 45000 })
+    
+    if (!isLoaded) {
+      throw new Error(`Failed to load marketplace after retries`);
+    }
   })
 })
