@@ -2,6 +2,7 @@ import { PageContainer } from '@ant-design/pro-components'
 import { Alert, Card, Col, Divider, Progress, Row, Space, Statistic, Table, Tag } from 'antd'
 import { useCustom } from '@refinedev/core'
 import { useMemo } from 'react'
+import { MultiLineTrendChart, SimpleBarChart, SimpleStackBar } from '../../components/charts/SimpleCharts'
 
 type DashboardSummary = {
   date?: string
@@ -87,8 +88,32 @@ export function DashboardPage() {
       }))
   }, [profitResult])
 
+  const profitSeries = useMemo(() => {
+    return {
+      revenue: profitItems.map((x) => ({ x: x.date, y: x.revenue_usd })),
+      cost: profitItems.map((x) => ({ x: x.date, y: x.cost_usd })),
+      profit: profitItems.map((x) => ({ x: x.date, y: x.profit_usd })),
+    }
+  }, [profitItems])
+
   const funnel = summary.funnel || null
   const conversionRate = Number(funnel?.conversion_rate ?? summary.conversion_rate ?? 0)
+
+  const funnelData = useMemo(() => {
+    return [
+      { label: '点击', value: Number(funnel?.clicks || 0), color: '#1677ff' },
+      { label: '落地', value: Number(funnel?.landings || 0), color: '#13c2c2' },
+      { label: '线索', value: Number(funnel?.leads || 0), color: '#722ed1' },
+      { label: '转化', value: Number(funnel?.conversions || 0), color: '#52c41a' },
+    ]
+  }, [funnel])
+
+  const walletPie = useMemo(() => {
+    return [
+      { label: '可提现积分', value: Number(wallet?.points_cashable ?? 0), color: '#1677ff' },
+      { label: '冻结积分', value: Number(wallet?.points_locked ?? 0), color: '#faad14' },
+    ].filter((x) => Number.isFinite(x.value) && x.value > 0)
+  }, [wallet])
 
   return (
     <PageContainer title="仪表盘">
@@ -153,25 +178,32 @@ export function DashboardPage() {
 
           <Card style={{ marginTop: 16 }} loading={query.isPending} title="漏斗（今日）">
             <Row gutter={[16, 16]}>
-              <Col xs={24} md={6}>
-                <Statistic title="点击" value={Number(funnel?.clicks || 0)} />
+              <Col xs={24} md={14}>
+                <SimpleBarChart data={funnelData} height={220} />
               </Col>
-              <Col xs={24} md={6}>
-                <Statistic title="落地" value={Number(funnel?.landings || 0)} />
-              </Col>
-              <Col xs={24} md={6}>
-                <Statistic title="线索" value={Number(funnel?.leads || 0)} />
-              </Col>
-              <Col xs={24} md={6}>
-                <Statistic title="转化" value={Number(funnel?.conversions || 0)} />
+              <Col xs={24} md={10}>
+                <Space direction="vertical" style={{ width: '100%' }} size="middle">
+                  <Card size="small">
+                    <Statistic title="转化率" value={conversionRate * 100} suffix="%" precision={2} />
+                    <Divider style={{ margin: '12px 0' }} />
+                    <Progress percent={Math.round(conversionRate * 10000) / 100} status="active" />
+                  </Card>
+                </Space>
               </Col>
             </Row>
-            <Divider style={{ margin: '12px 0' }} />
-            <Progress percent={Math.round(conversionRate * 10000) / 100} status="active" />
           </Card>
 
-          <Card style={{ marginTop: 16 }} title="近 7 天利润" loading={false}>
-            <Table dataSource={profitItems} rowKey="date" size="middle" pagination={false}>
+          <Card style={{ marginTop: 16 }} title="近 7 天趋势" loading={false}>
+            <MultiLineTrendChart
+              height={260}
+              series={[
+                { name: '收入', color: '#1677ff', points: profitSeries.revenue },
+                { name: '成本', color: '#faad14', points: profitSeries.cost },
+                { name: '利润', color: '#52c41a', points: profitSeries.profit },
+              ]}
+            />
+            <Divider style={{ margin: '12px 0' }} />
+            <Table dataSource={profitItems} rowKey="date" size="small" pagination={false}>
               <Table.Column dataIndex="date" title="日期" width={140} />
               <Table.Column dataIndex="revenue_usd" title="收入" width={140} render={(v: any) => `$${Number(v || 0).toFixed(2)}`} />
               <Table.Column dataIndex="cost_usd" title="成本" width={140} render={(v: any) => `$${Number(v || 0).toFixed(2)}`} />
@@ -183,6 +215,7 @@ export function DashboardPage() {
         <Col xs={24} lg={8}>
           <Card title="钱包概览" loading={query.isPending}>
             <Space direction="vertical" style={{ width: '100%' }} size="middle">
+              {walletPie.length ? <SimpleStackBar segments={walletPie} /> : null}
               <Statistic title="可提现积分" value={Number(wallet?.points_cashable ?? 0)} />
               <Statistic title="冻结积分" value={Number(wallet?.points_locked ?? 0)} />
               <Statistic title="现金池（wallet_cash）" value={Number(wallet?.wallet_cash ?? 0)} prefix="$" precision={2} />
