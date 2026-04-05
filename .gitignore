@@ -13,3 +13,6 @@ web-app/dist/
 
 services/**/node_modules/
 services/**/dist/
+
+web-app/playwright-report/
+web-app/test-results/
