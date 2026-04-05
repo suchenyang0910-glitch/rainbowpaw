@@ -6,9 +6,26 @@ test.describe('Admin Dashboard', () => {
     page.on('console', msg => console.log('BROWSER CONSOLE:', msg.text()));
     page.on('pageerror', err => console.log('BROWSER ERROR:', err.message));
 
-    await page.goto('/console/login', { waitUntil: 'domcontentloaded' });
-    // 等待页面加载完成，确保不是白屏
-    await expect(page.locator('text=管理后台登录')).toBeVisible({ timeout: 15000 });
+    // Handle ERR_NETWORK_CHANGED which might occur on some environments
+    let retries = 3;
+    let isLoaded = false;
+    while (retries > 0 && !isLoaded) {
+      try {
+        await page.goto('/console/login', { waitUntil: 'domcontentloaded' });
+        // 等待页面加载完成，确保不是白屏，给5秒超时
+        await expect(page.locator('text=管理后台登录')).toBeVisible({ timeout: 5000 });
+        isLoaded = true;
+      } catch (err: any) {
+        console.log('Retry loading page due to error:', err.message);
+        retries--;
+        await page.waitForTimeout(2000);
+      }
+    }
+    
+    if (!isLoaded) {
+      throw new Error('Failed to load login page after retries');
+    }
+
     // 使用更明确的选择器
     await page.locator('.ant-select-selector').click();
     // 选择 super_admin

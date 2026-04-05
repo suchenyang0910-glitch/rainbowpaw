@@ -9,11 +9,25 @@ test.use({
 test.describe('Mini App Pages', () => {
   
   test('Claw Machine Page visual and interaction', async ({ page }) => {
-    // 根据 main.jsx，真实路由是 /rainbowpawclaw
-    await page.goto('/rainbowpawclaw', { waitUntil: 'domcontentloaded' });
+    // Handle ERR_NETWORK_CHANGED which might occur on some environments
+    let retries = 3;
+    let isLoaded = false;
+    while (retries > 0 && !isLoaded) {
+      try {
+        await page.goto('/rainbowpawclaw', { waitUntil: 'domcontentloaded' });
+        await expect(page.locator('text=PLAY NOW')).toBeVisible({ timeout: 5000 });
+        isLoaded = true;
+      } catch (err: any) {
+        console.log('Retry loading page due to error:', err.message);
+        retries--;
+        await page.waitForTimeout(2000);
+      }
+    }
+    
+    if (!isLoaded) {
+      throw new Error('Failed to load claw machine page after retries');
+    }
 
-    // 1. 验证控件、字段、文本 (机器信息、按钮)
-    await expect(page.locator('text=PLAY NOW')).toBeVisible({ timeout: 15000 });
     await expect(page.locator('text=1x 单抽')).toBeVisible({ timeout: 15000 });
 
     // 2. 视觉回归 (样式与间距)
@@ -24,9 +38,24 @@ test.describe('Mini App Pages', () => {
   });
 
   test('Product/Shop Page visual and layout', async ({ page }) => {
-    // 根据 main.jsx，商品页面路由为 /rainbowpaw/marketplace
-    await page.goto('/rainbowpaw/marketplace', { waitUntil: 'domcontentloaded' });
-    await expect(page.locator('text=纪念商城')).toBeVisible({ timeout: 15000 });
+    // Handle ERR_NETWORK_CHANGED which might occur on some environments
+    let retries = 3;
+    let isLoaded = false;
+    while (retries > 0 && !isLoaded) {
+      try {
+        await page.goto('/rainbowpaw/marketplace', { waitUntil: 'domcontentloaded' });
+        await expect(page.locator('text=纪念商城')).toBeVisible({ timeout: 5000 });
+        isLoaded = true;
+      } catch (err: any) {
+        console.log('Retry loading page due to error:', err.message);
+        retries--;
+        await page.waitForTimeout(2000);
+      }
+    }
+    
+    if (!isLoaded) {
+      throw new Error('Failed to load marketplace page after retries');
+    }
 
     // 视觉回归: 间距、样式、商品图
     await expect(page).toHaveScreenshot('miniapp-marketplace-page.png', {
