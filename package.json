@@ -24,6 +24,10 @@
     "dev": "concurrently -k -n services,bots,web -c cyan,green,yellow \"npm run dev:services\" \"npm run dev:bots\" \"npm run dev:web\"",
     "infra:up": "docker compose up -d",
     "infra:down": "docker compose down",
-    "test:business": "node tools/business-e2e.mjs"
+    "test:business": "node tools/business-e2e.mjs",
+    "test:e2e:admin": "npm --prefix web-app run test:e2e:admin",
+    "test:e2e:miniapp": "npm --prefix web-app run test:e2e:miniapp",
+    "test:e2e:bot": "npm --prefix web-app run test:e2e:bot",
+    "test:e2e:smoke": "npm --prefix web-app run test:e2e:smoke"
   }
 }
