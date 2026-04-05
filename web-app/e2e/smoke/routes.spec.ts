@@ -1,6 +1,6 @@
-import { test, expect, type Page } from '@playwright/test'
+import { test, expect } from '@playwright/test'
 
-async function expectNoViteErrorOverlay(page: Page) {
+async function expectNoViteErrorOverlay(page) {
   await expect(page.locator('vite-error-overlay')).toHaveCount(0)
 }
 
@@ -10,8 +10,7 @@ test.describe('Smoke Routes', () => {
       try {
         localStorage.clear()
         sessionStorage.clear()
-      } catch {
-      }
+      } catch {}
     })
 
     await page.goto('/console/login', { waitUntil: 'domcontentloaded' })
@@ -45,8 +44,7 @@ test.describe('Smoke Routes', () => {
       return
     }
 
-    const cartLink = page.locator('a:has-text("购物车")')
+    const cartLink = page.locator('a:has-text(\"购物车\")')
     await expect(cartLink.first()).toBeVisible({ timeout: 45000 })
   })
 })
-
