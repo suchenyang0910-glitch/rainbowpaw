@@ -2,13 +2,18 @@ import { test, expect } from '@playwright/test';
 
 test.describe('Admin Dashboard', () => {
   test.beforeEach(async ({ page }) => {
+    page.on('console', msg => console.log('BROWSER CONSOLE:', msg.text()));
+    page.on('pageerror', err => console.log('BROWSER ERROR:', err.message));
+    
     await page.goto('/console/login');
-    // 使用 antd 的 select 进行角色选择
-    await page.click('.ant-select-selector');
+    // 等待页面加载完成，确保不是白屏
+    await page.waitForSelector('text=管理后台登录', { timeout: 15000 });
+    // 使用更明确的选择器
+    await page.locator('.ant-select').click();
     // 选择 super_admin
-    await page.click('.ant-select-item-option[title="super_admin"]');
+    await page.locator('.ant-select-item-option[title="super_admin"]').click();
     // 点击登录
-    await page.click('button[type="submit"]');
+    await page.locator('button[type="submit"]').click();
     // Wait for redirect to dashboard
     await page.waitForURL('**/console/dashboard');
   });

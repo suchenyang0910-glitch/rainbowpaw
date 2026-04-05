@@ -15,8 +15,8 @@ test.describe('Mini App Pages', () => {
     await page.waitForLoadState('networkidle');
 
     // 1. 验证控件、字段、文本 (机器信息、按钮)
-    await expect(page.locator('text=Balance')).toBeVisible();
-    await expect(page.locator('button').first()).toBeVisible();
+    await expect(page.locator('text=PLAY NOW')).toBeVisible();
+    await expect(page.locator('text=1x 单抽')).toBeVisible();
     
     // 2. 验证图片展示 (机器图等)
     const images = page.locator('img');
