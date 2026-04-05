@@ -36,6 +36,7 @@ export default function AdminApp() {
             syncWithLocation: true,
             warnWhenUnsavedChanges: true,
             projectId: 'rainbowpaw-admin',
+            disableTelemetry: true,
           }}
         >
           <AdminRoutes />

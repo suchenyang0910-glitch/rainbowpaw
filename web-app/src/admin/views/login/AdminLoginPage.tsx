@@ -1,7 +1,9 @@
 import { PageContainer } from '@ant-design/pro-components'
 import { Button, Card, Form, Select, Typography } from 'antd'
-import { useLogin } from '@refinedev/core'
+import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import type { AdminRole } from '../../providers/adminSession'
+import { buildSession, saveSession } from '../../providers/adminSession'
 
 const roles: Array<{ value: AdminRole; label: string }> = [
   { value: 'super_admin', label: 'super_admin' },
@@ -12,7 +14,8 @@ const roles: Array<{ value: AdminRole; label: string }> = [
 ]
 
 export function AdminLoginPage() {
-  const { mutate: login, isPending } = useLogin<{ role: AdminRole }>()
+  const navigate = useNavigate()
+  const [submitting, setSubmitting] = useState(false)
 
   return (
     <div style={{ minHeight: '100vh', padding: 24, display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
@@ -28,12 +31,22 @@ export function AdminLoginPage() {
           <Form
             layout="vertical"
             initialValues={{ role: 'super_admin' }}
-            onFinish={(values: { role: AdminRole }) => login({ role: values.role })}
+            onFinish={(values: { role: AdminRole }) => {
+              const role = (values?.role || 'super_admin') as AdminRole
+              setSubmitting(true)
+              try {
+                const session = buildSession(role)
+                saveSession(session)
+                navigate('/console/dashboard', { replace: true })
+              } finally {
+                setSubmitting(false)
+              }
+            }}
           >
             <Form.Item label="角色" name="role" rules={[{ required: true }]}> 
               <Select options={roles} />
             </Form.Item>
-            <Button htmlType="submit" type="primary" block loading={isPending}>
+            <Button htmlType="submit" type="primary" block loading={submitting}>
               登录
             </Button>
           </Form>
