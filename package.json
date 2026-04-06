@@ -28,6 +28,7 @@
     "test:e2e:admin": "npm --prefix web-app run test:e2e:admin",
     "test:e2e:miniapp": "npm --prefix web-app run test:e2e:miniapp",
     "test:e2e:bot": "npm --prefix web-app run test:e2e:bot",
-    "test:e2e:smoke": "npm --prefix web-app run test:e2e:smoke"
+    "test:e2e:smoke": "npm --prefix web-app run test:e2e:smoke",
+    "test:e2e:update-snapshots": "npm --prefix web-app run test:e2e:update-snapshots"
   }
 }
