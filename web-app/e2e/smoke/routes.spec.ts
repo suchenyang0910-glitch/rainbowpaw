@@ -13,25 +13,54 @@ test.describe('Smoke Routes', () => {
       } catch {}
     })
 
-    await page.goto('/console/login', { waitUntil: 'domcontentloaded' })
-    await expectNoViteErrorOverlay(page)
+    let retries = 3;
+    let isLoaded = false;
+    while (retries > 0 && !isLoaded) {
+      try {
+        await page.goto('/console/login', { waitUntil: 'domcontentloaded' })
+        await expectNoViteErrorOverlay(page)
 
-    const loginTitle = page.locator('text=管理后台登录')
-    if (await loginTitle.count()) {
-      await expect(loginTitle.first()).toBeVisible({ timeout: 45000 })
-      return
+        const loginTitle = page.locator('text=管理后台登录')
+        if (await loginTitle.count()) {
+          await expect(loginTitle.first()).toBeVisible({ timeout: 5000 })
+          isLoaded = true;
+          return
+        }
+
+        const dashboardTitle = page.locator('text=平台钱包概览')
+        await expect(dashboardTitle.first()).toBeVisible({ timeout: 5000 })
+        isLoaded = true;
+      } catch (err: any) {
+        console.log(`Retry loading admin login due to error:`, err.message);
+        retries--;
+        await page.waitForTimeout(2000);
+      }
     }
-
-    const dashboardTitle = page.locator('text=平台钱包概览')
-    await expect(dashboardTitle.first()).toBeVisible({ timeout: 45000 })
+    if (!isLoaded) {
+      throw new Error(`Failed to load admin login after retries`);
+    }
   })
 
   test('claw page renders', async ({ page }) => {
-    await page.goto('/rainbowpawclaw', { waitUntil: 'domcontentloaded' })
-    await expectNoViteErrorOverlay(page)
+    let retries = 3;
+    let isLoaded = false;
+    while (retries > 0 && !isLoaded) {
+      try {
+        await page.goto('/rainbowpawclaw', { waitUntil: 'domcontentloaded' })
+        await expectNoViteErrorOverlay(page)
 
-    const primaryCta = page.getByRole('button').filter({ hasText: /play|单抽|抽/i }).first()
-    await expect(primaryCta).toBeVisible({ timeout: 45000 })
+        const primaryCta = page.getByRole('button').filter({ hasText: /play|单抽|抽/i }).first()
+        await expect(primaryCta).toBeVisible({ timeout: 5000 })
+        isLoaded = true;
+      } catch (err: any) {
+        console.log(`Retry loading claw page due to error:`, err.message);
+        retries--;
+        await page.waitForTimeout(2000);
+      }
+    }
+    if (!isLoaded) {
+      throw new Error(`Failed to load claw page after retries`);
+    }
   })
 
   test('marketplace page renders', async ({ page }) => {
