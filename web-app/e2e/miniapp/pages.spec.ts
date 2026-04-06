@@ -12,7 +12,11 @@ const runWithRetry = async (page: any, url: string, expectLocator: string) => {
   while (retries > 0 && !isLoaded) {
     try {
       await page.goto(url, { waitUntil: 'domcontentloaded' });
-      await expect(page.locator(expectLocator)).toBeVisible({ timeout: 5000 });
+      
+      // Some locator patterns might fail if text contains spaces or regex. 
+      // Add a small initial wait or more robust check if needed.
+      const el = page.locator(expectLocator).first();
+      await expect(el).toBeVisible({ timeout: 5000 });
       isLoaded = true;
     } catch (err: any) {
       console.log(`Retry loading ${url} due to error:`, err.message);
@@ -33,10 +37,11 @@ test.describe('Mini App Pages', () => {
       await route.fulfill({ json: { code: 0, data: { id: 'test_user', wallet: { points_cashable: 100 } } } });
     });
     
-    await runWithRetry(page, '/rainbowpawclaw', 'text=PLAY NOW');
+    // Use regex to be more resilient against exact string matches or spaces
+    await runWithRetry(page, '/rainbowpawclaw', 'button:has-text("PLAY NOW")');
 
     // 1. 验证控件、字段、文本 (机器信息、按钮)
-    const playBtn = page.locator('button', { hasText: 'PLAY NOW' }).first();
+    const playBtn = page.locator('button', { hasText: /PLAY NOW/i }).first();
     await expect(playBtn).toBeVisible();
     // 验证按钮样式
     // Use fallback matching or drop strict computed BG color if flaky. Here we ensure at least it's a rounded button.
