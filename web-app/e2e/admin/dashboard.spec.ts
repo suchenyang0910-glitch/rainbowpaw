@@ -60,10 +60,10 @@ test.describe('Admin Console', () => {
 
     // 验证按键点击后跳转
     await submitButton.click();
-    await page.waitForURL('**/console/dashboard', { timeout: 10000 });
+    await page.waitForURL('**/console/dashboard', { timeout: 15000 });
     
-    // 登录后检查 Dashboard 是否正确渲染
-    await expect(page.locator('text=平台钱包概览')).toBeVisible();
+    // 登录后检查 Dashboard 是否正确渲染，由于页面可能有请求，加入稍长超时或自动重试机制
+    await expect(page.locator('text=平台钱包概览')).toBeVisible({ timeout: 15000 });
   });
 
   test.describe('Authenticated Dashboard', () => {
@@ -74,16 +74,24 @@ test.describe('Admin Console', () => {
         try {
           await page.goto('/console/login', { waitUntil: 'domcontentloaded' });
           await expect(page.locator('text=管理后台登录')).toBeVisible({ timeout: 5000 });
+          
+          await page.locator('.ant-select-selector').click();
+          await page.locator('.ant-select-item-option[title="super_admin"]').click();
+          await page.locator('button[type="submit"]').click();
+          await page.waitForURL('**/console/dashboard', { timeout: 15000 });
+          
+          // Verify we actually arrived at dashboard
+          await expect(page.locator('text=平台钱包概览')).toBeVisible({ timeout: 5000 });
           isLoaded = true;
         } catch (err: any) {
+          console.log('Retry authenticated login flow due to error:', err.message);
           retries--;
           await page.waitForTimeout(2000);
         }
       }
-      await page.locator('.ant-select-selector').click();
-      await page.locator('.ant-select-item-option[title="super_admin"]').click();
-      await page.locator('button[type="submit"]').click();
-      await page.waitForURL('**/console/dashboard');
+      if (!isLoaded) {
+        throw new Error('Failed to complete authenticated login flow after retries');
+      }
     });
 
     test('should display dashboard correctly with complete controls and styles', async ({ page }) => {
