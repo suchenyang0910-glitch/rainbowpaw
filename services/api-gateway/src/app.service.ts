@@ -43,59 +43,86 @@ export class AppService {
   >();
 
   private marketplaceProductsStore = [
+    // --- 1. Senior Care (老年护理) ---
+    {
+      id: 201,
+      category: 'senior_care',
+      name: 'Senior Joint Support Chews',
+      description: 'Premium glucosamine and chondroitin for elder pets to improve mobility.',
+      price_cents: 3500,
+      currency: 'USD',
+      images: [{ image_url: 'https://images.unsplash.com/photo-1583337130417-3346a1be7dee?q=80&w=800&auto=format&fit=crop' }],
+      merchant: { id: 'm_official', name: 'RainbowPaw Care' },
+      production_time_days: 1,
+      delivery_type: 'shipment',
+      sales_7d: 45,
+    },
+    {
+      id: 202,
+      category: 'senior_care',
+      name: 'Elder Pet Comfort Pad',
+      description: 'Orthopedic memory foam pad to relieve joint pressure and prevent bedsores.',
+      price_cents: 4900,
+      currency: 'USD',
+      images: [{ image_url: 'https://images.unsplash.com/photo-1583337130417-3346a1be7dee?q=80&w=800&auto=format&fit=crop' }],
+      merchant: { id: 'm_official', name: 'RainbowPaw Care' },
+      production_time_days: 1,
+      delivery_type: 'shipment',
+      sales_7d: 32,
+    },
+    // --- 2. Care Packs (套餐商品) ---
+    {
+      id: 301,
+      category: 'care_pack',
+      name: 'Recovery Pack (Monthly)',
+      description: 'A curated pack containing probiotics, hydration supplements, and soft treats for post-surgery or illness recovery.',
+      price_cents: 5500,
+      currency: 'USD',
+      images: [{ image_url: 'https://images.unsplash.com/photo-1583337130417-3346a1be7dee?q=80&w=800&auto=format&fit=crop' }],
+      merchant: { id: 'm_official', name: 'RainbowPaw Care' },
+      production_time_days: 1,
+      delivery_type: 'shipment',
+      sales_7d: 15,
+    },
+    // --- 3. Memory & Comfort Items (情感与纪念商品) ---
     {
       id: 101,
-      category: 'urn',
-      name: '纪念骨灰盒·陶瓷款',
-      description: '温润哑光质感，可刻字定制，适合长期纪念保存。',
-      price_cents: 8900,
+      category: 'memory',
+      name: 'Paw Print Keepsake Kit',
+      description: 'Create a lasting impression of your pet\'s paw with this easy-to-use, non-toxic clay kit.',
+      price_cents: 1800,
       currency: 'USD',
-      images: [
-        {
-          image_url:
-            'https://images.unsplash.com/photo-1520975916090-3105956dac38?q=80&w=800&auto=format&fit=crop',
-        },
-      ],
-      merchant: { id: 'm_official', name: 'RainbowPaw 官方' },
-      production_time_days: 3,
+      images: [{ image_url: 'https://images.unsplash.com/photo-1520975916090-3105956dac38?q=80&w=800&auto=format&fit=crop' }],
+      merchant: { id: 'm_official', name: 'RainbowPaw Memory' },
+      production_time_days: 1,
       delivery_type: 'shipment',
-      sales_7d: 12,
+      sales_7d: 88,
     },
     {
       id: 102,
-      category: 'jewelry',
-      name: '骨灰晶石吊坠（可定制刻字）',
-      description: '把想念佩戴在身边，支持刻字与多色选择。',
+      category: 'memory',
+      name: 'Custom Memorial Crystal Pendant',
+      description: 'Keep your beloved pet close to your heart with this beautifully crafted crystal pendant (engraving available).',
       price_cents: 4500,
       currency: 'USD',
-      images: [
-        {
-          image_url:
-            'https://images.unsplash.com/photo-1535632066927-ab7c9ab60908?q=80&w=800&auto=format&fit=crop',
-        },
-      ],
-      merchant: { id: 'm_official', name: 'RainbowPaw 官方' },
+      images: [{ image_url: 'https://images.unsplash.com/photo-1535632066927-ab7c9ab60908?q=80&w=800&auto=format&fit=crop' }],
+      merchant: { id: 'm_official', name: 'RainbowPaw Memory' },
       production_time_days: 2,
       delivery_type: 'shipment',
-      sales_7d: 8,
+      sales_7d: 24,
     },
     {
       id: 103,
-      category: 'art',
-      name: '手绘肖像·治愈系油画',
-      description: '根据照片绘制，保留神态与陪伴的温度。',
-      price_cents: 12000,
+      category: 'urn',
+      name: 'Peaceful Ceramic Urn',
+      description: 'A matte-finish ceramic urn designed for a dignified and peaceful resting place.',
+      price_cents: 8900,
       currency: 'USD',
-      images: [
-        {
-          image_url:
-            'https://images.unsplash.com/photo-1582555172866-f73bb12a2ab3?q=80&w=800&auto=format&fit=crop',
-        },
-      ],
-      merchant: { id: 'm_official', name: 'RainbowPaw 官方' },
-      production_time_days: 7,
-      delivery_type: 'digital',
-      sales_7d: 5,
+      images: [{ image_url: 'https://images.unsplash.com/photo-1582555172866-f73bb12a2ab3?q=80&w=800&auto=format&fit=crop' }],
+      merchant: { id: 'm_official', name: 'RainbowPaw Memory' },
+      production_time_days: 3,
+      delivery_type: 'shipment',
+      sales_7d: 12,
     },
   ];
 
@@ -228,7 +255,7 @@ export class AppService {
       'm_official',
       {
         id: 'm_official',
-        name: 'RainbowPaw 官方',
+        name: 'RainbowPaw Care',
         category: 'official',
         status: 'approved',
         created_at: new Date().toISOString(),

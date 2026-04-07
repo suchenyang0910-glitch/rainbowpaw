@@ -6,11 +6,10 @@ import { RP_MINIAPP_LANGS, rpMiniAppGetLangLabel, rpMiniAppLangToLocale } from '
 
 const CATEGORY_OPTIONS = [
   { key: '', label: '全部' },
+  { key: 'senior_care', label: '老年护理' },
+  { key: 'care_pack', label: '护理套餐' },
+  { key: 'memory', label: '情感纪念' },
   { key: 'urn', label: '骨灰盒' },
-  { key: 'jewelry', label: '骨灰首饰' },
-  { key: 'frame', label: '纪念相框' },
-  { key: 'art', label: '纪念艺术' },
-  { key: 'service', label: '服务' },
 ]
 
 export default function MarketplacePage() {
