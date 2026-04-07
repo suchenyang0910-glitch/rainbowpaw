@@ -39,8 +39,28 @@ async function upsertTags(payload) {
   }
 }
 
+async function updatePetProfile(globalUserId, payload) {
+  try {
+    const { data } = await client.post(`/identity/profile/${globalUserId}/pet`, payload);
+    
+    // Auto tag elder pet logic here (or better, handled in the identity-service backend)
+    if (payload.petAgeStage === '7+' || payload.petAgeStage === 'elder') {
+      await upsertTags({
+        global_user_id: globalUserId,
+        tags: [{ tag_key: 'elder_pet', tag_value: 'true' }]
+      });
+    }
+    
+    return data.data;
+  } catch (error) {
+    console.error('identityService.updatePetProfile error:', error.response?.data || error.message);
+    throw error;
+  }
+}
+
 module.exports = {
   linkUser,
   getProfile,
+  updatePetProfile,
   upsertTags,
 };
