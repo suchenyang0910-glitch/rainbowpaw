@@ -28,6 +28,9 @@ export class GlobalUserEntity {
   @Column({ type: 'int', nullable: true })
   pet_age: number | null;
 
+  @Column({ type: 'varchar', length: 16, nullable: true })
+  pet_age_stage: string | null;
+
   @Column({ type: 'numeric', precision: 12, scale: 2, default: 0 })
   spend_total: string;
 

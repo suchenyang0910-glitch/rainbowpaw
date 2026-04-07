@@ -40,6 +40,14 @@ export class AppController {
     });
   }
 
+  @Post('api/wallet/withdraw')
+  walletWithdraw(
+    @Body() body: any,
+    @Headers('x-idempotency-key') idempotencyKey: string,
+  ) {
+    return this.appService.walletWithdraw(body || {}, idempotencyKey);
+  }
+
   @Post('dev/plays/add')
   devAddPlays(
     @Headers('x-dev-telegram-id') devTelegramId: string,
@@ -1134,6 +1142,60 @@ export class AppController {
   @Post('v1/aftercare/quotes/by_token/:token/decision')
   v1AftercareQuoteDecisionByToken(@Param('token') token: string, @Body() body: any) {
     return this.appService.v1AftercareQuoteDecisionByToken({ token, ...(body || {}) });
+  }
+
+  // --- Care System ---
+  @Post('api/care/plan')
+  carePlan(@Body() body: any) {
+    return this.appService.carePlan(body || {});
+  }
+
+  @Post('api/care/subscribe')
+  careSubscribe(@Body() body: any) {
+    return this.appService.careSubscribe(body || {});
+  }
+
+  // --- Bridge System ---
+  @Post('api/bridge/create')
+  bridgeCreate(@Body() body: any) {
+    return this.appService.bridgeCreate(body || {});
+  }
+
+  @Get('api/bridge/resolve')
+  bridgeResolve(@Query('token') token: string) {
+    return this.appService.bridgeResolve({ token });
+  }
+
+  // --- Service System ---
+  @Get('api/service/list')
+  serviceList() {
+    return this.appService.serviceList();
+  }
+
+  @Post('api/service/book')
+  serviceBook(@Body() body: any) {
+    return this.appService.serviceBook(body || {});
+  }
+
+  // --- Claw System ---
+  @Post('api/claw/play')
+  clawPlay(
+    @Headers('x-dev-telegram-id') devTelegramId: string,
+    @Headers('x-telegram-init-data') telegramInitData: string,
+    @Query('tgWebAppData') tgWebAppData: string,
+    @Body() body: any,
+  ) {
+    return this.appService.play({
+      devTelegramId,
+      telegramInitData:
+        telegramInitData || String(tgWebAppData || '') || String(body?.telegram_init_data || ''),
+      multi: Number(body?.multi || 1),
+    });
+  }
+
+  @Post('api/claw/recycle')
+  clawRecycle(@Body() body: any) {
+    return this.appService.clawRecycle(body || {});
   }
 
   @Get('admin/clawPools')

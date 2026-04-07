@@ -7056,4 +7056,153 @@ export class AppService {
       data: { items, total, current: page, pageSize: size },
     };
   }
+
+  // --- Care System Mock / Proxy ---
+  async carePlan(payload: { globalUserId: string }) {
+    // In a real system, this would call AI Orchestrator or Care Service.
+    // For now, we return a mock plan tailored to an elder pet.
+    return {
+      code: 0,
+      data: {
+        plan: [
+          'Joint Support & Mobility',
+          'Kidney Care & Hydration',
+          'Premium Digestive Health'
+        ],
+        recommendedPack: {
+          id: 'care_pack_senior',
+          name: 'Senior Care Pack (Monthly)',
+          price: 29.00
+        }
+      },
+      message: 'success'
+    };
+  }
+
+  async careSubscribe(payload: { globalUserId: string, planId: string }) {
+    // Implement mock subscription
+    return {
+      code: 0,
+      data: {
+        subscription_id: `sub_${randomUUID()}`,
+        status: 'active',
+        next_billing_date: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+      },
+      message: 'Subscribed successfully'
+    };
+  }
+
+  // --- Bridge System Proxy ---
+  async bridgeCreate(payload: { globalUserId: string, targetBot: string }) {
+    try {
+      const res = await axios.post(
+        `${this.BRIDGE_SERVICE_URL}/bridge/generate-link`,
+        {
+          global_user_id: payload.globalUserId,
+          target_bot: payload.targetBot,
+          from_bot: 'claw_bot',
+          purpose: 'service_redirect',
+          expires_in_minutes: 60
+        },
+        { headers: { authorization: `Bearer ${this.INTERNAL_TOKEN}` } },
+      );
+      return res.data;
+    } catch (error: any) {
+      throw new BadGatewayException(error?.response?.data || error.message);
+    }
+  }
+
+  async bridgeResolve(payload: { token: string }) {
+    try {
+      const res = await axios.get(
+        `${this.BRIDGE_SERVICE_URL}/bridge/deep-link/${payload.token}?consume=true`,
+        { headers: { authorization: `Bearer ${this.INTERNAL_TOKEN}` } },
+      );
+      return res.data;
+    } catch (error: any) {
+      throw new BadGatewayException(error?.response?.data || error.message);
+    }
+  }
+
+  // --- Wallet Proxy ---
+  async walletWithdraw(payload: any, idempotencyKey: string) {
+    try {
+      const res = await axios.post(
+        `${this.WALLET_SERVICE_URL}/wallet/withdraw`,
+        {
+          global_user_id: payload.globalUserId,
+          points_cashable_amount: Number(payload.points || 0),
+          method: payload.method || 'usdt',
+          account_info: payload.account_info || {},
+        },
+        {
+          headers: {
+            authorization: `Bearer ${this.INTERNAL_TOKEN}`,
+            'x-idempotency-key': idempotencyKey || `withdraw_${randomUUID()}`,
+          },
+        },
+      );
+      return res.data;
+    } catch (error: any) {
+      throw new BadGatewayException(error?.response?.data || error.message);
+    }
+  }
+
+  // --- Service System Mock / Proxy ---
+  async serviceList() {
+    return {
+      code: 0,
+      data: {
+        services: [
+          {
+            id: 'svc_aftercare_basic',
+            name: 'Peaceful Farewell (Basic)',
+            description: 'Basic cremation service with return of ashes.',
+            price: 49.00
+          },
+          {
+            id: 'svc_aftercare_premium',
+            name: 'Compassionate Care (Premium)',
+            description: 'Home pickup, private cremation, and customized memorial urn.',
+            price: 129.00
+          }
+        ]
+      },
+      message: 'success'
+    };
+  }
+
+  async serviceBook(payload: { globalUserId: string, serviceType: string, time: string }) {
+    return {
+      code: 0,
+      data: {
+        booking_id: `bk_${randomUUID()}`,
+        status: 'pending',
+        time: payload.time || new Date().toISOString()
+      },
+      message: 'Booking created successfully'
+    };
+  }
+
+  // --- Claw System Proxy ---
+  async clawRecycle(payload: { globalUserId: string, originPoints?: number }) {
+    try {
+      const res = await axios.post(
+        `${this.WALLET_SERVICE_URL}/wallet/recycle`,
+        {
+          global_user_id: payload.globalUserId,
+          origin_amount: Number(payload.originPoints || 3),
+        },
+        {
+          headers: {
+            authorization: `Bearer ${this.INTERNAL_TOKEN}`,
+            'x-idempotency-key': `clawRecycle_${randomUUID()}`,
+          },
+        },
+      );
+      return res.data;
+    } catch (error: any) {
+      throw new BadGatewayException(error?.response?.data || error.message);
+    }
+  }
 }

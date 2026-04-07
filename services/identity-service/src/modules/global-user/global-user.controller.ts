@@ -20,6 +20,15 @@ export class GlobalUserController {
     return success(result);
   }
 
+  @Post('profile/:globalUserId/pet')
+  async updatePetProfile(
+    @Param('globalUserId') globalUserId: string,
+    @Body() body: any,
+  ) {
+    const result = await this.globalUserService.updatePetProfile(globalUserId, body);
+    return success(result);
+  }
+
   @Post('tags/upsert')
   async upsertTags(@Body() dto: UpsertTagsDto) {
     const result = await this.globalUserService.upsertTags(dto);

@@ -119,6 +119,7 @@ export class GlobalUserService {
       username: user.username,
       pet_type: user.pet_type,
       pet_age: (user as any).pet_age ?? null,
+      pet_age_stage: (user as any).pet_age_stage ?? null,
       spend_total: Number(user.spend_total || 0),
       spend_level: user.spend_level,
       activity_score: Number((user as any).activity_score || 0),
@@ -129,6 +130,20 @@ export class GlobalUserService {
         score: Number(t.score || 0),
       })),
     };
+  }
+
+  async updatePetProfile(globalUserId: string, payload: any) {
+    const user = await this.globalUserRepo.findOne({ where: { global_user_id: globalUserId } });
+    if (!user) throw new NotFoundException('user not found');
+
+    const updateData: any = { updated_at: new Date() };
+    if (payload.petType) updateData.pet_type = payload.petType;
+    if (payload.petAgeStage) updateData.pet_age_stage = payload.petAgeStage;
+    if (payload.petAge) updateData.pet_age = String(payload.petAge);
+
+    await this.globalUserRepo.update({ id: user.id }, updateData);
+
+    return { global_user_id: globalUserId, updated: true };
   }
 
   async upsertTags(dto: UpsertTagsDto) {
