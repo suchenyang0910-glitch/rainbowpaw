@@ -301,5 +301,17 @@ export const api = {
       body: {},
       headers: idemKey ? { 'x-idempotency-key': idemKey } : undefined,
     })
+  },
+  carePlan() {
+    return apiFetch('/care/plan', { method: 'POST', body: {} })
+  },
+  careSubscribe(planId) {
+    return apiFetch('/care/subscribe', { method: 'POST', body: { planId } })
+  },
+  serviceList() {
+    return apiFetch('/service/list', { method: 'GET' })
+  },
+  serviceBook(serviceType, time) {
+    return apiFetch('/service/book', { method: 'POST', body: { serviceType, time } })
   }
 }

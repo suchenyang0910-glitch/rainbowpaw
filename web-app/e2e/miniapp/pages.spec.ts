@@ -69,6 +69,50 @@ test.describe('Mini App Pages', () => {
     });
   });
 
+  test('Care Plan Page visual and interaction', async ({ page }) => {
+    await page.route('**/api/care/plan', async route => {
+      await route.fulfill({
+        json: {
+          code: 0,
+          data: {
+            plan: ['Joint Support', 'Kidney Care'],
+            recommendedPack: { id: 'pack_1', name: 'Senior Care Pack', price: 29 }
+          }
+        }
+      });
+    });
+
+    await page.goto('/care', { waitUntil: 'domcontentloaded' });
+    
+    // Check AI Powered text and recommended plan
+    await expect(page.locator('text=Based on your pet\'s profile')).toBeVisible({ timeout: 5000 });
+    await expect(page.locator('text=Joint Support')).toBeVisible();
+    await expect(page.locator('text=Senior Care Pack')).toBeVisible();
+    await expect(page.locator('button', { hasText: /Subscribe Care Pack/i })).toBeVisible();
+  });
+
+  test('Services Page visual and interaction', async ({ page }) => {
+    await page.route('**/api/service/list', async route => {
+      await route.fulfill({
+        json: {
+          code: 0,
+          data: {
+            services: [
+              { id: 'srv_1', type: 'aftercare', name: 'Peaceful Farewell', price: 299, description: 'Gentle home pickup and private cremation.' }
+            ]
+          }
+        }
+      });
+    });
+
+    await page.goto('/services', { waitUntil: 'domcontentloaded' });
+    
+    // Check Services List
+    await expect(page.locator('text=We’re here for you')).toBeVisible({ timeout: 5000 });
+    await expect(page.locator('h4', { hasText: 'Peaceful Farewell' })).toBeVisible();
+    await expect(page.locator('button', { hasText: /Book Now/i })).toBeVisible();
+  });
+
   test('Marketplace & Cemetery visual, layout, and routing', async ({ page }) => {
     await page.route('**/api/products*', async route => {
       await route.fulfill({ json: { code: 0, data: { items: [

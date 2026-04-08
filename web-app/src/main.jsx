@@ -15,6 +15,9 @@ import AftercareQuoteCustomerPage from './pages/AftercareQuoteCustomerPage.jsx'
 import AdminApp from './admin/AdminApp'
 import { LocaleHome, RootRedirect } from './routing/LocaleRoutes.jsx'
 
+import CarePlanPage from './pages/CarePlanPage.jsx'
+import ServicesPage from './pages/ServicesPage.jsx'
+
 function AdminLegacyRedirect() {
   const location = useLocation()
   const nextPathname = String(location.pathname || '').replace(/^\/admin(\/|$)/, '/console$1')
@@ -30,6 +33,9 @@ createRoot(document.getElementById('root')).render(
         <Route path="/:locale" element={<LocaleHome />} />
 
         <Route path="/rainbowpawclaw" element={<App />} />
+        
+        <Route path="/care" element={<CarePlanPage />} />
+        <Route path="/services" element={<ServicesPage />} />
 
         <Route path="/rainbowpaw" element={<MiniAppPage />} />
         <Route path="/rainbowpaw/crm" element={<SalesCrmDashboardPage />} />
