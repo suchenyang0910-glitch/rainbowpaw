@@ -113,6 +113,33 @@ test.describe('Mini App Pages', () => {
     await expect(page.locator('button', { hasText: /Book Now/i })).toBeVisible();
   });
 
+  test('Memorial Page visual and interaction', async ({ page }) => {
+    await page.route('**/api/memorial/list*', async route => {
+      await route.fulfill({
+        json: {
+          code: 0,
+          data: { pages: [{ id: 'm1', pet_name: 'Buddy', passed_away_date: '2025-10-15', cover_image: '', candles_lit: 10 }] }
+        }
+      });
+    });
+
+    await page.route('**/api/memorial/m1', async route => {
+      await route.fulfill({
+        json: {
+          code: 0,
+          data: {
+            id: 'm1', pet_name: 'Buddy', passed_away_date: '2025-10-15',
+            bio: 'Best boy', cover_image: '', candles_lit: 10, gallery: []
+          }
+        }
+      });
+    });
+
+    await runWithRetry(page, '/memorial', 'h2:has-text("Buddy")');
+    
+    await expect(page.locator('button', { hasText: /Light a Candle/i })).toBeVisible();
+  });
+
   test('Marketplace & Cemetery visual, layout, and routing', async ({ page }) => {
     await page.route('**/api/products*', async route => {
       await route.fulfill({ json: { code: 0, data: { items: [

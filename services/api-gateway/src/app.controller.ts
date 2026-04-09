@@ -1166,6 +1166,25 @@ export class AppController {
     return this.appService.bridgeResolve({ token });
   }
 
+  // --- Memorial System ---
+  @Get('api/memorial/list')
+  memorialList(@Query('globalUserId') globalUserId: string) {
+    return this.appService.memorialList({ globalUserId });
+  }
+
+  @Get('api/memorial/:id')
+  memorialDetail(@Param('id') id: string) {
+    return this.appService.memorialDetail(id);
+  }
+
+  @Post('api/memorial/:id/candle')
+  memorialLightCandle(@Param('id') id: string, @Body() body: any) {
+    return this.appService.memorialLightCandle({
+      globalUserId: body?.globalUserId,
+      memorialId: id
+    });
+  }
+
   // --- Service System ---
   @Get('api/service/list')
   serviceList() {
@@ -1382,5 +1401,25 @@ export class AppController {
   @Get('admin/reports/profit')
   adminReportProfit(@Query('days') days?: string) {
     return this.appService.adminReportProfit({ days });
+  }
+
+  @Post('care/plan')
+  carePlan(@Body() body: any) {
+    return this.appService.carePlan(body || {});
+  }
+
+  @Post('care/subscribe')
+  careSubscribe(@Body() body: any) {
+    return this.appService.careSubscribe(body || {});
+  }
+
+  @Get('service/list')
+  serviceList() {
+    return this.appService.serviceList();
+  }
+
+  @Post('service/book')
+  serviceBook(@Body() body: any) {
+    return this.appService.serviceBook(body || {});
   }
 }

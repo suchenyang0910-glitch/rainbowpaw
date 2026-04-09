@@ -17,6 +17,7 @@ import { LocaleHome, RootRedirect } from './routing/LocaleRoutes.jsx'
 
 import CarePlanPage from './pages/CarePlanPage.jsx'
 import ServicesPage from './pages/ServicesPage.jsx'
+import MemorialPage from './pages/MemorialPage.jsx'
 
 function AdminLegacyRedirect() {
   const location = useLocation()
@@ -36,6 +37,7 @@ createRoot(document.getElementById('root')).render(
         
         <Route path="/care" element={<CarePlanPage />} />
         <Route path="/services" element={<ServicesPage />} />
+        <Route path="/memorial" element={<MemorialPage />} />
 
         <Route path="/rainbowpaw" element={<MiniAppPage />} />
         <Route path="/rainbowpaw/crm" element={<SalesCrmDashboardPage />} />

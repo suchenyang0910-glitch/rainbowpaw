@@ -596,13 +596,14 @@ export class AppService {
     globalUserId: string,
     recycleAmount: number,
     idemKey: string,
+    originAmount: number = 3,
   ) {
     const { data } = await axios.post(
       `${this.walletBase()}/wallet/recycle`,
       {
         global_user_id: globalUserId,
         biz_type: 'claw_recycle',
-        origin_amount: 3,
+        origin_amount: originAmount,
         recycle_amount: recycleAmount,
         split_rule: { locked_ratio: 0.6, cashable_ratio: 0.4 },
         ref_type: 'gateway',
@@ -7107,6 +7108,22 @@ export class AppService {
   }
 
   async careSubscribe(payload: { globalUserId: string, planId: string }) {
+    if (!payload?.globalUserId) {
+      throw new BadRequestException('globalUserId is required for subscription');
+    }
+    
+    // Deduct from wallet first
+    try {
+      await this.walletSpend(
+        payload.globalUserId,
+        29.00, // Monthly Care Pack price
+        `care_sub_${randomUUID()}`,
+        'care_subscription',
+      );
+    } catch (error: any) {
+      throw new BadGatewayException(error?.response?.data?.message || 'Insufficient funds or wallet service error');
+    }
+
     // Implement mock subscription
     return {
       code: 0,
@@ -7175,6 +7192,57 @@ export class AppService {
     }
   }
 
+  // --- Memorial System Mock ---
+  async memorialList(payload: { globalUserId: string }) {
+    return {
+      code: 0,
+      data: {
+        pages: [
+          {
+            id: 'mem_001',
+            pet_name: 'Buddy',
+            pet_type: 'dog',
+            passed_away_date: '2025-10-15',
+            cover_image: 'https://images.unsplash.com/photo-1543466835-00a7907e9de1?auto=format&fit=crop&w=400&q=80',
+            candles_lit: 12
+          }
+        ]
+      },
+      message: 'success'
+    };
+  }
+
+  async memorialDetail(id: string) {
+    return {
+      code: 0,
+      data: {
+        id: id,
+        pet_name: 'Buddy',
+        pet_type: 'dog',
+        passed_away_date: '2025-10-15',
+        bio: 'Buddy was the best boy. He loved chasing tennis balls and sleeping in the sun.',
+        cover_image: 'https://images.unsplash.com/photo-1543466835-00a7907e9de1?auto=format&fit=crop&w=800&q=80',
+        candles_lit: 12,
+        gallery: [
+          'https://images.unsplash.com/photo-1544568100-847a948585b9?auto=format&fit=crop&w=400&q=80',
+          'https://images.unsplash.com/photo-1583337130417-3346a1be7dee?auto=format&fit=crop&w=400&q=80'
+        ]
+      },
+      message: 'success'
+    };
+  }
+
+  async memorialLightCandle(payload: { globalUserId: string, memorialId: string }) {
+    return {
+      code: 0,
+      data: {
+        memorial_id: payload.memorialId,
+        candles_lit: 13,
+      },
+      message: 'Candle lit successfully'
+    };
+  }
+
   // --- Service System Mock / Proxy ---
   async serviceList() {
     return {
@@ -7214,20 +7282,21 @@ export class AppService {
   // --- Claw System Proxy ---
   async clawRecycle(payload: { globalUserId: string, originPoints?: number }) {
     try {
-      const res = await axios.post(
-        `${this.WALLET_SERVICE_URL}/wallet/recycle`,
-        {
-          global_user_id: payload.globalUserId,
-          origin_amount: Number(payload.originPoints || 3),
-        },
-        {
-          headers: {
-            authorization: `Bearer ${this.INTERNAL_TOKEN}`,
-            'x-idempotency-key': `clawRecycle_${randomUUID()}`,
-          },
-        },
+      const origin = Number(payload.originPoints || 3);
+      // Let's assume 80% recycle rate as an example
+      const recycleAmount = origin * 0.8;
+      
+      const res = await this.walletRecycle(
+        payload.globalUserId,
+        recycleAmount,
+        `clawRecycle_${randomUUID()}`,
+        origin
       );
-      return res.data;
+      return {
+        code: 0,
+        data: res,
+        message: 'Recycled successfully',
+      };
     } catch (error: any) {
       throw new BadGatewayException(error?.response?.data || error.message);
     }

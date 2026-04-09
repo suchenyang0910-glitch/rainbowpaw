@@ -313,5 +313,19 @@ export const api = {
   },
   serviceBook(serviceType, time) {
     return apiFetch('/service/book', { method: 'POST', body: { serviceType, time } })
+  },
+  memorialList(globalUserId) {
+    return apiFetch(`/memorial/list?globalUserId=${encodeURIComponent(String(globalUserId))}`)
+  },
+  memorialDetail(id) {
+    return apiFetch(`/memorial/${encodeURIComponent(String(id))}`)
+  },
+  memorialLightCandle(globalUserId, memorialId) {
+    return apiFetch(`/memorial/${encodeURIComponent(String(memorialId))}/candle`, {
+      method: 'POST',
+      body: { globalUserId }
+    })
   }
 }
+
+export default api
