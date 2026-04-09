@@ -156,7 +156,18 @@ test.describe('Mini App Pages', () => {
   });
 
   test('Marketplace & Cemetery visual, layout, and routing', async ({ page }) => {
+    // Mock the detail endpoint to prevent proxy errors when clicking "查看详情"
+    await page.route('**/api/marketplace/products/1*', async route => {
+      await route.fulfill({ json: { code: 0, data: { 
+        id: '1', name: 'Test Product 1', price_cents: 1000, currency: 'USD', description: 'Desc 1', detail_images: []
+      } } });
+    });
+
     await page.route('**/api/marketplace/products*', async route => {
+      if (route.request().url().includes('/products/1')) {
+        await route.fallback();
+        return;
+      }
       await route.fulfill({ json: { code: 0, data: { items: [
         { id: '1', name: 'Test Product 1', price_cents: 1000, currency: 'USD', description: 'Desc 1' }
       ] } } });
