@@ -114,6 +114,7 @@ test.describe('Mini App Pages', () => {
   });
 
   test('Memorial Page visual and interaction', async ({ page }) => {
+    // 拦截 /api/memorial/list 请求
     await page.route('**/api/memorial/list*', async route => {
       await route.fulfill({
         json: {
@@ -123,7 +124,17 @@ test.describe('Mini App Pages', () => {
       });
     });
 
-    await page.route('**/api/memorial/m1', async route => {
+    // 拦截具体的详情请求（可能包含 /api/service/memorial）
+    await page.route('**/api/service/memorial/list', async route => {
+      await route.fulfill({
+        json: {
+          code: 0,
+          data: { pages: [{ id: 'm1', pet_name: 'Buddy', passed_away_date: '2025-10-15', cover_image: '', candles_lit: 10 }] }
+        }
+      });
+    });
+
+    await page.route('**/api/service/memorial/m1', async route => {
       await route.fulfill({
         json: {
           code: 0,
@@ -135,9 +146,12 @@ test.describe('Mini App Pages', () => {
       });
     });
 
-    await runWithRetry(page, '/memorial', 'h2:has-text("Buddy")');
+    // We only use /memorial directly now, which maps to MemorialPage listing/detail logic
+    await runWithRetry(page, '/memorial', 'text=Buddy');
     
-    await expect(page.locator('button', { hasText: /Light a Candle/i })).toBeVisible();
+    // Check for the existence of the memorial card and light candle action
+    await expect(page.locator('text=Buddy').first()).toBeVisible({ timeout: 5000 });
+    await expect(page.locator('button', { hasText: /Light a Candle/i }).first()).toBeVisible();
   });
 
   test('Marketplace & Cemetery visual, layout, and routing', async ({ page }) => {
