@@ -85,10 +85,10 @@ test.describe('Mini App Pages', () => {
     await page.goto('/care', { waitUntil: 'domcontentloaded' });
     
     // Check AI Powered text and recommended plan
-    await expect(page.locator('text=Based on your pet\'s profile')).toBeVisible({ timeout: 5000 });
-    await expect(page.locator('text=Joint Support')).toBeVisible();
-    await expect(page.locator('text=Senior Care Pack')).toBeVisible();
-    await expect(page.locator('button', { hasText: /Subscribe Care Pack/i })).toBeVisible();
+    await expect(page.locator('text=Based on your pet\'s profile').first()).toBeVisible({ timeout: 5000 });
+    await expect(page.locator('text=Joint Support').first()).toBeVisible();
+    await expect(page.locator('text=Senior Care Pack').first()).toBeVisible();
+    await expect(page.locator('button', { hasText: /Subscribe Care Pack/i }).first()).toBeVisible();
   });
 
   test('Services Page visual and interaction', async ({ page }) => {
