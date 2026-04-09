@@ -124,17 +124,8 @@ test.describe('Mini App Pages', () => {
       });
     });
 
-    // 拦截具体的详情请求（可能包含 /api/service/memorial）
-    await page.route('**/api/service/memorial/list', async route => {
-      await route.fulfill({
-        json: {
-          code: 0,
-          data: { pages: [{ id: 'm1', pet_name: 'Buddy', passed_away_date: '2025-10-15', cover_image: '', candles_lit: 10 }] }
-        }
-      });
-    });
-
-    await page.route('**/api/service/memorial/m1', async route => {
+    // 拦截具体的详情请求
+    await page.route('**/api/memorial/m1', async route => {
       await route.fulfill({
         json: {
           code: 0,
@@ -146,16 +137,26 @@ test.describe('Mini App Pages', () => {
       });
     });
 
+    // 拦截点蜡烛请求
+    await page.route('**/api/memorial/m1/candle', async route => {
+      await route.fulfill({
+        json: {
+          code: 0,
+          data: { candles_lit: 11 }
+        }
+      });
+    });
+
     // We only use /memorial directly now, which maps to MemorialPage listing/detail logic
-    await runWithRetry(page, '/memorial', 'text=Buddy');
+    await runWithRetry(page, '/memorial', 'h2:has-text("Buddy")');
     
     // Check for the existence of the memorial card and light candle action
-    await expect(page.locator('text=Buddy').first()).toBeVisible({ timeout: 5000 });
+    await expect(page.locator('h2:has-text("Buddy")').first()).toBeVisible({ timeout: 5000 });
     await expect(page.locator('button', { hasText: /Light a Candle/i }).first()).toBeVisible();
   });
 
   test('Marketplace & Cemetery visual, layout, and routing', async ({ page }) => {
-    await page.route('**/api/products*', async route => {
+    await page.route('**/api/marketplace/products*', async route => {
       await route.fulfill({ json: { code: 0, data: { items: [
         { id: '1', name: 'Test Product 1', price_cents: 1000, currency: 'USD', description: 'Desc 1' }
       ] } } });
@@ -173,9 +174,9 @@ test.describe('Mini App Pages', () => {
     await expect(cartIcon).toBeVisible({ timeout: 10000 }).catch(() => console.log('Cart icon fallback'));
 
     // 2. 交互：点击商品跳转
-    const firstProduct = page.locator('.card h3', { hasText: 'Test Product 1' }).first();
+    const firstProduct = page.locator('.card', { hasText: 'Test Product 1' }).first();
     if (await firstProduct.isVisible()) {
-      await firstProduct.click();
+      await firstProduct.locator('a', { hasText: '查看详情' }).click();
       await expect(page).toHaveURL(/.*\/product\/.*/);
       
       // Go back to marketplace

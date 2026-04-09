@@ -20,16 +20,16 @@ export default function MemorialPage() {
   const fetchMemorials = async () => {
     try {
       setLoading(true)
-      const res = await api.memorialList(globalUserId)
-      if (res.code === 0 && res.data?.pages) {
-        setMemorials(res.data.pages)
-        if (res.data.pages.length > 0) {
-          fetchDetail(res.data.pages[0].id)
+      const data = await api.memorialList(globalUserId)
+      if (data && data.pages) {
+        setMemorials(data.pages)
+        if (data.pages.length > 0) {
+          fetchDetail(data.pages[0].id)
         } else {
           setLoading(false)
         }
       } else {
-        throw new Error(res.message || 'Failed to fetch memorials')
+        throw new Error('Failed to fetch memorials')
       }
     } catch (err) {
       console.error(err)
@@ -41,11 +41,11 @@ export default function MemorialPage() {
   const fetchDetail = async (id) => {
     try {
       setLoading(true)
-      const res = await api.memorialDetail(id)
-      if (res.code === 0) {
-        setSelectedMemorial(res.data)
+      const data = await api.memorialDetail(id)
+      if (data) {
+        setSelectedMemorial(data)
       } else {
-        throw new Error(res.message || 'Failed to fetch memorial detail')
+        throw new Error('Failed to fetch memorial detail')
       }
     } catch (err) {
       console.error(err)
@@ -59,11 +59,11 @@ export default function MemorialPage() {
     if (!selectedMemorial) return
     try {
       setLighting(true)
-      const res = await api.memorialLightCandle(globalUserId, selectedMemorial.id)
-      if (res.code === 0) {
+      const data = await api.memorialLightCandle(globalUserId, selectedMemorial.id)
+      if (data && typeof data.candles_lit !== 'undefined') {
         setSelectedMemorial((prev) => ({
           ...prev,
-          candles_lit: res.data.candles_lit
+          candles_lit: data.candles_lit
         }))
       }
     } catch (err) {
