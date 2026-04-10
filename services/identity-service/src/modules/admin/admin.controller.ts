@@ -113,17 +113,19 @@ export class AdminController {
       const score = it?.score != null ? Number(it.score) : null;
       const existed = await this.userTagsRepo.findOne({ where: { global_user_id: globalUserId, tag_key } });
       if (existed) {
-        existed.tag_value = tag_value;
-        existed.score = score != null && Number.isFinite(score) ? score : null;
+        existed.tag_value = tag_value !== undefined ? String(tag_value) : existed.tag_value;
+        existed.score = score != null && Number.isFinite(score) ? String(score) : existed.score;
+        existed.updated_at = new Date();
         await this.userTagsRepo.save(existed);
       } else {
         await this.userTagsRepo.save(
           this.userTagsRepo.create({
             global_user_id: globalUserId,
             tag_key,
-            tag_value,
-            score: score != null && Number.isFinite(score) ? score : null,
+            tag_value: tag_value !== undefined ? String(tag_value) : null,
+            score: score != null && Number.isFinite(score) ? String(score) : '1',
             created_at: new Date(),
+            updated_at: new Date(),
           }),
         );
       }

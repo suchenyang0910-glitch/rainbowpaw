@@ -47,7 +47,7 @@ export class OrdersController {
 
   @Post(':orderId/status')
   async updateStatus(@Param('orderId') orderId: string, @Body() dto: UpdateStatusDto) {
-    const result = await this.ordersService.updateStatus(orderId, dto.status);
+    const result = await this.ordersService.updateStatus(orderId, dto.status, dto.remark);
     return success(result);
   }
 }

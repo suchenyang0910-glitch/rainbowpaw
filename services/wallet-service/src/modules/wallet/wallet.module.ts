@@ -6,9 +6,10 @@ import { IdempotencyKeyEntity } from './entities/idempotency-key.entity';
 import { WalletEntity } from './entities/wallet.entity';
 import { WalletLogEntity } from './entities/wallet-log.entity';
 import { WithdrawRequestEntity } from './entities/withdraw-request.entity';
+import { BusinessSettingEntity } from './entities/business-setting.entity';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([WalletEntity, WalletLogEntity, WithdrawRequestEntity, IdempotencyKeyEntity])],
+  imports: [TypeOrmModule.forFeature([WalletEntity, WalletLogEntity, WithdrawRequestEntity, IdempotencyKeyEntity, BusinessSettingEntity])],
   controllers: [WalletController],
   providers: [WalletService],
   exports: [WalletService],

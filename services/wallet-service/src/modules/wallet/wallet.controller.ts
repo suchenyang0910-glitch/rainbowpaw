@@ -49,4 +49,10 @@ export class WalletController {
     const result = await this.walletService.withdraw(dto, idemKey);
     return success(result);
   }
+
+  @Get('settings/:key')
+  async getSetting(@Param('key') key: string) {
+    const result = await this.walletService.getBusinessSetting(key, '');
+    return success({ key, value: result });
+  }
 }

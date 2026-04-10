@@ -10,6 +10,7 @@ import { IdempotencyKeyEntity } from './entities/idempotency-key.entity';
 import { WalletEntity } from './entities/wallet.entity';
 import { WalletLogEntity } from './entities/wallet-log.entity';
 import { WithdrawRequestEntity } from './entities/withdraw-request.entity';
+import { BusinessSettingEntity } from './entities/business-setting.entity';
 
 @Injectable()
 export class WalletService {
@@ -23,6 +24,8 @@ export class WalletService {
     private readonly withdrawRepo: Repository<WithdrawRequestEntity>,
     @InjectRepository(IdempotencyKeyEntity)
     private readonly idemRepo: Repository<IdempotencyKeyEntity>,
+    @InjectRepository(BusinessSettingEntity)
+    private readonly settingRepo: Repository<BusinessSettingEntity>,
   ) {}
 
   private toCents(v: string | number | null | undefined): number {
@@ -395,6 +398,11 @@ export class WalletService {
     });
   }
 
+  async getBusinessSetting(key: string, defaultValue: string): Promise<string> {
+    const setting = await this.settingRepo.findOne({ where: { key } });
+    return setting?.value || defaultValue;
+  }
+
   async withdraw(dto: WithdrawDto, idemKey: string) {
     return this.withIdempotency({
       idemKey,
@@ -402,8 +410,12 @@ export class WalletService {
       globalUserId: dto.global_user_id,
       run: async () => {
         const points = this.toCents(dto.points_cashable_amount);
-        if (points < 2000) {
-          throw new BadRequestException('minimum withdraw is 20 points');
+        const minWithdrawPoints = Number(await this.getBusinessSetting('MIN_WITHDRAW_POINTS', '20')) * 100;
+        const withdrawFeePercent = Number(await this.getBusinessSetting('WITHDRAW_FEE_PERCENT', '0.05'));
+        const pointToUsdRatio = Number(await this.getBusinessSetting('POINT_TO_USD_RATIO', '0.5'));
+
+        if (points < minWithdrawPoints) {
+          throw new BadRequestException(`minimum withdraw is ${minWithdrawPoints / 100} points`);
         }
 
         return this.dataSource.transaction(async (manager) => {
@@ -415,8 +427,8 @@ export class WalletService {
           const cashable = this.toCents(w.points_cashable);
           if (cashable < points) throw new BadRequestException('insufficient cashable points');
 
-          const usdCents = Math.floor(points / 2);
-          const feeCents = Math.round(usdCents * 0.05);
+          const usdCents = Math.floor(points * pointToUsdRatio);
+          const feeCents = Math.round(usdCents * withdrawFeePercent);
           const actualUsdCents = usdCents - feeCents;
 
           const beforeCashable = cashable;
