@@ -45,6 +45,7 @@ async function stressTest() {
     
     if (playRes.data?.code !== 0) {
       console.error('   ❌ API Gateway returned error:', playRes.data);
+      console.error('   💡 This usually means the claw-service is returning an error (e.g. "No active claw pool").');
       return;
     }
 
