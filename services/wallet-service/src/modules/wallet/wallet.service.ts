@@ -44,9 +44,15 @@ export class WalletService {
     return (cents / 100).toFixed(2);
   }
 
-  private async ensureWallet(globalUserId: string, manager = this.walletRepo.manager): Promise<WalletEntity> {
+  private async ensureWallet(globalUserId: string, manager = this.walletRepo.manager, useLock = false): Promise<WalletEntity> {
     const repo = manager.getRepository(WalletEntity);
-    let w = await repo.findOne({ where: { global_user_id: globalUserId } });
+    let qb = repo.createQueryBuilder('w').where('w.global_user_id = :globalUserId', { globalUserId });
+    
+    if (useLock) {
+      qb = qb.setLock('pessimistic_write');
+    }
+    
+    let w = await qb.getOne();
     if (w) return w;
 
     w = repo.create({
@@ -158,7 +164,7 @@ export class WalletService {
           const walletRepo = manager.getRepository(WalletEntity);
           const logRepo = manager.getRepository(WalletLogEntity);
 
-          const w = await this.ensureWallet(dto.global_user_id, manager);
+          const w = await this.ensureWallet(dto.global_user_id, manager, true);
           let locked = this.toCents(w.points_locked);
           let cashable = this.toCents(w.points_cashable);
           let cash = this.toCents(w.wallet_cash);
@@ -266,7 +272,7 @@ export class WalletService {
           const walletRepo = manager.getRepository(WalletEntity);
           const logRepo = manager.getRepository(WalletLogEntity);
 
-          const w = await this.ensureWallet(dto.global_user_id, manager);
+          const w = await this.ensureWallet(dto.global_user_id, manager, true);
           const need = this.toCents(dto.spend_amount);
           if (need <= 0) throw new BadRequestException('spend_amount must be positive');
 
@@ -423,7 +429,7 @@ export class WalletService {
           const logRepo = manager.getRepository(WalletLogEntity);
           const withdrawRepo = manager.getRepository(WithdrawRequestEntity);
 
-          const w = await this.ensureWallet(dto.global_user_id, manager);
+          const w = await this.ensureWallet(dto.global_user_id, manager, true);
           const cashable = this.toCents(w.points_cashable);
           if (cashable < points) throw new BadRequestException('insufficient cashable points');
 

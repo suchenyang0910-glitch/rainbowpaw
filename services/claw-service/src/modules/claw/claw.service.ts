@@ -116,7 +116,13 @@ export class ClawService {
       const playRepo = manager.getRepository(ClawPlayEntity);
       const rewardRepo = manager.getRepository(ClawRewardEntity);
 
-      const play = await playRepo.findOne({ where: { play_id: playId, global_user_id: globalUserId } });
+      // Use pessimistic_write lock to prevent concurrent double-recycling of the same play
+      const play = await playRepo.createQueryBuilder('play')
+        .setLock('pessimistic_write')
+        .where('play.play_id = :playId', { playId })
+        .andWhere('play.global_user_id = :globalUserId', { globalUserId })
+        .getOne();
+
       if (!play) throw new NotFoundException('play record not found');
       if (play.status !== 'completed') throw new BadRequestException(`cannot recycle play in status: ${play.status}`);
 

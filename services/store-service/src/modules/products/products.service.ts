@@ -71,7 +71,12 @@ export class ProductsService {
       const productRepo = manager.getRepository(ProductEntity);
       const logRepo = manager.getRepository(InventoryLogEntity);
 
-      const product = await productRepo.findOne({ where: { product_id: productId } });
+      // Use pessimistic_write lock to prevent concurrent double-deduction of stock
+      const product = await productRepo.createQueryBuilder('p')
+        .setLock('pessimistic_write')
+        .where('p.product_id = :productId', { productId })
+        .getOne();
+
       if (!product) throw new NotFoundException('product not found');
 
       const before = product.stock;

@@ -62,6 +62,17 @@ function registerClawPlayRoute() {
         const res = await apiGatewayService.clawRecycle(linked.global_user_id, playId);
         if (res.code === 0) {
           await clawBot.sendMessage(chatId, `♻️ Recycled successfully! Earned ${res.data.recyclePoints} points.`);
+          
+          // Remove the recycle button from the original message to prevent multi-clicks
+          if (query.message && query.message.reply_markup && query.message.reply_markup.inline_keyboard) {
+            const newKeyboard = query.message.reply_markup.inline_keyboard.filter(
+              row => !row.some(btn => btn.callback_data === data)
+            );
+            await clawBot.editMessageReplyMarkup(
+              { inline_keyboard: newKeyboard },
+              { chat_id: chatId, message_id: query.message.message_id }
+            ).catch(e => console.error('Failed to edit message markup', e.message));
+          }
         } else {
           await clawBot.sendMessage(chatId, `Recycle failed: ${res.message}`);
         }
