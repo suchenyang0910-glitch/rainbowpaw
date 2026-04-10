@@ -16,12 +16,45 @@ const client = axios.create({
 async function stressTest() {
   console.log('🚀 Starting Concurrency Security Test (Double-Spend Prevention)...');
 
-  // We assume a valid test user ID and a mocked playId for this test script.
-  // In a real environment, you would create a user, play once, get playId, then stress test recycle.
-  const testUserId = 'test_user_' + randomUUID().substring(0, 8);
-  const testPlayId = 'play_' + randomUUID().substring(0, 8); // Example Play ID
+  const testUserId = 'test_stress_' + randomUUID().substring(0, 8);
+  console.log(`\n1. Creating test user and giving them points... (${testUserId})`);
+  
+  // 1. Give the user some points to play
+  try {
+    // Direct call to wallet-service to bypass API Gateway if needed, or use gateway if earn is exposed
+    // Assuming API Gateway does not expose earn directly, we'll try to just play and let the wallet go negative if allowed,
+    // OR better: we can hit the wallet service directly.
+    const walletUrl = process.env.WALLET_SERVICE_URL || 'http://localhost:3002/wallet';
+    await axios.post(`${walletUrl}/earn`, {
+      global_user_id: testUserId,
+      biz_type: 'test_funding',
+      changes: [{ asset_type: 'points_cashable', amount: 100 }],
+      remark: 'stress test funding'
+    }, {
+      headers: { Authorization: `Bearer ${INTERNAL_TOKEN}` }
+    });
+    console.log('   ✅ Funded 100 points');
+  } catch (err) {
+    console.log('   ⚠️ Funding failed or skipped (might not be needed depending on wallet logic):', err.message);
+  }
 
-  console.log(`\n[Test Case] Simulating 10 concurrent users trying to recycle the SAME item at the exact same millisecond.`);
+  console.log(`\n2. Playing Claw to get a real playId...`);
+  let testPlayId = '';
+  try {
+    const playRes = await client.post('/claw/play', { global_user_id: testUserId });
+    if (playRes.data?.data?.reward?.play_id) {
+      testPlayId = playRes.data.data.reward.play_id;
+      console.log(`   ✅ Played successfully. Received playId: ${testPlayId}`);
+    } else {
+      throw new Error('No playId returned: ' + JSON.stringify(playRes.data));
+    }
+  } catch (err) {
+    console.error('   ❌ Failed to play claw. Make sure your services are running and the pool is active!');
+    console.error(err.response?.data || err.message);
+    return;
+  }
+
+  console.log(`\n3. [Test Case] Simulating 10 concurrent users trying to recycle the SAME item at the exact same millisecond.`);
   console.log(`Target: POST /claw/recycle for playId=${testPlayId}`);
 
   const concurrentRequests = 10;
