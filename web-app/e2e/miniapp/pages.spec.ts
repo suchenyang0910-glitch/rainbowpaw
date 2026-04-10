@@ -36,7 +36,19 @@ test.describe('Mini App Pages', () => {
     await page.route('**/api/me', async route => {
       await route.fulfill({ json: { code: 0, data: { id: 'test_user', wallet: { points_cashable: 100 } } } });
     });
-    
+    await page.route('**/api/products*', async route => {
+      await route.fulfill({ json: { code: 0, data: { products: [] } } });
+    });
+    await page.route('**/api/orders*', async route => {
+      await route.fulfill({ json: { code: 0, data: { orders: [] } } });
+    });
+    await page.route('**/api/groups/active*', async route => {
+      await route.fulfill({ json: { code: 0, data: { groups: [] } } });
+    });
+    await page.route('**/api/wallet*', async route => {
+      await route.fulfill({ json: { code: 0, data: { wallet: { cash_balance: 0 }, logs: [] } } });
+    });
+
     // Use regex to be more resilient against exact string matches or spaces
     await runWithRetry(page, '/rainbowpawclaw', 'button:has-text("PLAY NOW")');
 
