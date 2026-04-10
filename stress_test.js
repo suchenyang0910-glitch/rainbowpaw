@@ -42,6 +42,14 @@ async function stressTest() {
   let testPlayId = '';
   try {
     const playRes = await client.post('/claw/play', { global_user_id: testUserId });
+    
+    // Check if we hit the fallback
+    if (playRes.data?.data?.result === 'fallback_01') {
+      console.error('   ❌ API Gateway returned fallback response. This means claw-service is down, or there is no active claw_pool in the database.');
+      console.error('   💡 Please ensure claw-service is running and you have inserted at least one active pool and pool_item into the database.');
+      return;
+    }
+
     if (playRes.data?.data?.reward?.play_id) {
       testPlayId = playRes.data.data.reward.play_id;
       console.log(`   ✅ Played successfully. Received playId: ${testPlayId}`);
