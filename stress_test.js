@@ -1,5 +1,5 @@
-const axios = require('axios');
-const { randomUUID } = require('crypto');
+import axios from 'axios';
+import { randomUUID } from 'crypto';
 
 // Target the API Gateway (or Claw Service directly if running locally)
 const GATEWAY_URL = process.env.GATEWAY_URL || 'http://localhost:3000/api';
