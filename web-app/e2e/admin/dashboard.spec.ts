@@ -28,6 +28,17 @@ test.describe('Admin Console', () => {
       throw new Error('Failed to load login page after retries');
     }
 
+    // Mock dashboard APIs to prevent proxy errors and timeouts
+    await page.route('**/api/admin/dashboard/summary*', async route => {
+      await route.fulfill({ json: { code: 0, data: { users: 0, orders: 0, revenue: 0 } } });
+    });
+    await page.route('**/api/admin/reports/profit*', async route => {
+      await route.fulfill({ json: { code: 0, data: { profit: 0 } } });
+    });
+    await page.route('**/api/admin/dashboard/alerts*', async route => {
+      await route.fulfill({ json: { code: 0, data: { alerts: [] } } });
+    });
+
     // 1. 验证展示文案完整性、字体大小和颜色
     const titleLocator = page.locator('text=管理后台登录');
     await expect(titleLocator).toBeVisible();
@@ -77,6 +88,20 @@ test.describe('Admin Console', () => {
 
   test.describe('Authenticated Dashboard', () => {
     test.beforeEach(async ({ page }) => {
+      // Mock dashboard APIs to prevent proxy errors and timeouts
+      await page.route('**/api/admin/dashboard/summary*', async route => {
+        await route.fulfill({ json: { code: 0, data: { users: 0, orders: 0, revenue: 0 } } });
+      });
+      await page.route('**/api/admin/reports/profit*', async route => {
+        await route.fulfill({ json: { code: 0, data: { profit: 0 } } });
+      });
+      await page.route('**/api/admin/dashboard/alerts*', async route => {
+        await route.fulfill({ json: { code: 0, data: { alerts: [] } } });
+      });
+      await page.route('**/api/admin/orders*', async route => {
+        await route.fulfill({ json: { code: 0, data: { items: [], total: 0 } } });
+      });
+
       let retries = 3;
       let isLoaded = false;
       while (retries > 0 && !isLoaded) {

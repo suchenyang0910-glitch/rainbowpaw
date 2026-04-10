@@ -82,6 +82,11 @@ test.describe('Mini App Pages', () => {
   });
 
   test('Care Plan Page visual and interaction', async ({ page }) => {
+    // Mock user auth API to prevent proxy errors
+    await page.route('**/api/me', async route => {
+      await route.fulfill({ json: { code: 0, data: { id: 'test_user', wallet: { points_cashable: 100 } } } });
+    });
+
     await page.route('**/api/care/plan', async route => {
       await route.fulfill({
         json: {
@@ -104,6 +109,11 @@ test.describe('Mini App Pages', () => {
   });
 
   test('Services Page visual and interaction', async ({ page }) => {
+    // Mock user auth API to prevent proxy errors
+    await page.route('**/api/me', async route => {
+      await route.fulfill({ json: { code: 0, data: { id: 'test_user', wallet: { points_cashable: 100 } } } });
+    });
+
     await page.route('**/api/service/list', async route => {
       await route.fulfill({
         json: {
@@ -126,6 +136,11 @@ test.describe('Mini App Pages', () => {
   });
 
   test('Memorial Page visual and interaction', async ({ page }) => {
+    // Mock user auth API to prevent proxy errors
+    await page.route('**/api/me', async route => {
+      await route.fulfill({ json: { code: 0, data: { id: 'test_user', wallet: { points_cashable: 100 } } } });
+    });
+
     // 拦截 /api/memorial/list 请求
     await page.route('**/api/memorial/list*', async route => {
       await route.fulfill({
@@ -168,6 +183,11 @@ test.describe('Mini App Pages', () => {
   });
 
   test('Marketplace & Cemetery visual, layout, and routing', async ({ page }) => {
+    // Mock user auth API to prevent proxy errors
+    await page.route('**/api/me', async route => {
+      await route.fulfill({ json: { code: 0, data: { id: 'test_user', wallet: { points_cashable: 100 } } } });
+    });
+
     // Mock the detail endpoint to prevent proxy errors when clicking "查看详情"
     await page.route('**/api/marketplace/products/1*', async route => {
       await route.fulfill({ json: { code: 0, data: { 

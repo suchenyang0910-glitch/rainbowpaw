@@ -4,6 +4,14 @@ test.describe('Website Landing Page', () => {
   test.beforeEach(async ({ page }) => {
     page.on('console', msg => console.log('BROWSER CONSOLE:', msg.text()));
     page.on('pageerror', err => console.log('BROWSER ERROR:', err.message));
+
+    // Mock missing APIs to prevent proxy errors and timeouts
+    await page.route('**/api/marketplace/products*', async route => {
+      await route.fulfill({ json: { code: 0, data: { items: [] } } });
+    });
+    await page.route('**/api/marketplace/services*', async route => {
+      await route.fulfill({ json: { code: 0, data: { items: [] } } });
+    });
   });
 
   const runWithRetry = async (page: any, url: string, expectLocator: string) => {
