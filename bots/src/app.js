@@ -12,6 +12,7 @@ const registerAdminReportRoute = require('./routes/admin/report');
 
 const registerRainbowStartRoute = require('./routes/rainbow/start');
 const registerRainbowMenuRoutes = require('./routes/rainbow/menu');
+const registerRainbowSupportRoute = require('./routes/rainbow/support');
 
 const registerAiMonitor = require('./monitor/aiMonitor');
 
@@ -33,6 +34,7 @@ function bootstrap() {
   // Initialize RainbowPaw Bot Routes
   registerRainbowStartRoute();
   registerRainbowMenuRoutes();
+  registerRainbowSupportRoute();
 
   registerAiMonitor();
 

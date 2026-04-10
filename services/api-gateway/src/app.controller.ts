@@ -1144,6 +1144,12 @@ export class AppController {
     return this.appService.v1AftercareQuoteDecisionByToken({ token, ...(body || {}) });
   }
 
+  // --- Support AI ---
+  @Post('api/support/chat')
+  apiSupportChat(@Body() body: any) {
+    return this.appService.supportChat(body || {});
+  }
+
   // --- Care System ---
   @Post('api/care/plan')
   apiCarePlan(@Body() body: any) {

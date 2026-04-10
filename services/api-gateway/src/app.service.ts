@@ -7096,6 +7096,41 @@ export class AppService {
     };
   }
 
+  // --- Support AI Proxy ---
+  async supportChat(payload: { globalUserId: string, question: string }) {
+    if (!payload.globalUserId || !payload.question) {
+      throw new BadRequestException('globalUserId and question are required');
+    }
+
+    try {
+      // 1. Fetch user context (profile & tags) to give AI context
+      const profileRes = await axios.get(
+        `${this.IDENTITY_SERVICE_URL}/users/profile/${payload.globalUserId}`,
+        { headers: { authorization: `Bearer ${this.INTERNAL_TOKEN}` } },
+      );
+      const context = profileRes.data?.data || {};
+
+      // 2. Call AI Orchestrator
+      const aiRes = await axios.post(
+        `${this.AI_ORCHESTRATOR_URL}/ai/support/chat`,
+        { global_user_id: payload.globalUserId, question: payload.question, context },
+        { headers: { authorization: `Bearer ${this.INTERNAL_TOKEN}` } },
+      );
+      
+      return aiRes.data;
+    } catch (error: any) {
+      console.error('supportChat proxy error:', error?.response?.data || error.message);
+      return {
+        code: 0,
+        data: {
+          response_text: "I'm currently unable to process your request perfectly, but I'm here for you. How can I help?",
+          suggested_buttons: []
+        },
+        message: 'fallback'
+      };
+    }
+  }
+
   // --- Care System Proxy ---
   async carePlan(payload: { globalUserId: string }) {
     try {

@@ -37,6 +37,11 @@ async function getCarePlan(globalUserId) {
   return data;
 }
 
+async function chatSupport(globalUserId, question) {
+  const { data } = await client.post('/support/chat', { global_user_id: globalUserId, question });
+  return data;
+}
+
 async function createBridgeLink(globalUserId, targetBot = 'rainbowpaw_bot') {
   const { data } = await client.post('/bridge/create', { global_user_id: globalUserId, target_bot: targetBot });
   return data;
@@ -47,6 +52,7 @@ module.exports = {
   clawPlay,
   clawRecycle,
   getCarePlan,
+  chatSupport,
   createBridgeLink
 };
 
