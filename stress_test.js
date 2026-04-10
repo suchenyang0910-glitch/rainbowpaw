@@ -2,7 +2,7 @@ import axios from 'axios';
 import { randomUUID } from 'crypto';
 
 // Target the API Gateway (or Claw Service directly if running locally)
-const GATEWAY_URL = process.env.GATEWAY_URL || 'http://localhost:3000/api';
+const GATEWAY_URL = process.env.GATEWAY_URL || 'http://localhost:3000';
 const INTERNAL_TOKEN = process.env.INTERNAL_TOKEN || 'dev-internal-token';
 
 const client = axios.create({
@@ -24,7 +24,7 @@ async function stressTest() {
     // Direct call to wallet-service to bypass API Gateway if needed, or use gateway if earn is exposed
     // Assuming API Gateway does not expose earn directly, we'll try to just play and let the wallet go negative if allowed,
     // OR better: we can hit the wallet service directly.
-    const walletUrl = process.env.WALLET_SERVICE_URL || 'http://localhost:3002/wallet';
+    const walletUrl = process.env.WALLET_SERVICE_URL || 'http://localhost:3002/api/wallet';
     await axios.post(`${walletUrl}/earn`, {
       global_user_id: testUserId,
       biz_type: 'test_funding',
@@ -41,7 +41,7 @@ async function stressTest() {
   console.log(`\n2. Playing Claw to get a real playId...`);
   let testPlayId = '';
   try {
-    const playRes = await client.post('/claw/play', { global_user_id: testUserId });
+    const playRes = await client.post('/api/claw/play', { global_user_id: testUserId });
     
     if (playRes.data?.code !== 0) {
       console.error('   ❌ API Gateway returned error:', playRes.data);
@@ -77,7 +77,7 @@ async function stressTest() {
   }
 
   console.log(`\n3. [Test Case] Simulating 10 concurrent users trying to recycle the SAME item at the exact same millisecond.`);
-  console.log(`Target: POST /claw/recycle for playId=${testPlayId}`);
+  console.log(`Target: POST /api/claw/recycle for playId=${testPlayId}`);
 
   const concurrentRequests = 10;
   const requests = [];
@@ -85,7 +85,7 @@ async function stressTest() {
   for (let i = 0; i < concurrentRequests; i++) {
     // Send identical requests concurrently
     requests.push(
-      client.post('/claw/recycle', {
+      client.post('/api/claw/recycle', {
         global_user_id: testUserId,
         playId: testPlayId
       }).then(res => {
