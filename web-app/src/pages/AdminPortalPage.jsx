@@ -74,7 +74,72 @@ export default function AdminPortalPage() {
   const [cemeteryText, setCemeteryText] = useState('')
   const [aliasQuery, setAliasQuery] = useState('')
   const [phoneAliases, setPhoneAliases] = useState([])
-  const [aliasDraft, setAliasDraft] = useState({ alias_phone: '', canonical_phone: '' })
+  const [cemeteryZones, setCemeteryZones] = useState([])
+  const [cemeterySlots, setCemeterySlots] = useState([])
+  const [selectedZoneId, setSelectedZoneId] = useState('')
+  const [rentDraft, setRentDraft] = useState({ slot_id: '', global_user_id: '', lease_months: 12 })
+
+  const loadCemeteryZones = async () => {
+    if (!guard()) return
+    setError('')
+    setOk('')
+    setLoading(true)
+    try {
+      const data = await apiFetch('/api/v1/cemetery/zones', { headers: authHeaders })
+      setCemeteryZones(Array.isArray(data?.items) ? data.items : [])
+      setOk('墓区列表已加载')
+    } catch (e) {
+      setError(e?.message || '加载失败')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const loadCemeterySlots = async (zoneId) => {
+    if (!guard() || !zoneId) return
+    setError('')
+    setOk('')
+    setLoading(true)
+    try {
+      const data = await apiFetch(`/api/v1/cemetery/zones/${encodeURIComponent(zoneId)}/slots`, { headers: authHeaders })
+      setCemeterySlots(Array.isArray(data?.slots) ? data.slots : [])
+      setOk(`已加载 ${data?.zone?.name || '墓区'} 格位数据`)
+    } catch (e) {
+      setError(e?.message || '加载失败')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const rentCemeterySlot = async () => {
+    if (!guard()) return
+    if (!rentDraft.slot_id || !rentDraft.global_user_id || !rentDraft.lease_months) {
+      setError('请填写完整的租用信息')
+      return
+    }
+    setError('')
+    setOk('')
+    setLoading(true)
+    try {
+      await apiFetch(`/api/v1/cemetery/slots/${encodeURIComponent(rentDraft.slot_id)}/rent`, {
+        method: 'POST',
+        headers: authHeaders,
+        body: {
+          global_user_id: rentDraft.global_user_id,
+          lease_months: Number(rentDraft.lease_months),
+        }
+      })
+      setOk(`成功租用格位：${rentDraft.slot_id}`)
+      setRentDraft({ slot_id: '', global_user_id: '', lease_months: 12 })
+      if (selectedZoneId) {
+        await loadCemeterySlots(selectedZoneId)
+      }
+    } catch (e) {
+      setError(e?.message || '租用失败')
+    } finally {
+      setLoading(false)
+    }
+  }
 
   const authHeaders = useMemo(() => {
     const token = adminToken.trim()
@@ -857,6 +922,7 @@ export default function AdminPortalPage() {
               {tabBtn('dashboard', '首页', ['admin', 'ops', 'support', 'finance'])}
               {tabBtn('orders', '订单', ['admin', 'ops', 'support', 'finance'])}
               {tabBtn('aftercare', '善终', ['admin', 'ops', 'support', 'finance'])}
+              {tabBtn('cemetery', '墓位', ['admin', 'ops'])}
               {tabBtn('payments', '支付', ['admin', 'finance'])}
               {tabBtn('finance', '财务', ['admin', 'finance'])}
               {tabBtn('merchants', '商家', ['admin', 'ops'])}
@@ -1366,6 +1432,68 @@ export default function AdminPortalPage() {
                 </tbody>
               </table>
             </div>
+          </div>
+        ) : null}
+
+        {activeTab === 'cemetery' ? (
+          <div className="bg-white rounded-2xl border border-gray-200 p-5 md:p-6">
+            <div className="flex items-end justify-between gap-3 mb-4">
+              <div>
+                <div className="text-sm font-black text-gray-900">墓位管理</div>
+                <div className="text-xs text-gray-500">查看墓区、格位状态及手动分配格位给用户。</div>
+              </div>
+              <button type="button" disabled={!authHeaders || loading} onClick={loadCemeteryZones} className={`px-3 py-2 rounded-lg text-sm font-bold border ${!authHeaders || loading ? 'bg-gray-100 text-gray-400 border-gray-200' : 'bg-white text-gray-700 border-gray-200'}`}>
+                加载墓区
+              </button>
+            </div>
+
+            {cemeteryZones.length > 0 && (
+              <div className="flex gap-2 overflow-x-auto pb-3 mb-4 border-b border-gray-100">
+                {cemeteryZones.map(zone => (
+                  <button
+                    key={zone.zone_id}
+                    className={`shrink-0 px-4 py-2 rounded-xl text-sm font-bold border ${selectedZoneId === zone.zone_id ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-gray-50 text-gray-700 border-gray-200'}`}
+                    onClick={() => {
+                      setSelectedZoneId(zone.zone_id)
+                      loadCemeterySlots(zone.zone_id)
+                    }}
+                  >
+                    {zone.name} <span className="text-xs font-normal ml-1 opacity-80">({zone.occupied}/{zone.capacity})</span>
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {selectedZoneId && cemeterySlots.length > 0 && (
+              <>
+                <div className="border border-gray-200 rounded-2xl p-4 mb-4 bg-gray-50">
+                  <div className="text-xs font-bold text-gray-600 mb-3">手动分配格位</div>
+                  <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
+                    <input className="border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-indigo-400 bg-white" placeholder="slot_id (例如: A-01)" value={rentDraft.slot_id} onChange={(e) => setRentDraft({ ...rentDraft, slot_id: e.target.value })} />
+                    <input className="border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-indigo-400 bg-white" placeholder="global_user_id" value={rentDraft.global_user_id} onChange={(e) => setRentDraft({ ...rentDraft, global_user_id: e.target.value })} />
+                    <input className="border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-indigo-400 bg-white" type="number" placeholder="租期(月)" value={rentDraft.lease_months} onChange={(e) => setRentDraft({ ...rentDraft, lease_months: Number(e.target.value) })} />
+                    <button type="button" disabled={!authHeaders || loading} onClick={rentCemeterySlot} className={`px-4 py-2 rounded-xl text-sm font-black border ${!authHeaders || loading ? 'bg-gray-100 text-gray-400 border-gray-200' : 'bg-indigo-600 text-white border-indigo-600'}`}>
+                      确认分配
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-3 md:grid-cols-6 lg:grid-cols-8 gap-3">
+                  {cemeterySlots.map(slot => {
+                    const isAvailable = slot.status === 'available'
+                    return (
+                      <div key={slot.slot_id} className={`border rounded-xl p-3 text-center ${isAvailable ? 'border-green-200 bg-green-50' : 'border-gray-200 bg-gray-100'}`}>
+                        <div className={`text-sm font-bold ${isAvailable ? 'text-green-700' : 'text-gray-500'}`}>{slot.slot_number}</div>
+                        <div className="text-[10px] mt-1 text-gray-400">{slot.status}</div>
+                        {!isAvailable && slot.current_occupant_user_id && (
+                           <div className="text-[9px] mt-1 text-gray-500 truncate" title={slot.current_occupant_user_id}>{slot.current_occupant_user_id.slice(-6)}</div>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              </>
+            )}
           </div>
         ) : null}
 
