@@ -21,6 +21,25 @@ function webAppButton(text, url) {
 function registerRainbowStartRoute() {
   if (!rainbowBot) return;
 
+  rainbowBot.on('callback_query', async (query) => {
+    const chatId = query.message.chat.id;
+    const data = query.data;
+    const webBase = webUrl('');
+
+    if (data === 'action_rainbow_services') {
+      const opts = {
+        reply_markup: {
+          inline_keyboard: [
+            [webAppButton('🕊 Aftercare Booking', `${webBase}/services`)],
+            [webAppButton('🕯 Digital Memorial', `${webBase}/memorial`)]
+          ]
+        }
+      };
+      await rainbowBot.sendMessage(chatId, `🌈 **RainbowPaw Support & Services**\n\nWe provide peaceful farewells, cremation coordination, and memory creation.`, { parse_mode: 'Markdown', ...opts });
+      await rainbowBot.answerCallbackQuery(query.id);
+    }
+  });
+
   rainbowBot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
     const chatId = msg.chat.id;
     const token = match[1];
@@ -37,17 +56,19 @@ function registerRainbowStartRoute() {
         .catch(() => null);
 
       if (!token) {
+        const webBase = webUrl('');
         return await rainbowBot.sendMessage(
           chatId,
-          '🌈 欢迎来到 RainbowPaw\n\n请选择你要探索的服务。',
+          '🌈 **Welcome to RainbowPaw**\n\nWe provide lifelong care, memories, and peaceful farewells for your beloved pet.',
           {
+            parse_mode: 'Markdown',
             reply_markup: {
-              keyboard: [
-                ['🛍 商城', '🕊 善终服务'],
-                ['📸 纪念页', '👩‍💼 客服'],
-              ],
-              resize_keyboard: true,
-            },
+              inline_keyboard: [
+                [webAppButton('🛍 Memory & Care Shop', `${webBase}/rainbowpaw/marketplace`)],
+                [{ text: '🕊 Services & Memorial', callback_data: 'action_rainbow_services' }],
+                [{ text: '💬 Talk to Us', callback_data: 'action_support' }]
+              ]
+            }
           }
         );
       }

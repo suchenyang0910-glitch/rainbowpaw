@@ -75,10 +75,10 @@ function registerClawStartRoute() {
       const opts = {
         reply_markup: {
           inline_keyboard: [
-            [webAppButton('🎮 Play Claw', `${webBase}/rainbowpawclaw`)],
-            [webAppButton('🐾 Care Plan', `${webBase}/care`)], // Adjust URL to your actual care plan route
+            [{ text: '🎮 Play Claw', callback_data: 'action_play_claw' }], // Changed from web_app to callback_data
+            [webAppButton('🐾 Care Plan', `${webBase}/care`)], 
             [webAppButton('🛍 Shop', `${webBase}/rainbowpaw/marketplace`)],
-            [webAppButton('🌈 Services', `${webBase}/services`)] // Adjust URL to your actual services route
+            [{ text: '🌈 Services', callback_data: 'action_bridge_services' }] // Bridge to rainbow bot
           ]
         }
       };

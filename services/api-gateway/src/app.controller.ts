@@ -1146,74 +1146,61 @@ export class AppController {
 
   // --- Care System ---
   @Post('api/care/plan')
-  carePlan(@Body() body: any) {
+  apiCarePlan(@Body() body: any) {
     return this.appService.carePlan(body || {});
   }
 
   @Post('api/care/subscribe')
-  careSubscribe(@Body() body: any) {
+  apiCareSubscribe(@Body() body: any) {
     return this.appService.careSubscribe(body || {});
   }
 
   // --- Bridge System ---
   @Post('api/bridge/create')
-  bridgeCreate(@Body() body: any) {
+  apiBridgeCreate(@Body() body: any) {
     return this.appService.bridgeCreate(body || {});
   }
 
   @Get('api/bridge/resolve')
-  bridgeResolve(@Query('token') token: string) {
+  apiBridgeResolve(@Query('token') token: string) {
     return this.appService.bridgeResolve({ token });
   }
 
   // --- Memorial System ---
   @Get('api/memorial/list')
-  memorialList(@Query('globalUserId') globalUserId: string) {
+  apiMemorialList(@Query('global_user_id') globalUserId: string) {
     return this.appService.memorialList({ globalUserId });
   }
 
   @Get('api/memorial/:id')
-  memorialDetail(@Param('id') id: string) {
+  apiMemorialDetail(@Param('id') id: string) {
     return this.appService.memorialDetail(id);
   }
 
   @Post('api/memorial/:id/candle')
-  memorialLightCandle(@Param('id') id: string, @Body() body: any) {
-    return this.appService.memorialLightCandle({
-      globalUserId: body?.globalUserId,
-      memorialId: id
-    });
+  apiMemorialLightCandle(@Param('id') id: string, @Body() body: any) {
+    return this.appService.memorialLightCandle({ ...body, memorialId: id });
   }
 
   // --- Service System ---
   @Get('api/service/list')
-  serviceList() {
+  apiServiceList() {
     return this.appService.serviceList();
   }
 
   @Post('api/service/book')
-  serviceBook(@Body() body: any) {
+  apiServiceBook(@Body() body: any) {
     return this.appService.serviceBook(body || {});
   }
 
   // --- Claw System ---
   @Post('api/claw/play')
-  clawPlay(
-    @Headers('x-dev-telegram-id') devTelegramId: string,
-    @Headers('x-telegram-init-data') telegramInitData: string,
-    @Query('tgWebAppData') tgWebAppData: string,
-    @Body() body: any,
-  ) {
-    return this.appService.play({
-      devTelegramId,
-      telegramInitData:
-        telegramInitData || String(tgWebAppData || '') || String(body?.telegram_init_data || ''),
-      multi: Number(body?.multi || 1),
-    });
+  apiClawPlay(@Body() body: any) {
+    return this.appService.clawPlay(body || {});
   }
 
   @Post('api/claw/recycle')
-  clawRecycle(@Body() body: any) {
+  apiClawRecycle(@Body() body: any) {
     return this.appService.clawRecycle(body || {});
   }
 

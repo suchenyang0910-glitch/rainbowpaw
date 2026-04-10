@@ -5,6 +5,7 @@ const client = axios.create({
   baseURL: String(config.apiGatewayBaseUrl || '').trim(),
   headers: {
     'Content-Type': 'application/json',
+    'Authorization': `Bearer ${config.internalToken}`,
   },
   timeout: 15000,
 });
@@ -21,7 +22,31 @@ async function marketplaceProducts(opts) {
   return data?.data?.items || [];
 }
 
+async function clawPlay(globalUserId) {
+  const { data } = await client.post('/claw/play', { global_user_id: globalUserId });
+  return data;
+}
+
+async function clawRecycle(globalUserId, playId) {
+  const { data } = await client.post('/claw/recycle', { global_user_id: globalUserId, playId });
+  return data;
+}
+
+async function getCarePlan(globalUserId) {
+  const { data } = await client.post('/care/plan', { global_user_id: globalUserId });
+  return data;
+}
+
+async function createBridgeLink(globalUserId, targetBot = 'rainbowpaw_bot') {
+  const { data } = await client.post('/bridge/create', { global_user_id: globalUserId, target_bot: targetBot });
+  return data;
+}
+
 module.exports = {
   marketplaceProducts,
+  clawPlay,
+  clawRecycle,
+  getCarePlan,
+  createBridgeLink
 };
 
