@@ -40,7 +40,7 @@ export class AppController {
     });
   }
 
-  @Post('api/wallet/withdraw')
+  @Post('wallet/withdraw')
   walletWithdraw(
     @Body() body: any,
     @Headers('x-idempotency-key') idempotencyKey: string,
@@ -1145,67 +1145,67 @@ export class AppController {
   }
 
   // --- Support AI ---
-  @Post('api/support/chat')
+  @Post('support/chat')
   apiSupportChat(@Body() body: any) {
     return this.appService.supportChat(body || {});
   }
 
   // --- Care System ---
-  @Post('api/care/plan')
+  @Post('care/plan')
   apiCarePlan(@Body() body: any) {
     return this.appService.carePlan(body || {});
   }
 
-  @Post('api/care/subscribe')
+  @Post('care/subscribe')
   apiCareSubscribe(@Body() body: any) {
     return this.appService.careSubscribe(body || {});
   }
 
   // --- Bridge System ---
-  @Post('api/bridge/create')
+  @Post('bridge/create')
   apiBridgeCreate(@Body() body: any) {
     return this.appService.bridgeCreate(body || {});
   }
 
-  @Get('api/bridge/resolve')
+  @Get('bridge/resolve')
   apiBridgeResolve(@Query('token') token: string) {
     return this.appService.bridgeResolve({ token });
   }
 
   // --- Memorial System ---
-  @Get('api/memorial/list')
+  @Get('memorial/list')
   apiMemorialList(@Query('global_user_id') globalUserId: string) {
     return this.appService.memorialList({ globalUserId });
   }
 
-  @Get('api/memorial/:id')
+  @Get('memorial/:id')
   apiMemorialDetail(@Param('id') id: string) {
     return this.appService.memorialDetail(id);
   }
 
-  @Post('api/memorial/:id/candle')
+  @Post('memorial/:id/candle')
   apiMemorialLightCandle(@Param('id') id: string, @Body() body: any) {
     return this.appService.memorialLightCandle({ ...body, memorialId: id });
   }
 
   // --- Service System ---
-  @Get('api/service/list')
+  @Get('service/list')
   apiServiceList() {
     return this.appService.serviceList();
   }
 
-  @Post('api/service/book')
+  @Post('service/book')
   apiServiceBook(@Body() body: any) {
     return this.appService.serviceBook(body || {});
   }
 
   // --- Claw System ---
-  @Post('api/claw/play')
+  @Post('claw/play')
   apiClawPlay(@Body() body: any) {
     return this.appService.clawPlay(body || {});
   }
 
-  @Post('api/claw/recycle')
+  @Post('claw/recycle')
   apiClawRecycle(@Body() body: any) {
     return this.appService.clawRecycle(body || {});
   }
