@@ -43,6 +43,11 @@ async function stressTest() {
   try {
     const playRes = await client.post('/claw/play', { global_user_id: testUserId });
     
+    if (playRes.data?.code !== 0) {
+      console.error('   ❌ API Gateway returned error:', playRes.data);
+      return;
+    }
+
     // Check if we hit the fallback
     if (playRes.data?.data?.result === 'fallback_01') {
       console.error('   ❌ API Gateway returned fallback response. This means claw-service is down, or there is no active claw_pool in the database.');
