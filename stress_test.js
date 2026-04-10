@@ -64,7 +64,15 @@ async function stressTest() {
     }
   } catch (err) {
     console.error('   ❌ Failed to play claw. Make sure your services are running and the pool is active!');
-    console.error(err.response?.data || err.message);
+    if (err.response) {
+      console.error('   👉 Response status:', err.response.status);
+      console.error('   👉 Response data:', JSON.stringify(err.response.data, null, 2));
+    } else if (err.request) {
+      console.error('   👉 No response received. Is the API Gateway running on port 3000?');
+      console.error('   👉 Error message:', err.message);
+    } else {
+      console.error('   👉 Error:', err.message);
+    }
     return;
   }
 
