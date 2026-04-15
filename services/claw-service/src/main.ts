@@ -7,6 +7,6 @@ loadEnv({ path: join(__dirname, '..', '..', '..', '.env'), override: true, quiet
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
-  await app.listen(process.env.PORT ?? 3000);
+  await app.listen(process.env.PORT || 3006);
 }
 bootstrap();
