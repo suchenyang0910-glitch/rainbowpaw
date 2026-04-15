@@ -5,7 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import axios from 'axios';
-import { createHash, createHmac, randomUUID } from 'crypto';
+import { createHash, createHmac, randomUUID, timingSafeEqual } from 'crypto';
 import { Pool } from 'pg';
 import type { QueryResult, QueryResultRow } from 'pg';
 
@@ -349,6 +349,67 @@ export class AppService {
     return process.env.REPORT_SERVICE_URL || 'http://localhost:3004/api';
   }
 
+  private settlecorePartnerBase() {
+    const base = String(
+      process.env.SETTLECORE_BASE_URL || 'https://api.settlecore.org',
+    )
+      .trim()
+      .replace(/\/+$/, '');
+    return `${base}/api/partners/rainbowpaw`;
+  }
+
+  private settlecoreApiKey() {
+    return String(process.env.RAINBOWPAW_API_KEY || '').trim();
+  }
+
+  private settlecoreWebhookSecret() {
+    return String(process.env.RAINBOWPAW_WEBHOOK_SECRET || '').trim();
+  }
+
+  private settlecoreAuthHeaders() {
+    const key = this.settlecoreApiKey();
+    if (!key) throw new BadGatewayException('settlecore not configured');
+    return {
+      Authorization: `Bearer ${key}`,
+      'Content-Type': 'application/json',
+    } as Record<string, string>;
+  }
+
+  private async settlecoreLogin(tg: TelegramUserInfo) {
+    const url = `${this.settlecorePartnerBase()}/login`;
+    const { data } = await axios.post(
+      url,
+      {
+        telegram_id: tg.telegram_id,
+        username: tg.username || undefined,
+        first_name: tg.first_name || undefined,
+        last_name: tg.last_name || undefined,
+        language_code: 'zh',
+      },
+      { headers: this.settlecoreAuthHeaders() },
+    );
+    return data as {
+      access_token: string;
+      token_type: string;
+      user_id: string;
+      platform_user_id: number;
+    };
+  }
+
+  private async settlecoreDepositAddress(telegramId: number) {
+    const url = `${this.settlecorePartnerBase()}/deposit-address`;
+    const { data } = await axios.get(url, {
+      params: { telegram_id: telegramId },
+      headers: this.settlecoreAuthHeaders(),
+    });
+    return data as {
+      telegram_id: number;
+      user_id: string;
+      address: string;
+      chain: string;
+    };
+  }
+
   private aiBase() {
     return String(process.env.AI_ORCHESTRATOR_SERVICE_URL || '').trim();
   }
@@ -554,21 +615,43 @@ export class AppService {
     idemKey: string,
     bizType: string,
   ) {
+    return this.walletEarnAsset({
+      globalUserId,
+      assetType: 'points_locked',
+      amount: amountPointsLocked,
+      idemKey,
+      bizType,
+      refType: 'gateway',
+      refId: null,
+      remark: null,
+    });
+  }
+
+  private async walletEarnAsset(opts: {
+    globalUserId: string;
+    assetType: 'points_locked' | 'points_cashable' | 'wallet_cash';
+    amount: number;
+    idemKey: string;
+    bizType: string;
+    refType?: string | null;
+    refId?: string | null;
+    remark?: string | null;
+  }) {
     const { data } = await axios.post(
       `${this.walletBase()}/wallet/earn`,
       {
-        global_user_id: globalUserId,
-        biz_type: bizType,
-        changes: [{ asset_type: 'points_locked', amount: amountPointsLocked }],
-        ref_type: 'gateway',
-        ref_id: null,
-        remark: null,
+        global_user_id: opts.globalUserId,
+        biz_type: opts.bizType,
+        changes: [{ asset_type: opts.assetType, amount: opts.amount }],
+        ref_type: opts.refType ?? null,
+        ref_id: opts.refId ?? null,
+        remark: opts.remark ?? null,
       },
       {
         headers: {
           Authorization: `Bearer ${this.internalToken()}`,
           'Content-Type': 'application/json',
-          'x-idempotency-key': idemKey,
+          'x-idempotency-key': opts.idemKey,
         },
       },
     );
@@ -4107,22 +4190,115 @@ export class AppService {
     return { code: 0, message: 'ok', data: { groups: [] } };
   }
 
-  async createPlaysPayment(opts: { bundle: number; idempotency_key?: string }) {
+  async createPlaysPayment(opts: {
+    devTelegramId: string;
+    telegramInitData: string;
+    bundle: number;
+    idempotency_key?: string;
+  }) {
     const b = Math.max(1, Math.min(10, Number(opts.bundle || 1)));
     const amount = b === 10 ? 13 : b === 3 ? 4 : 1.5;
     const idem = String(opts.idempotency_key || '').trim();
     const idemKey = idem ? `pay_plays:${idem}` : '';
     return this.runIdempotent(idemKey, 10 * 60 * 1000, async () => {
+      let usdtTrc20Address = '';
+      const tg = this.getTelegramUserInfo(opts.devTelegramId, opts.telegramInitData);
+      if (tg && this.settlecoreApiKey()) {
+        try {
+          await this.settlecoreLogin(tg);
+          const addr = await this.settlecoreDepositAddress(tg.telegram_id);
+          usdtTrc20Address = String(addr?.address || '').trim();
+        } catch {
+          usdtTrc20Address = '';
+        }
+      }
+
       return {
         code: 0,
         message: 'ok',
         data: {
           display_id: idem ? `pay_${this.hashShort(idem)}` : `pay_${Date.now()}`,
           payment: { amount },
-          pay: { usdtTrc20Address: '', abaName: '', abaId: '' },
+          pay: { usdtTrc20Address, abaName: '', abaId: '' },
         },
       };
     });
+  }
+
+  private safeEqHex(a: string, b: string) {
+    const aa = Buffer.from(String(a || '').trim().toLowerCase(), 'utf8');
+    const bb = Buffer.from(String(b || '').trim().toLowerCase(), 'utf8');
+    if (aa.length !== bb.length) return false;
+    return timingSafeEqual(aa, bb);
+  }
+
+  private hmacSha256Hex(secret: string, raw: Buffer) {
+    return createHmac('sha256', secret).update(raw).digest('hex');
+  }
+
+  async settlecoreUsdtTopupWebhook(opts: { req: any; body: any }) {
+    const req = opts.req;
+    const rawBody: Buffer = Buffer.isBuffer(req?.rawBody)
+      ? req.rawBody
+      : Buffer.from(JSON.stringify(opts.body || {}), 'utf8');
+
+    const partnerCode = String(req?.headers?.['x-partner-code'] || '').trim();
+    const eventType = String(req?.headers?.['x-event-type'] || '').trim();
+    const idemKey = String(req?.headers?.['x-idempotency-key'] || '').trim();
+    const signature = String(req?.headers?.['x-signature'] || '').trim();
+
+    if (partnerCode && partnerCode !== 'rainbowpaw')
+      throw new BadRequestException('invalid partner');
+    if (eventType && eventType !== 'usdt_deposit_confirmed')
+      throw new BadRequestException('invalid event type');
+
+    const secret = this.settlecoreWebhookSecret();
+    if (!secret) throw new BadGatewayException('webhook secret not configured');
+    const expected = this.hmacSha256Hex(secret, rawBody);
+    if (!this.safeEqHex(signature, expected))
+      throw new BadRequestException('invalid signature');
+
+    const event = String(opts.body?.event || '').trim();
+    if (event && event !== 'usdt_deposit_confirmed')
+      throw new BadRequestException('invalid event');
+
+    const telegramId = Number(opts.body?.telegram_id || 0);
+    if (!Number.isFinite(telegramId) || telegramId <= 0)
+      throw new BadRequestException('invalid telegram_id');
+    const txHash = String(opts.body?.tx_hash || '').trim();
+    if (!txHash) throw new BadRequestException('missing tx_hash');
+    const amount = Number(opts.body?.amount || 0);
+    if (!Number.isFinite(amount) || amount <= 0)
+      throw new BadRequestException('invalid amount');
+    const currency = String(opts.body?.currency || 'USDT').trim();
+    if (currency !== 'USDT') throw new BadRequestException('invalid currency');
+    const sourceAddress = String(opts.body?.source_address || '').trim();
+
+    const linked = await this.internalPost<any>(
+      `${this.identityBase()}/identity/link-user`,
+      {
+        source_bot: 'rainbowpaw_bot',
+        source_user_id: String(telegramId),
+        telegram_id: telegramId,
+        username: null,
+        first_source: 'settlecore',
+      },
+    );
+    const globalUserId = String(linked?.data?.global_user_id || '').trim();
+    if (!globalUserId) throw new BadGatewayException('identity link-user failed');
+
+    await this.walletEarnAsset({
+      globalUserId,
+      assetType: 'wallet_cash',
+      amount,
+      idemKey: idemKey || txHash,
+      bizType: 'usdt_deposit',
+      refType: 'settlecore',
+      refId: txHash,
+      remark: sourceAddress ? `source=${sourceAddress}` : null,
+    });
+
+    return { code: 0, message: 'ok', data: { processed: true } };
   }
 
   async payment(opts: { id: string }) {

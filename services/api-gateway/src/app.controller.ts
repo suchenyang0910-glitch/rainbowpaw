@@ -403,13 +403,22 @@ export class AppController {
 
   @Post('payments/plays')
   createPlaysPayment(
+    @Headers('x-dev-telegram-id') devTelegramId: string,
+    @Headers('x-telegram-init-data') telegramInitData: string,
     @Headers('x-idempotency-key') idempotencyKey: string,
     @Body() body: any,
   ) {
     return this.appService.createPlaysPayment({
+      devTelegramId,
+      telegramInitData,
       bundle: Number(body?.bundle || 1),
       idempotency_key: String(idempotencyKey || ''),
     });
+  }
+
+  @Post('webhooks/settlecore/usdt-topup')
+  settlecoreUsdtTopup(@Req() req: any, @Body() body: any) {
+    return this.appService.settlecoreUsdtTopupWebhook({ req, body });
   }
 
   @Get('payments/:id')

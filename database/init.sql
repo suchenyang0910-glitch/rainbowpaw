@@ -362,6 +362,8 @@ CREATE TABLE IF NOT EXISTS crm.outreach_logs (
 CREATE INDEX IF NOT EXISTS idx_crm_outreach_logs_lead_id ON crm.outreach_logs(lead_id);
 CREATE INDEX IF NOT EXISTS idx_crm_outreach_logs_created_at ON crm.outreach_logs(created_at);
 
+CREATE SCHEMA IF NOT EXISTS pricing;
+
 CREATE TABLE IF NOT EXISTS pricing.aftercare_quotes (
   id BIGSERIAL PRIMARY KEY,
   lead_id VARCHAR(32),

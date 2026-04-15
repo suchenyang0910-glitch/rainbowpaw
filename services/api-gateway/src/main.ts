@@ -6,7 +6,7 @@ import { AppModule } from './app.module';
 loadEnv({ path: join(__dirname, '..', '..', '..', '.env'), override: true });
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create(AppModule, { rawBody: true });
   app.setGlobalPrefix('api');
   app.enableCors({ origin: true, credentials: true });
   await app.listen(process.env.PORT ?? 3012);
