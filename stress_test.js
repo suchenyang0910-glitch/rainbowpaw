@@ -1,12 +1,12 @@
 import axios from 'axios';
 import { randomUUID } from 'crypto';
 
-// Target the API Gateway (or Claw Service directly if running locally)
-const GATEWAY_URL = process.env.GATEWAY_URL || 'http://localhost:3000';
+// Target the Claw Service directly to bypass API Gateway & Wallet logic
+const CLAW_SERVICE_URL = process.env.CLAW_SERVICE_URL || 'http://localhost:3006';
 const INTERNAL_TOKEN = process.env.INTERNAL_TOKEN || 'dev-internal-token';
 
 const client = axios.create({
-  baseURL: GATEWAY_URL,
+  baseURL: CLAW_SERVICE_URL,
   headers: {
     'Content-Type': 'application/json',
     'Authorization': `Bearer ${INTERNAL_TOKEN}`,
@@ -41,23 +41,16 @@ async function stressTest() {
   console.log(`\n2. Playing Claw to get a real playId...`);
   let testPlayId = '';
   try {
-    const playRes = await client.post('/api/claw/play', { global_user_id: testUserId });
+    // Calling claw-service directly (NO /api prefix)
+    const playRes = await client.post('/claw/play', { global_user_id: testUserId, pool_id: 'pool_test_01' });
     
-    if (playRes.data?.code !== 0) {
-      console.error('   ❌ API Gateway returned error:', playRes.data);
-      console.error('   💡 This usually means the claw-service is returning an error (e.g. "No active claw pool").');
+    if (playRes.data?.code !== 0 && !playRes.data?.data) {
+      console.error('   ❌ Claw Service returned error:', playRes.data);
       return;
     }
 
-    // Check if we hit the fallback
-    if (playRes.data?.data?.result === 'fallback_01') {
-      console.error('   ❌ API Gateway returned fallback response. This means claw-service is down, or there is no active claw_pool in the database.');
-      console.error('   💡 Please ensure claw-service is running and you have inserted at least one active pool and pool_item into the database.');
-      return;
-    }
-
-    if (playRes.data?.data?.reward?.play_id) {
-      testPlayId = playRes.data.data.reward.play_id;
+    if (playRes.data?.data?.play?.play_id) {
+      testPlayId = playRes.data.data.play.play_id;
       console.log(`   ✅ Played successfully. Received playId: ${testPlayId}`);
     } else {
       throw new Error('No playId returned: ' + JSON.stringify(playRes.data));
@@ -77,17 +70,16 @@ async function stressTest() {
   }
 
   console.log(`\n3. [Test Case] Simulating 10 concurrent users trying to recycle the SAME item at the exact same millisecond.`);
-  console.log(`Target: POST /api/claw/recycle for playId=${testPlayId}`);
+  console.log(`Target: POST /claw/play/${testPlayId}/recycle`);
 
   const concurrentRequests = 10;
   const requests = [];
 
   for (let i = 0; i < concurrentRequests; i++) {
-    // Send identical requests concurrently
+    // Send identical requests concurrently to the specific play_id endpoint
     requests.push(
-      client.post('/api/claw/recycle', {
-        global_user_id: testUserId,
-        playId: testPlayId
+      client.post(`/claw/play/${testPlayId}/recycle`, {
+        global_user_id: testUserId
       }).then(res => {
         return { id: i, success: true, data: res.data };
       }).catch(err => {
