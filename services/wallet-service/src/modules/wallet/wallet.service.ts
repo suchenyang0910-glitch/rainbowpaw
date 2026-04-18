@@ -44,6 +44,31 @@ export class WalletService {
     return (cents / 100).toFixed(2);
   }
 
+  private toMinorUnits(v: string | number | null | undefined, scale: number): bigint {
+    const s = String(v ?? '0').trim();
+    if (!s) return 0n;
+    const neg = s.startsWith('-');
+    const t = neg ? s.slice(1) : s;
+    const parts = t.split('.');
+    const i = parts[0] ? BigInt(parts[0]) : 0n;
+    const fracRaw = String(parts[1] || '');
+    const frac = fracRaw.padEnd(scale, '0').slice(0, scale);
+    const mul = BigInt(10) ** BigInt(scale);
+    const u = i * mul + (frac ? BigInt(frac) : 0n);
+    return neg ? -u : u;
+  }
+
+  private minorUnitsToStr(units: bigint, scale: number): string {
+    const neg = units < 0n;
+    const abs = neg ? -units : units;
+    const mul = BigInt(10) ** BigInt(scale);
+    const i = abs / mul;
+    const f = abs % mul;
+    const frac = scale > 0 ? f.toString().padStart(scale, '0') : '';
+    const out = scale > 0 ? `${i.toString()}.${frac}` : i.toString();
+    return neg ? `-${out}` : out;
+  }
+
   private async ensureWallet(globalUserId: string, manager = this.walletRepo.manager, useLock = false): Promise<WalletEntity> {
     const repo = manager.getRepository(WalletEntity);
     let qb = repo.createQueryBuilder('w').where('w.global_user_id = :globalUserId', { globalUserId });
@@ -61,6 +86,7 @@ export class WalletService {
       points_locked: '0',
       points_cashable: '0',
       wallet_cash: '0',
+      wallet_usdt: '0',
       total_earned: '0',
       total_spent: '0',
       status: 'active',
@@ -119,6 +145,7 @@ export class WalletService {
       points_locked,
       points_cashable,
       wallet_cash: Number(w.wallet_cash || 0),
+      wallet_usdt: Number(w.wallet_usdt || 0),
     };
   }
 
@@ -168,9 +195,34 @@ export class WalletService {
           let locked = this.toCents(w.points_locked);
           let cashable = this.toCents(w.points_cashable);
           let cash = this.toCents(w.wallet_cash);
+          let usdt = this.toMinorUnits(w.wallet_usdt, 6);
 
           for (const c of dto.changes) {
             const asset = String(c.asset_type || '').trim();
+            if (asset === 'wallet_usdt') {
+              const amt = this.toMinorUnits(c.amount, 6);
+              if (amt <= 0n) throw new BadRequestException('amount must be positive');
+              const before = usdt;
+              usdt += amt;
+              await logRepo.save(
+                logRepo.create({
+                  global_user_id: w.global_user_id,
+                  biz_type: dto.biz_type,
+                  status: 'succeeded',
+                  asset_type: 'wallet_usdt',
+                  change_direction: 'in',
+                  amount: this.minorUnitsToStr(amt, 6),
+                  balance_before: this.minorUnitsToStr(before, 6),
+                  balance_after: this.minorUnitsToStr(usdt, 6),
+                  ref_type: dto.ref_type || null,
+                  ref_id: dto.ref_id || null,
+                  remark: dto.remark || null,
+                  created_at: new Date(),
+                }),
+              );
+              continue;
+            }
+
             const amt = this.toCents(c.amount);
             if (amt <= 0) throw new BadRequestException('amount must be positive');
 
@@ -241,7 +293,19 @@ export class WalletService {
           w.points_cashable = this.centsToStr(cashable);
           w.points_total = this.centsToStr(total);
           w.wallet_cash = this.centsToStr(cash);
-          w.total_earned = this.centsToStr(this.toCents(w.total_earned) + dto.changes.reduce((s, x) => s + (String(x.asset_type) === 'wallet_cash' ? 0 : this.toCents(x.amount)), 0));
+          w.wallet_usdt = this.minorUnitsToStr(usdt, 6);
+          w.total_earned = this.centsToStr(
+            this.toCents(w.total_earned) +
+              dto.changes.reduce(
+                (s, x) =>
+                  s +
+                  (String(x.asset_type) === 'wallet_cash' ||
+                  String(x.asset_type) === 'wallet_usdt'
+                    ? 0
+                    : this.toCents(x.amount)),
+                0,
+              ),
+          );
           w.updated_at = new Date();
           await walletRepo.save(w);
 
@@ -255,6 +319,7 @@ export class WalletService {
               points_locked: Number(w.points_locked || 0),
               points_cashable: Number(w.points_cashable || 0),
               wallet_cash: Number(w.wallet_cash || 0),
+              wallet_usdt: Number(w.wallet_usdt || 0),
             },
           };
         });

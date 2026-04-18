@@ -53,6 +53,8 @@ export class AppService {
     { name: string; phone: string; address: string }
   >();
 
+  private settlecoreAckLoopStarted = false;
+
   private marketplaceProductsStore = [
     // --- 1. Senior Care (老年护理) ---
     {
@@ -371,6 +373,7 @@ export class AppService {
     if (!key) throw new BadGatewayException('settlecore not configured');
     return {
       Authorization: `Bearer ${key}`,
+      'X-Rainbowpaw-Key': key,
       'Content-Type': 'application/json',
     } as Record<string, string>;
   }
@@ -408,6 +411,328 @@ export class AppService {
       address: string;
       chain: string;
     };
+  }
+
+  private async settlecoreCreatePayment(opts: {
+    partnerOrderId: string;
+    telegramId?: number;
+    amount: number;
+    currency?: string;
+    note?: string;
+    metadata?: any;
+  }) {
+    const url = `${this.settlecorePartnerBase()}/payments/create`;
+    const { data } = await axios.post(
+      url,
+      {
+        partner_order_id: opts.partnerOrderId,
+        telegram_id: opts.telegramId,
+        amount: opts.amount,
+        currency: opts.currency || 'USDT',
+        note: opts.note || undefined,
+        metadata: typeof opts.metadata === 'undefined' ? undefined : opts.metadata,
+      },
+      { headers: this.settlecoreAuthHeaders() },
+    );
+    return data as {
+      partner_code: string;
+      partner_order_id: string;
+      payment_order_id: number;
+      status: string;
+      amount: number;
+      currency: string;
+      payment_address: string | null;
+      payment_url: string | null;
+      expires_at: string | null;
+    };
+  }
+
+  private async settlecoreWebhookAck(eventType: string, idempotencyKey: string) {
+    const url = `${this.settlecorePartnerBase()}/webhook-ack`;
+    const { data } = await axios.post(
+      url,
+      { event_type: eventType, idempotency_key: idempotencyKey },
+      { headers: this.settlecoreAuthHeaders() },
+    );
+    return data as { success: boolean };
+  }
+
+  private settlecoreDbReady() {
+    return Boolean(this.getOpsPg());
+  }
+
+  private async settlecoreDbUpsertPartnerOrder(row: {
+    displayId: string;
+    productCode: string;
+    bundle: number | null;
+    globalUserId: string | null;
+    telegramId: number | null;
+    partnerOrderId: string;
+    paymentOrderId: number | null;
+    expectedWebhookIdemKey: string | null;
+    amount: number;
+    currency: string;
+    status: 'pending' | 'settled' | 'failed';
+    rawCreateResponse: any;
+  }) {
+    await this.opsQuery(
+      `INSERT INTO payments.settlecore_partner_orders(
+        display_id, product_code, bundle, global_user_id, telegram_id,
+        partner_order_id, payment_order_id, expected_webhook_idem_key,
+        amount, currency, status, raw_create_response, updated_at
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,CURRENT_TIMESTAMP)
+      ON CONFLICT (display_id)
+      DO UPDATE SET
+        product_code = EXCLUDED.product_code,
+        bundle = EXCLUDED.bundle,
+        global_user_id = EXCLUDED.global_user_id,
+        telegram_id = EXCLUDED.telegram_id,
+        partner_order_id = EXCLUDED.partner_order_id,
+        payment_order_id = COALESCE(EXCLUDED.payment_order_id, payments.settlecore_partner_orders.payment_order_id),
+        expected_webhook_idem_key = COALESCE(EXCLUDED.expected_webhook_idem_key, payments.settlecore_partner_orders.expected_webhook_idem_key),
+        amount = EXCLUDED.amount,
+        currency = EXCLUDED.currency,
+        status = EXCLUDED.status,
+        raw_create_response = COALESCE(EXCLUDED.raw_create_response, payments.settlecore_partner_orders.raw_create_response),
+        updated_at = CURRENT_TIMESTAMP`,
+      [
+        row.displayId,
+        row.productCode,
+        row.bundle,
+        row.globalUserId,
+        row.telegramId,
+        row.partnerOrderId,
+        row.paymentOrderId,
+        row.expectedWebhookIdemKey,
+        row.amount,
+        row.currency,
+        row.status,
+        row.rawCreateResponse ?? null,
+      ],
+    );
+  }
+
+  private async settlecoreDbFindPartnerOrder(opts: {
+    displayId?: string;
+    partnerOrderId?: string;
+    paymentOrderId?: number;
+  }) {
+    const where: string[] = [];
+    const params: any[] = [];
+    if (opts.displayId) {
+      params.push(String(opts.displayId));
+      where.push(`display_id = $${params.length}`);
+    }
+    if (opts.partnerOrderId) {
+      params.push(String(opts.partnerOrderId));
+      where.push(`partner_order_id = $${params.length}`);
+    }
+    if (Number.isFinite(Number(opts.paymentOrderId)) && Number(opts.paymentOrderId) > 0) {
+      params.push(Number(opts.paymentOrderId));
+      where.push(`payment_order_id = $${params.length}`);
+    }
+    if (!where.length) return null;
+    const res = await this.opsQuery<any>(
+      `SELECT * FROM payments.settlecore_partner_orders WHERE ${where.join(' OR ')} ORDER BY id DESC LIMIT 1`,
+      params,
+    );
+    return res.rows?.[0] || null;
+  }
+
+  private async settlecoreDbMarkPartnerOrderSettled(opts: {
+    partnerOrderId: string;
+    paymentOrderId: number;
+    settledBody: any;
+  }) {
+    await this.opsQuery(
+      `UPDATE payments.settlecore_partner_orders
+       SET status = 'settled', payment_order_id = $2, raw_settled_body = $3, settled_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+       WHERE partner_order_id = $1`,
+      [opts.partnerOrderId, opts.paymentOrderId, opts.settledBody ?? null],
+    );
+  }
+
+  private async settlecoreDbUpsertWebhookEventReceived(row: {
+    eventType: string;
+    idempotencyKey: string;
+    partnerCode: string | null;
+    signature: string | null;
+    rawBody: string;
+  }) {
+    const res = await this.opsQuery<any>(
+      `INSERT INTO payments.settlecore_webhook_events(
+        event_type, idempotency_key, partner_code, signature, raw_body,
+        status, ack_status, ack_attempts, created_at, updated_at
+      ) VALUES ($1,$2,$3,$4,$5,'received','pending',0,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
+      ON CONFLICT (event_type, idempotency_key)
+      DO UPDATE SET
+        partner_code = COALESCE(EXCLUDED.partner_code, payments.settlecore_webhook_events.partner_code),
+        signature = COALESCE(EXCLUDED.signature, payments.settlecore_webhook_events.signature),
+        raw_body = COALESCE(EXCLUDED.raw_body, payments.settlecore_webhook_events.raw_body),
+        updated_at = CURRENT_TIMESTAMP
+      RETURNING *`,
+      [
+        row.eventType,
+        row.idempotencyKey,
+        row.partnerCode,
+        row.signature,
+        row.rawBody,
+      ],
+    );
+    return res.rows?.[0] || null;
+  }
+
+  private async settlecoreDbUpdateWebhookVerified(id: number, ok: boolean, error?: string) {
+    if (ok) {
+      await this.opsQuery(
+        `UPDATE payments.settlecore_webhook_events
+         SET verified_at = CURRENT_TIMESTAMP, status = 'verified', error = NULL, updated_at = CURRENT_TIMESTAMP
+         WHERE id = $1`,
+        [id],
+      );
+      return;
+    }
+    await this.opsQuery(
+      `UPDATE payments.settlecore_webhook_events
+       SET status = 'invalid', error = $2, updated_at = CURRENT_TIMESTAMP
+       WHERE id = $1`,
+      [id, String(error || 'invalid signature')],
+    );
+  }
+
+  private async settlecoreDbMarkWebhookProcessed(opts: {
+    id: number;
+    status: 'processed' | 'failed';
+    error?: string;
+    txHash?: string | null;
+    paymentOrderId?: number | null;
+    partnerOrderId?: string | null;
+    telegramId?: number | null;
+    globalUserId?: string | null;
+    ackStatus?: 'pending' | 'acked';
+  }) {
+    await this.opsQuery(
+      `UPDATE payments.settlecore_webhook_events
+       SET processed_at = CASE WHEN $2 = 'processed' THEN CURRENT_TIMESTAMP ELSE processed_at END,
+           status = $2,
+           error = $3,
+           tx_hash = COALESCE($4, tx_hash),
+           payment_order_id = COALESCE($5, payment_order_id),
+           partner_order_id = COALESCE($6, partner_order_id),
+           telegram_id = COALESCE($7, telegram_id),
+           global_user_id = COALESCE($8, global_user_id),
+           ack_status = COALESCE($9, ack_status),
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = $1`,
+      [
+        opts.id,
+        opts.status,
+        opts.status === 'failed' ? String(opts.error || 'failed') : null,
+        opts.txHash ?? null,
+        opts.paymentOrderId ?? null,
+        opts.partnerOrderId ?? null,
+        opts.telegramId ?? null,
+        opts.globalUserId ?? null,
+        opts.ackStatus ?? null,
+      ],
+    );
+  }
+
+  private settlecoreAckBackoffMs(attempt: number) {
+    const a = Math.max(1, Math.min(10, Number(attempt || 1)));
+    const base = 15_000;
+    return Math.min(15 * 60_000, base * Math.pow(2, a - 1));
+  }
+
+  private async settlecoreAckLoopTick() {
+    if (!this.settlecoreDbReady()) return;
+    if (!this.settlecoreApiKey()) return;
+    const res = await this.opsQuery<any>(
+      `SELECT id, event_type, idempotency_key, ack_attempts
+       FROM payments.settlecore_webhook_events
+       WHERE status = 'processed'
+         AND ack_status <> 'acked'
+         AND (ack_next_retry_at IS NULL OR ack_next_retry_at <= CURRENT_TIMESTAMP)
+       ORDER BY id ASC
+       LIMIT 20`,
+    );
+    const items = Array.isArray(res.rows) ? res.rows : [];
+    for (const it of items) {
+      const id = Number(it.id);
+      if (!Number.isFinite(id) || id <= 0) continue;
+      const eventType = String(it.event_type || '').trim();
+      const idemKey = String(it.idempotency_key || '').trim();
+      const attempts = Number(it.ack_attempts || 0);
+      if (!eventType || !idemKey) continue;
+      try {
+        const ack = await this.settlecoreWebhookAck(eventType, idemKey);
+        if (ack?.success) {
+          await this.opsQuery(
+            `UPDATE payments.settlecore_webhook_events
+             SET ack_status = 'acked', acked_at = CURRENT_TIMESTAMP, ack_attempts = ack_attempts + 1, ack_last_error = NULL, ack_next_retry_at = NULL, updated_at = CURRENT_TIMESTAMP
+             WHERE id = $1`,
+            [id],
+          );
+          continue;
+        }
+        throw new Error('settlecore ack failed');
+      } catch (e: any) {
+        const nextMs = this.settlecoreAckBackoffMs(attempts + 1);
+        await this.opsQuery(
+          `UPDATE payments.settlecore_webhook_events
+           SET ack_status = 'pending', ack_attempts = ack_attempts + 1, ack_last_error = $2, ack_next_retry_at = CURRENT_TIMESTAMP + ($3 * INTERVAL '1 millisecond'), updated_at = CURRENT_TIMESTAMP
+           WHERE id = $1`,
+          [id, String(e?.message || e || 'ack error'), nextMs],
+        );
+      }
+    }
+  }
+
+  private settlecoreAckAsync(eventType: string, idempotencyKey: string, webhookEventId?: number) {
+    const id = Number(webhookEventId || 0);
+    const db = this.settlecoreDbReady() && Number.isFinite(id) && id > 0;
+    const safeType = String(eventType || '').trim();
+    const safeKey = String(idempotencyKey || '').trim();
+    if (!safeType || !safeKey) return;
+    this.settlecoreWebhookAck(safeType, safeKey)
+      .then(async (ack) => {
+        if (!ack?.success) throw new Error('settlecore ack failed');
+        if (db) {
+          await this.opsQuery(
+            `UPDATE payments.settlecore_webhook_events
+             SET ack_status = 'acked', acked_at = CURRENT_TIMESTAMP, ack_attempts = ack_attempts + 1, ack_last_error = NULL, ack_next_retry_at = NULL, updated_at = CURRENT_TIMESTAMP
+             WHERE id = $1`,
+            [id],
+          );
+        }
+      })
+      .catch(async (e: any) => {
+        console.error(
+          JSON.stringify({
+            msg: 'settlecore.webhook.ack_failed',
+            event_type: safeType,
+            idempotency_key: safeKey,
+            error: String(e?.message || e || 'ack error'),
+          }),
+        );
+        if (db) {
+          const nextMs = this.settlecoreAckBackoffMs(1);
+          await this.opsQuery(
+            `UPDATE payments.settlecore_webhook_events
+             SET ack_status = 'pending', ack_attempts = ack_attempts + 1, ack_last_error = $2, ack_next_retry_at = CURRENT_TIMESTAMP + ($3 * INTERVAL '1 millisecond'), updated_at = CURRENT_TIMESTAMP
+             WHERE id = $1`,
+            [id, String(e?.message || e || 'ack error'), nextMs],
+          );
+        }
+      });
+  }
+
+  private ensureSettlecoreAckLoop() {
+    if (this.settlecoreAckLoopStarted) return;
+    this.settlecoreAckLoopStarted = true;
+    setInterval(() => {
+      this.settlecoreAckLoopTick().catch(() => void 0);
+    }, 10_000);
   }
 
   private aiBase() {
@@ -629,7 +954,7 @@ export class AppService {
 
   private async walletEarnAsset(opts: {
     globalUserId: string;
-    assetType: 'points_locked' | 'points_cashable' | 'wallet_cash';
+    assetType: 'points_locked' | 'points_cashable' | 'wallet_cash' | 'wallet_usdt';
     amount: number;
     idemKey: string;
     bizType: string;
@@ -4201,15 +4526,86 @@ export class AppService {
     const idem = String(opts.idempotency_key || '').trim();
     const idemKey = idem ? `pay_plays:${idem}` : '';
     return this.runIdempotent(idemKey, 10 * 60 * 1000, async () => {
+      const displayId = idem ? `pay_${this.hashShort(idem)}` : `pay_${Date.now()}`;
       let usdtTrc20Address = '';
+      let settlecorePaymentUrl = '';
+      let settlecorePaymentOrderId: number | null = null;
+      let partnerOrderId = '';
+      let globalUserId: string | null = null;
+      let telegramId: number | null = null;
+      let rawCreateResponse: any = null;
+
       const tg = this.getTelegramUserInfo(opts.devTelegramId, opts.telegramInitData);
       if (tg && this.settlecoreApiKey()) {
         try {
+          const linked = await this.linkUser(tg);
           await this.settlecoreLogin(tg);
-          const addr = await this.settlecoreDepositAddress(tg.telegram_id);
-          usdtTrc20Address = String(addr?.address || '').trim();
+
+          globalUserId = String(linked.global_user_id || '').trim() || null;
+          telegramId = Number.isFinite(Number(tg.telegram_id)) ? tg.telegram_id : null;
+
+          const idemSuffix = idem ? this.hashShort(idem) : String(Date.now());
+          partnerOrderId = `rpplays_${b}_${linked.global_user_id}_${idemSuffix}`;
+
+          const pay = await this.settlecoreCreatePayment({
+            partnerOrderId,
+            telegramId: tg.telegram_id,
+            amount,
+            currency: 'USDT',
+            note: 'RainbowPaw plays',
+            metadata: {
+              product: 'plays',
+              bundle: b,
+              global_user_id: linked.global_user_id,
+            },
+          });
+
+          rawCreateResponse = pay ?? null;
+
+          usdtTrc20Address = String(pay?.payment_address || '').trim();
+          settlecorePaymentUrl = String(pay?.payment_url || '').trim();
+          settlecorePaymentOrderId = Number(pay?.payment_order_id || 0) || null;
+
+          if (this.settlecoreDbReady() && partnerOrderId) {
+            await this.settlecoreDbUpsertPartnerOrder({
+              displayId,
+              productCode: 'plays',
+              bundle: b,
+              globalUserId,
+              telegramId,
+              partnerOrderId,
+              paymentOrderId: settlecorePaymentOrderId,
+              expectedWebhookIdemKey:
+                settlecorePaymentOrderId != null
+                  ? `pay:${settlecorePaymentOrderId}:settled`
+                  : null,
+              amount,
+              currency: 'USDT',
+              status: 'pending',
+              rawCreateResponse,
+            });
+          }
         } catch {
           usdtTrc20Address = '';
+          settlecorePaymentUrl = '';
+          settlecorePaymentOrderId = null;
+
+          if (this.settlecoreDbReady() && partnerOrderId) {
+            await this.settlecoreDbUpsertPartnerOrder({
+              displayId,
+              productCode: 'plays',
+              bundle: b,
+              globalUserId,
+              telegramId,
+              partnerOrderId,
+              paymentOrderId: null,
+              expectedWebhookIdemKey: null,
+              amount,
+              currency: 'USDT',
+              status: 'failed',
+              rawCreateResponse,
+            });
+          }
         }
       }
 
@@ -4217,9 +4613,15 @@ export class AppService {
         code: 0,
         message: 'ok',
         data: {
-          display_id: idem ? `pay_${this.hashShort(idem)}` : `pay_${Date.now()}`,
+          display_id: displayId,
           payment: { amount },
-          pay: { usdtTrc20Address, abaName: '', abaId: '' },
+          pay: {
+            usdtTrc20Address,
+            settlecorePaymentUrl,
+            settlecorePaymentOrderId,
+            abaName: '',
+            abaId: '',
+          },
         },
       };
     });
@@ -4238,28 +4640,161 @@ export class AppService {
 
   async settlecoreUsdtTopupWebhook(opts: { req: any; body: any }) {
     const req = opts.req;
-    const rawBody: Buffer = Buffer.isBuffer(req?.rawBody)
-      ? req.rawBody
-      : Buffer.from(JSON.stringify(opts.body || {}), 'utf8');
+    if (!Buffer.isBuffer(req?.rawBody))
+      throw new BadGatewayException('raw body unavailable');
+    const rawBody: Buffer = req.rawBody;
+
+    this.ensureSettlecoreAckLoop();
 
     const partnerCode = String(req?.headers?.['x-partner-code'] || '').trim();
     const eventType = String(req?.headers?.['x-event-type'] || '').trim();
     const idemKey = String(req?.headers?.['x-idempotency-key'] || '').trim();
     const signature = String(req?.headers?.['x-signature'] || '').trim();
 
-    if (partnerCode && partnerCode !== 'rainbowpaw')
+    if (partnerCode !== 'rainbowpaw')
       throw new BadRequestException('invalid partner');
-    if (eventType && eventType !== 'usdt_deposit_confirmed')
+    if (!idemKey) throw new BadRequestException('missing idempotency key');
+    if (!signature) throw new BadRequestException('missing signature');
+
+    if (eventType !== 'usdt_deposit_confirmed' && eventType !== 'payment_settled')
       throw new BadRequestException('invalid event type');
+
+    const rawBodyText = rawBody.toString('utf8');
+    const t0 = Date.now();
+    let ev: any = null;
+    if (this.settlecoreDbReady()) {
+      try {
+        ev = await this.settlecoreDbUpsertWebhookEventReceived({
+          eventType,
+          idempotencyKey: idemKey,
+          partnerCode,
+          signature,
+          rawBody: rawBodyText,
+        });
+        if (ev && String(ev.status || '').trim() === 'processed') {
+          return { code: 0, message: 'ok', data: { processed: true } };
+        }
+      } catch {
+        ev = null;
+      }
+    }
 
     const secret = this.settlecoreWebhookSecret();
     if (!secret) throw new BadGatewayException('webhook secret not configured');
     const expected = this.hmacSha256Hex(secret, rawBody);
-    if (!this.safeEqHex(signature, expected))
+    if (!this.safeEqHex(signature, expected)) {
+      if (ev && this.settlecoreDbReady()) {
+        await this.settlecoreDbUpdateWebhookVerified(Number(ev.id), false, 'invalid signature');
+      }
+      console.error(
+        JSON.stringify({
+          msg: 'settlecore.webhook.invalid_signature',
+          event_type: eventType,
+          idempotency_key: idemKey,
+          cost_ms: Date.now() - t0,
+        }),
+      );
       throw new BadRequestException('invalid signature');
+    }
 
+    if (ev && this.settlecoreDbReady()) {
+      try {
+        await this.settlecoreDbUpdateWebhookVerified(Number(ev.id), true);
+      } catch {
+        void 0;
+      }
+    }
+
+    try {
+      if (eventType === 'usdt_deposit_confirmed') {
+        const out = await this.handleSettlecoreUsdtDepositConfirmed({
+          body: opts.body,
+          idempotencyKey: idemKey,
+        });
+        if (ev && this.settlecoreDbReady()) {
+          await this.settlecoreDbMarkWebhookProcessed({
+            id: Number(ev.id),
+            status: 'processed',
+            txHash: out.tx_hash || null,
+            telegramId: out.telegram_id || null,
+            globalUserId: out.global_user_id || null,
+            ackStatus: 'pending',
+          });
+        }
+        console.log(
+          JSON.stringify({
+            msg: 'settlecore.webhook.processed',
+            event_type: eventType,
+            idempotency_key: idemKey,
+            telegram_id: out.telegram_id || null,
+            global_user_id: out.global_user_id || null,
+            tx_hash: out.tx_hash || null,
+            cost_ms: Date.now() - t0,
+          }),
+        );
+        this.settlecoreAckAsync(eventType, idemKey, ev ? Number(ev.id) : undefined);
+        return { code: 0, message: 'ok', data: { processed: true } };
+      }
+
+      const out = await this.handleSettlecorePaymentSettled({
+        body: opts.body,
+        idempotencyKey: idemKey,
+      });
+      if (ev && this.settlecoreDbReady()) {
+        await this.settlecoreDbMarkWebhookProcessed({
+          id: Number(ev.id),
+          status: 'processed',
+          paymentOrderId: out.payment_order_id || null,
+          partnerOrderId: out.partner_order_id || null,
+          telegramId: out.telegram_id || null,
+          globalUserId: out.global_user_id || null,
+          ackStatus: 'pending',
+        });
+      }
+      console.log(
+        JSON.stringify({
+          msg: 'settlecore.webhook.processed',
+          event_type: eventType,
+          idempotency_key: idemKey,
+          payment_order_id: out.payment_order_id || null,
+          partner_order_id: out.partner_order_id || null,
+          global_user_id: out.global_user_id || null,
+          cost_ms: Date.now() - t0,
+        }),
+      );
+      this.settlecoreAckAsync(eventType, idemKey, ev ? Number(ev.id) : undefined);
+      return {
+        code: 0,
+        message: 'ok',
+        data: { processed: true, partner_order_id: out.partner_order_id },
+      };
+    } catch (e: any) {
+      if (ev && this.settlecoreDbReady()) {
+        await this.settlecoreDbMarkWebhookProcessed({
+          id: Number(ev.id),
+          status: 'failed',
+          error: String(e?.message || e || 'failed'),
+        });
+      }
+      console.error(
+        JSON.stringify({
+          msg: 'settlecore.webhook.failed',
+          event_type: eventType,
+          idempotency_key: idemKey,
+          error: String(e?.message || e || 'failed'),
+          cost_ms: Date.now() - t0,
+        }),
+      );
+      throw e;
+    }
+  }
+
+  private async handleSettlecoreUsdtDepositConfirmed(opts: {
+    body: any;
+    idempotencyKey: string;
+  }) {
     const event = String(opts.body?.event || '').trim();
-    if (event && event !== 'usdt_deposit_confirmed')
+    if (event !== 'usdt_deposit_confirmed')
       throw new BadRequestException('invalid event');
 
     const telegramId = Number(opts.body?.telegram_id || 0);
@@ -4267,12 +4802,16 @@ export class AppService {
       throw new BadRequestException('invalid telegram_id');
     const txHash = String(opts.body?.tx_hash || '').trim();
     if (!txHash) throw new BadRequestException('missing tx_hash');
+    if (opts.idempotencyKey !== txHash)
+      throw new BadRequestException('idempotency key mismatch');
     const amount = Number(opts.body?.amount || 0);
     if (!Number.isFinite(amount) || amount <= 0)
       throw new BadRequestException('invalid amount');
     const currency = String(opts.body?.currency || 'USDT').trim();
     if (currency !== 'USDT') throw new BadRequestException('invalid currency');
     const sourceAddress = String(opts.body?.source_address || '').trim();
+    const platformUserId = Number(opts.body?.platform_user_id || 0);
+    const confirmedAt = String(opts.body?.confirmed_at || '').trim();
 
     const linked = await this.internalPost<any>(
       `${this.identityBase()}/identity/link-user`,
@@ -4289,25 +4828,179 @@ export class AppService {
 
     await this.walletEarnAsset({
       globalUserId,
-      assetType: 'wallet_cash',
-      amount,
-      idemKey: idemKey || txHash,
+      assetType: 'wallet_usdt',
+      amount: Number(amount.toFixed(6)),
+      idemKey: opts.idempotencyKey,
       bizType: 'usdt_deposit',
       refType: 'settlecore',
       refId: txHash,
-      remark: sourceAddress ? `source=${sourceAddress}` : null,
+      remark: [
+        sourceAddress ? `source=${sourceAddress}` : '',
+        platformUserId > 0 ? `platform_user_id=${platformUserId}` : '',
+        confirmedAt ? `confirmed_at=${confirmedAt}` : '',
+      ]
+        .filter(Boolean)
+        .join(' '),
     });
 
-    return { code: 0, message: 'ok', data: { processed: true } };
+    return {
+      telegram_id: telegramId,
+      global_user_id: globalUserId,
+      tx_hash: txHash,
+    };
+  }
+
+  private async handleSettlecorePaymentSettled(opts: {
+    body: any;
+    idempotencyKey: string;
+  }) {
+    const event = String(opts.body?.event || '').trim();
+    if (event !== 'payment_settled') throw new BadRequestException('invalid event');
+    const status = String(opts.body?.status || '').trim();
+    if (status !== 'settled') throw new BadRequestException('invalid status');
+
+    const partnerOrderId = String(opts.body?.partner_order_id || '').trim();
+    if (!partnerOrderId) throw new BadRequestException('missing partner_order_id');
+
+    const paymentOrderId = Number(opts.body?.payment_order_id || 0);
+    if (!Number.isFinite(paymentOrderId) || paymentOrderId <= 0)
+      throw new BadRequestException('invalid payment_order_id');
+
+    const expectedIdem = `pay:${paymentOrderId}:settled`;
+    if (opts.idempotencyKey !== expectedIdem)
+      throw new BadRequestException('idempotency key mismatch');
+
+    const amount = Number(opts.body?.amount || 0);
+    if (!Number.isFinite(amount) || amount <= 0)
+      throw new BadRequestException('invalid amount');
+    const currency = String(opts.body?.currency || 'USDT').trim();
+    if (currency !== 'USDT') throw new BadRequestException('invalid currency');
+
+    let mapped: any = null;
+    if (this.settlecoreDbReady()) {
+      try {
+        mapped = await this.settlecoreDbFindPartnerOrder({
+          partnerOrderId,
+          paymentOrderId,
+        });
+      } catch {
+        mapped = null;
+      }
+    }
+
+    const parse = () => {
+      const parts = String(partnerOrderId || '').split('_');
+      if (parts.length < 4) return null;
+      if (parts[0] !== 'rpplays') return null;
+      const bundle = Number(parts[1]);
+      const globalUserId = String(parts[2] || '').trim();
+      if (!Number.isFinite(bundle) || bundle <= 0) return null;
+      if (!globalUserId) return null;
+      return { bundle, global_user_id: globalUserId };
+    };
+
+    const globalUserId =
+      (mapped && String(mapped.global_user_id || '').trim()) ||
+      (parse()?.global_user_id || '');
+    const bundle =
+      (mapped && Number(mapped.bundle || 0)) || (parse()?.bundle || 0);
+    if (!globalUserId) throw new BadGatewayException('missing global_user_id');
+    if (!Number.isFinite(bundle) || bundle <= 0)
+      throw new BadGatewayException('missing bundle');
+
+    const points = bundle * 3;
+    await this.walletEarnAsset({
+      globalUserId,
+      assetType: 'points_locked',
+      amount: points,
+      idemKey: opts.idempotencyKey,
+      bizType: 'buy_plays',
+      refType: 'settlecore',
+      refId: String(paymentOrderId),
+      remark: `partner_order_id=${partnerOrderId}`,
+    });
+
+    await this.orderCreate(
+      {
+        type: 'claw',
+        user_id: globalUserId,
+        amount,
+        currency: 'usd',
+        status: 'paid',
+        flow: 'income',
+        metadata: {
+          source: 'settlecore',
+          product: 'plays',
+          bundle,
+          points,
+          partner_order_id: partnerOrderId,
+          payment_order_id: paymentOrderId,
+        },
+        items: [
+          {
+            item_name: `Plays Bundle (${bundle}x)`,
+            quantity: 1,
+            unit_price: amount,
+            total_price: amount,
+            metadata: { product: 'plays', bundle, points },
+          },
+        ],
+      },
+      opts.idempotencyKey,
+    );
+
+    if (this.settlecoreDbReady() && partnerOrderId) {
+      await this.settlecoreDbMarkPartnerOrderSettled({
+        partnerOrderId,
+        paymentOrderId,
+        settledBody: opts.body,
+      });
+    }
+
+    return {
+      partner_order_id: partnerOrderId,
+      payment_order_id: paymentOrderId,
+      global_user_id: globalUserId,
+      telegram_id: mapped && mapped.telegram_id ? Number(mapped.telegram_id) : null,
+    };
   }
 
   async payment(opts: { id: string }) {
+    const id = String(opts.id || '').trim();
+    if (!id)
+      return {
+        code: 0,
+        message: 'ok',
+        data: { display_id: '', payment: { id: '', amount: 0, status: 'pending' } },
+      };
+    if (this.settlecoreDbReady()) {
+      try {
+        const row = await this.settlecoreDbFindPartnerOrder({ displayId: id });
+        if (row) {
+          const amount = Number(row.amount || 0) || 0;
+          const st = String(row.status || '').trim();
+          const status = st === 'settled' ? 'confirmed' : st === 'failed' ? 'rejected' : 'pending';
+          return {
+            code: 0,
+            message: 'ok',
+            data: {
+              display_id: id,
+              payment: { id, amount, status },
+              proof_file: this.paymentProofFiles.has(id) ? { payment_id: id } : null,
+            },
+          };
+        }
+      } catch {
+        void 0;
+      }
+    }
     return {
       code: 0,
       message: 'ok',
       data: {
-        display_id: opts.id,
-        payment: { id: opts.id, amount: 0, status: 'pending' },
+        display_id: id,
+        payment: { id, amount: 0, status: 'pending' },
+        proof_file: this.paymentProofFiles.has(id) ? { payment_id: id } : null,
       },
     };
   }

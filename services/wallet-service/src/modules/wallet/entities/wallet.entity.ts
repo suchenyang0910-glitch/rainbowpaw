@@ -21,6 +21,9 @@ export class WalletEntity {
   @Column({ type: 'numeric', precision: 12, scale: 2, default: 0 })
   wallet_cash: string;
 
+  @Column({ type: 'numeric', precision: 18, scale: 6, default: 0 })
+  wallet_usdt: string;
+
   @Column({ type: 'numeric', precision: 12, scale: 2, default: 0 })
   total_earned: string;
 
@@ -36,4 +39,3 @@ export class WalletEntity {
   @Column({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' })
   updated_at: Date;
 }
-

@@ -21,13 +21,13 @@ export class WalletLogEntity {
   @Column({ type: 'varchar', length: 16 })
   change_direction: string;
 
-  @Column({ type: 'numeric', precision: 12, scale: 2 })
+  @Column({ type: 'numeric', precision: 18, scale: 6 })
   amount: string;
 
-  @Column({ type: 'numeric', precision: 12, scale: 2 })
+  @Column({ type: 'numeric', precision: 18, scale: 6 })
   balance_before: string;
 
-  @Column({ type: 'numeric', precision: 12, scale: 2 })
+  @Column({ type: 'numeric', precision: 18, scale: 6 })
   balance_after: string;
 
   @Index()
