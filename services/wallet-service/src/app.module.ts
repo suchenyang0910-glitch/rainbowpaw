@@ -11,11 +11,28 @@ import { AdminModule } from './modules/admin/admin.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forRoot({
-      type: 'postgres',
-      url: process.env.DATABASE_URL || 'postgres://postgres:postgres@localhost:5432/rainbowpaw',
-      autoLoadEntities: true,
-      synchronize: false,
+    TypeOrmModule.forRootAsync({
+      useFactory: () => {
+        const url = String(process.env.DATABASE_URL || '').trim();
+        if (url) {
+          return {
+            type: 'postgres',
+            url,
+            autoLoadEntities: true,
+            synchronize: false,
+          } as const;
+        }
+        return {
+          type: 'postgres',
+          host: process.env.POSTGRES_HOST || '127.0.0.1',
+          port: Number(process.env.POSTGRES_PORT || 5432),
+          username: process.env.POSTGRES_USER || 'rainbowpaw',
+          password: process.env.POSTGRES_PASSWORD || 'rainbowpaw',
+          database: process.env.POSTGRES_DB || 'rainbowpaw',
+          autoLoadEntities: true,
+          synchronize: false,
+        } as const;
+      },
     }),
     WalletModule,
     AdminModule,

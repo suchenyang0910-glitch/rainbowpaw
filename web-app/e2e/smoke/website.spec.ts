@@ -5,12 +5,68 @@ test.describe('Website Landing Page', () => {
     page.on('console', msg => console.log('BROWSER CONSOLE:', msg.text()));
     page.on('pageerror', err => console.log('BROWSER ERROR:', err.message));
 
-    // Mock missing APIs to prevent proxy errors and timeouts
-    await page.route('**/api/marketplace/products*', async route => {
-      await route.fulfill({ json: { code: 0, data: { items: [] } } });
-    });
-    await page.route('**/api/marketplace/services*', async route => {
-      await route.fulfill({ json: { code: 0, data: { items: [] } } });
+    await page.route('**://*/api/**', async (route) => {
+      const url = new URL(route.request().url());
+      const p = url.pathname;
+      if (p === '/api/events') {
+        return route.fulfill({ json: { code: 0, data: { accepted: true } } });
+      }
+      if (p === '/api/me') {
+        return route.fulfill({
+          json: {
+            code: 0,
+            data: {
+              telegram: { id: 123456789, username: 'test', first_name: 'Test', last_name: 'User' },
+              user: { global_user_id: 'g_test_user', plays_left: 0, state: 'idle', referral_code: 'ref_g_test_u' },
+              wallet: {
+                global_user_id: 'g_test_user',
+                total_points: 100,
+                locked_points: 60,
+                cashable_points: 40,
+                points_total: 100,
+                points_locked: 60,
+                points_cashable: 40,
+                wallet_cash: 0,
+                wallet_usdt: 0,
+              },
+              pricing: { playUsd: 1.5, bundle3xUsd: 4, bundle10xUsd: 13 },
+              pay: { usdtTrc20Address: 'TMockAddress', abaName: '', abaId: '' },
+              links: { referral: 'https://t.me/rainbowpay_claw_Bot?start=ref_g_test_u' },
+              shipping: null,
+            },
+          },
+        });
+      }
+      if (p === '/api/products') {
+        return route.fulfill({
+          json: {
+            code: 0,
+            data: {
+              products: [
+                { id: 101, name: '高级玩具 A', price: 10, groupPrice: 7, category: 'Toys', image: '🧸' },
+                { id: 102, name: '纪念金币', price: 25, groupPrice: 18, category: 'Memorial', image: '🪙' },
+                { id: 103, name: '护关节软糖', price: 35, groupPrice: 29, category: 'Senior Care', image: '🦴' },
+                { id: 104, name: '舒适垫', price: 49, groupPrice: 39, category: 'Senior Care', image: '🛏️' },
+                { id: 105, name: '恢复月包', price: 55, groupPrice: 45, category: 'Care Pack', image: '📦' },
+                { id: 106, name: '纪念吊坠', price: 45, groupPrice: 35, category: 'Memory', image: '💎' },
+              ],
+            },
+          },
+        });
+      }
+      if (p === '/api/orders') {
+        return route.fulfill({ json: { code: 0, data: { orders: [] } } });
+      }
+      if (p === '/api/groups/active') {
+        return route.fulfill({ json: { code: 0, data: { groups: [] } } });
+      }
+      if (p === '/api/marketplace/products') {
+        return route.fulfill({ json: { code: 0, data: { items: [] } } });
+      }
+      if (p === '/api/marketplace/services') {
+        return route.fulfill({ json: { code: 0, data: { items: [] } } });
+      }
+      return route.fulfill({ json: { code: 0, data: {} } });
     });
   });
 

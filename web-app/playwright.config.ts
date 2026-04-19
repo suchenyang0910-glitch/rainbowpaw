@@ -32,7 +32,8 @@ export default defineConfig({
     reuseExistingServer: !process.env.CI,
     env: {
       ...process.env,
-      VITE_API_BASE_URL: process.env.VITE_API_BASE_URL || '/api',
+      VITE_API_BASE_URL:
+        process.env.VITE_API_BASE_URL || 'http://mock.rainbowpaw.local/api',
       VITE_MOCK_INIT_DATA: process.env.VITE_MOCK_INIT_DATA || 'e2e',
       VITE_DEV_TELEGRAM_ID: process.env.VITE_DEV_TELEGRAM_ID || '123456',
     },
