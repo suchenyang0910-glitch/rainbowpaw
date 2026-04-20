@@ -26,6 +26,12 @@ function AdminLegacyRedirect() {
   return <Navigate to={next} replace />
 }
 
+function ClawFunnelRedirect() {
+  const location = useLocation()
+  const next = `/rainbowpaw${location.search || ''}${location.hash || ''}`
+  return <Navigate to={next} replace />
+}
+
 createRoot(document.getElementById('root')).render(
   <StrictMode>
     <BrowserRouter>
@@ -33,7 +39,8 @@ createRoot(document.getElementById('root')).render(
         <Route path="/" element={<RootRedirect />} />
         <Route path="/:locale" element={<LocaleHome />} />
 
-        <Route path="/rainbowpawclaw" element={<App />} />
+        <Route path="/rainbowpawclaw" element={<ClawFunnelRedirect />} />
+        <Route path="/rainbowpawclaw/*" element={<ClawFunnelRedirect />} />
         
         <Route path="/care" element={<CarePlanPage />} />
         <Route path="/services" element={<ServicesPage />} />
