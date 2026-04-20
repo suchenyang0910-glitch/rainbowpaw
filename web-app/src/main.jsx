@@ -34,6 +34,7 @@ createRoot(document.getElementById('root')).render(
         <Route path="/:locale" element={<LocaleHome />} />
 
         <Route path="/rainbowpawclaw" element={<App />} />
+        <Route path="/rainbowpawclaw/*" element={<App />} />
         
         <Route path="/care" element={<CarePlanPage />} />
         <Route path="/services" element={<ServicesPage />} />
