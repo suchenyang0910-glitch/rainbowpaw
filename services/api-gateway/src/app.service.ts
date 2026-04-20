@@ -1049,6 +1049,19 @@ export class AppService {
     const linked = await this.linkUser(tg);
     const wallet = await this.getWallet(linked.global_user_id);
 
+    const abaName = String(process.env.ABA_NAME || '').trim();
+    const abaId = String(process.env.ABA_ID || '').trim();
+    let usdtTrc20Address = '';
+    if (this.settlecoreApiKey()) {
+      try {
+        await this.settlecoreLogin(tg);
+        const addr = await this.settlecoreDepositAddress(tg.telegram_id);
+        usdtTrc20Address = String(addr?.address || '').trim();
+      } catch {
+        usdtTrc20Address = '';
+      }
+    }
+
     const referralCode = `ref_${String(linked.global_user_id).slice(0, 8)}`;
     return {
       code: 0,
@@ -1068,7 +1081,7 @@ export class AppService {
         },
         wallet,
         pricing: { playUsd: 1.5, bundle3xUsd: 4, bundle10xUsd: 13 },
-        pay: { usdtTrc20Address: '', abaName: '', abaId: '' },
+        pay: { usdtTrc20Address, abaName, abaId },
         links: {
           referral: `https://t.me/rainbowpay_claw_Bot?start=${referralCode}`,
         },
@@ -4621,6 +4634,127 @@ export class AppService {
             settlecorePaymentOrderId,
             abaName: '',
             abaId: '',
+          },
+        },
+      };
+    });
+  }
+
+  async createMiniAppPayment(opts: {
+    devTelegramId: string;
+    telegramInitData: string;
+    amount: number;
+    title: string;
+    method: string;
+    metadata?: any;
+    idempotency_key?: string;
+  }) {
+    const amount = Number(opts.amount || 0);
+    if (!Number.isFinite(amount) || amount <= 0)
+      throw new BadRequestException('invalid amount');
+    const title = String(opts.title || 'RainbowPaw order').trim();
+    const method = String(opts.method || 'usdt').trim().toLowerCase();
+    const idem = String(opts.idempotency_key || '').trim();
+    const idemKey = idem ? `pay_miniapp:${idem}` : '';
+    return this.runIdempotent(idemKey, 10 * 60 * 1000, async () => {
+      const displayId = idem ? `paym_${this.hashShort(idem)}` : `paym_${Date.now()}`;
+      const abaName = String(process.env.ABA_NAME || '').trim();
+      const abaId = String(process.env.ABA_ID || '').trim();
+
+      let usdtTrc20Address = '';
+      let settlecorePaymentUrl = '';
+      let settlecorePaymentOrderId: number | null = null;
+      let partnerOrderId = '';
+      let globalUserId: string | null = null;
+      let telegramId: number | null = null;
+      let rawCreateResponse: any = null;
+
+      const tg = this.getTelegramUserInfo(opts.devTelegramId, opts.telegramInitData);
+      if (!tg) throw new BadRequestException('invalid telegram');
+      if (!this.settlecoreApiKey())
+        throw new BadGatewayException('settlecore not configured');
+
+      try {
+        const linked = await this.linkUser(tg);
+        await this.settlecoreLogin(tg);
+
+        globalUserId = String(linked.global_user_id || '').trim() || null;
+        telegramId = Number.isFinite(Number(tg.telegram_id)) ? tg.telegram_id : null;
+
+        const idemSuffix = idem ? this.hashShort(idem) : String(Date.now());
+        partnerOrderId = `rpmini_${method}_${linked.global_user_id}_${idemSuffix}`;
+
+        const pay = await this.settlecoreCreatePayment({
+          partnerOrderId,
+          telegramId: tg.telegram_id,
+          amount: Number(amount.toFixed(6)),
+          currency: 'USDT',
+          note: title,
+          metadata: {
+            product: 'miniapp',
+            method,
+            title,
+            global_user_id: linked.global_user_id,
+            ...(opts.metadata && typeof opts.metadata === 'object' ? opts.metadata : {}),
+          },
+        });
+
+        rawCreateResponse = pay ?? null;
+        usdtTrc20Address = String(pay?.payment_address || '').trim();
+        settlecorePaymentUrl = String(pay?.payment_url || '').trim();
+        settlecorePaymentOrderId = Number(pay?.payment_order_id || 0) || null;
+
+        if (this.settlecoreDbReady() && partnerOrderId) {
+          await this.settlecoreDbUpsertPartnerOrder({
+            displayId,
+            productCode: 'miniapp',
+            bundle: null,
+            globalUserId,
+            telegramId,
+            partnerOrderId,
+            paymentOrderId: settlecorePaymentOrderId,
+            expectedWebhookIdemKey:
+              settlecorePaymentOrderId != null
+                ? `pay:${settlecorePaymentOrderId}:settled`
+                : null,
+            amount: Number(amount.toFixed(6)),
+            currency: 'USDT',
+            status: 'pending',
+            rawCreateResponse,
+          });
+        }
+      } catch (e) {
+        if (this.settlecoreDbReady() && partnerOrderId) {
+          await this.settlecoreDbUpsertPartnerOrder({
+            displayId,
+            productCode: 'miniapp',
+            bundle: null,
+            globalUserId,
+            telegramId,
+            partnerOrderId,
+            paymentOrderId: null,
+            expectedWebhookIdemKey: null,
+            amount: Number(amount.toFixed(6)),
+            currency: 'USDT',
+            status: 'failed',
+            rawCreateResponse,
+          });
+        }
+        throw e;
+      }
+
+      return {
+        code: 0,
+        message: 'ok',
+        data: {
+          display_id: displayId,
+          payment: { amount: Number(amount.toFixed(6)) },
+          pay: {
+            usdtTrc20Address,
+            settlecorePaymentUrl,
+            settlecorePaymentOrderId,
+            abaName,
+            abaId,
           },
         },
       };

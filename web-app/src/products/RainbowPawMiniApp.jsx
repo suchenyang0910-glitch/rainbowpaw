@@ -1953,6 +1953,8 @@ export default function RainbowPawMiniApp() {
   const [payments, setPayments] = useState([])
   const [paymentsLoading, setPaymentsLoading] = useState(false)
   const [paidOrder, setPaidOrder] = useState(null)
+  const [pendingPayment, setPendingPayment] = useState(null)
+  const [pendingPaymentStatus, setPendingPaymentStatus] = useState('pending')
   const [postPayMemorialId, setPostPayMemorialId] = useState(null)
   const [lang, setLang] = useState('ZH')
   const [langReturnPage, setLangReturnPage] = useState(null)
@@ -3445,6 +3447,46 @@ export default function RainbowPawMiniApp() {
       setPostPayMemorialId(id)
     }
   }
+
+  useEffect(() => {
+    if (page !== 'pay_pending') return
+    const displayId = String(pendingPayment?.display_id || '').trim()
+    if (!displayId) return
+    let cancelled = false
+    const tick = async () => {
+      try {
+        const r = await apiFetch(`/payments/${encodeURIComponent(displayId)}`)
+        const st = String(r?.data?.payment?.status || 'pending')
+        if (cancelled) return
+        setPendingPaymentStatus(st)
+        if (st === 'confirmed') {
+          const order = pendingPayment?.order
+          if (order) {
+            const paid = { ...order, status: 'paid' }
+            setOrders((prev) => prev.map((o) => (String(o.id) === String(order.id) ? paid : o)))
+            setPaidOrder(paid)
+          }
+          if (pendingPayment?.checkout) {
+            applyCheckoutEffects(pendingPayment.checkout)
+            if (pendingPayment.checkout.source === 'cart') setCartItems([])
+          }
+          setCheckoutStep(null)
+          setCheckout(null)
+          setPendingPayment(null)
+          setPage('pay_success')
+        }
+      } catch {
+        if (cancelled) return
+        setPendingPaymentStatus('pending')
+      }
+    }
+    tick()
+    const h = setInterval(tick, 3000)
+    return () => {
+      cancelled = true
+      clearInterval(h)
+    }
+  }, [page, pendingPayment?.display_id])
 
   const startPay = ({ title, items, source, meta }) => {
     if (checkoutStep === 'pay') return
@@ -4978,6 +5020,75 @@ export default function RainbowPawMiniApp() {
     </div>
   )
 
+  const PayPendingPage = () => (
+    <div className="rp-page-bg min-h-screen">
+      <Header title={t('pay.title')} hideActions showBack onBack={() => setPage(null)} />
+      <div className="p-6">
+        <div className="rp-card p-6">
+          <div className="text-sm font-black text-gray-900 mb-1">等待确认支付</div>
+          <div className="text-xs text-gray-500">完成支付后系统会自动确认，请不要直接关闭页面。</div>
+          <div className="mt-3 text-[10px] font-mono text-gray-400">#{pendingPayment?.display_id}</div>
+
+          {pendingPayment?.method === 'usdt' ? (
+            <div className="mt-4 bg-gray-50 rounded-xl p-4">
+              <div className="text-xs font-bold text-gray-800 mb-2">USDT(TRC20) 收款地址</div>
+              <div className="text-[11px] font-mono break-all text-gray-700">{pendingPayment?.pay?.usdtTrc20Address || '-'}</div>
+              <div className="mt-3 flex gap-2">
+                <button
+                  type="button"
+                  className="rp-btn-soft flex-1 py-2 rounded-xl text-xs font-bold border-0"
+                  onClick={async () => {
+                    try {
+                      const v = String(pendingPayment?.pay?.usdtTrc20Address || '').trim()
+                      if (!v) return
+                      await navigator.clipboard.writeText(v)
+                      showToast({ title: '已复制地址', desc: '请到钱包粘贴转账' })
+                    } catch {
+                      showToast({ title: '复制失败', desc: '请长按地址复制' })
+                    }
+                  }}
+                >
+                  复制地址
+                </button>
+                {pendingPayment?.pay?.settlecorePaymentUrl ? (
+                  <button
+                    type="button"
+                    className="rp-btn-primary flex-1 py-2 rounded-xl text-xs font-bold border-0"
+                    onClick={() => window.open(String(pendingPayment.pay.settlecorePaymentUrl), '_blank', 'noopener,noreferrer')}
+                  >
+                    打开支付页
+                  </button>
+                ) : null}
+              </div>
+            </div>
+          ) : (
+            <div className="mt-4 bg-gray-50 rounded-xl p-4">
+              <div className="text-xs font-bold text-gray-800 mb-2">ABA 转账信息</div>
+              <div className="text-[11px] text-gray-700">名称：{pendingPayment?.pay?.abaName || '-'}</div>
+              <div className="text-[11px] text-gray-700">编号：{pendingPayment?.pay?.abaId || '-'}</div>
+              {pendingPayment?.pay?.settlecorePaymentUrl ? (
+                <button
+                  type="button"
+                  className="mt-3 w-full rp-btn-primary py-2 rounded-xl text-xs font-bold border-0"
+                  onClick={() => window.open(String(pendingPayment.pay.settlecorePaymentUrl), '_blank', 'noopener,noreferrer')}
+                >
+                  打开支付页
+                </button>
+              ) : null}
+            </div>
+          )}
+
+          <div className="mt-4 flex items-center justify-between text-xs">
+            <div className="text-gray-500">当前状态</div>
+            <div className="font-bold text-gray-800">{pendingPaymentStatus === 'confirmed' ? '已确认' : '等待中'}</div>
+          </div>
+
+          <div className="mt-3 text-[10px] text-gray-400">系统每 3 秒自动查询一次支付状态。</div>
+        </div>
+      </div>
+    </div>
+  )
+
   const renderContent = () => {
     if (page === 'memorial_detail') return <MemorialDetailPage />
     if (page === 'memorial_album') return <MemorialAlbumPage />
@@ -5019,6 +5130,7 @@ export default function RainbowPawMiniApp() {
     if (page === 'cart') return <CartPage />
     if (page === 'orders') return <OrdersPage />
     if (page === 'order_detail') return <OrderDetailPage />
+    if (page === 'pay_pending') return <PayPendingPage />
     if (page === 'pay_success') return <PaySuccessPage />
     if (page === 'cemetery') return <CemeteryDetailPage />
     if (view === 'merchant') return <MerchantPortal lang={lang} t={t} onBackToUser={() => setView('user')} />
@@ -5059,14 +5171,25 @@ export default function RainbowPawMiniApp() {
             }
             const id = `RP-${String(Date.now()).slice(-8)}`
             const createdAt = new Date().toLocaleString()
-            const order = { id, title: checkout?.title || t('order.default'), items: checkout?.items || [], total: checkout?.total || 0, method: paymentMethod, status: 'paid', createdAt, meta: checkout?.meta || null, backend_order_id: backendOrderId }
+            const idempotencyKey = `mini_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`
+            const resp = await apiFetch('/payments/miniapp', {
+              method: 'POST',
+              headers: { 'x-idempotency-key': idempotencyKey },
+              body: {
+                amount: checkout?.total || 0,
+                title: checkout?.title || t('order.default'),
+                method: paymentMethod,
+                metadata: { ...(checkout?.meta || {}), backend_order_id: backendOrderId },
+              },
+            })
+            const displayId = String(resp?.data?.display_id || '').trim()
+            if (!displayId) throw new Error('missing payment display_id')
+
+            const order = { id, title: checkout?.title || t('order.default'), items: checkout?.items || [], total: checkout?.total || 0, method: paymentMethod, status: 'pending', createdAt, meta: checkout?.meta || null, backend_order_id: backendOrderId, payment_display_id: displayId }
             setOrders((prev) => [order, ...prev])
-            applyCheckoutEffects(checkout)
-            if (checkout?.source === 'cart') setCartItems([])
-            setCheckoutStep(null)
-            setCheckout(null)
-            setPaidOrder(order)
-            setPage('pay_success')
+            setPendingPayment({ display_id: displayId, method: paymentMethod, pay: resp?.data?.pay || null, order, checkout })
+            setPendingPaymentStatus('pending')
+            setPage('pay_pending')
           }}
           t={t}
         />

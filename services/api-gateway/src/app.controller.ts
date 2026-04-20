@@ -416,6 +416,24 @@ export class AppController {
     });
   }
 
+  @Post('payments/miniapp')
+  createMiniAppPayment(
+    @Headers('x-dev-telegram-id') devTelegramId: string,
+    @Headers('x-telegram-init-data') telegramInitData: string,
+    @Headers('x-idempotency-key') idempotencyKey: string,
+    @Body() body: any,
+  ) {
+    return this.appService.createMiniAppPayment({
+      devTelegramId,
+      telegramInitData,
+      amount: Number(body?.amount || 0),
+      title: String(body?.title || 'RainbowPaw order'),
+      method: String(body?.method || 'usdt'),
+      metadata: body?.metadata ?? null,
+      idempotency_key: String(idempotencyKey || ''),
+    });
+  }
+
   @Post('webhooks/settlecore/usdt-topup')
   settlecoreUsdtTopup(@Req() req: any, @Body() body: any) {
     return this.appService.settlecoreUsdtTopupWebhook({ req, body });
