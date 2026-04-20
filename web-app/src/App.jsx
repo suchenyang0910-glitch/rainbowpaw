@@ -199,7 +199,11 @@ const PaymentModal = ({ data, onClose, onSubmitProof, onSubmitProofFile, onShare
               onClick={() => onShareLink && onShareLink(data.invite_link)}
               className="w-full bg-gray-900 text-white py-3 rounded-2xl text-xs font-bold flex items-center justify-center gap-2"
             >
-              <Share2 size={14} /> 一键转发邀请链接
+              <Share2 size={14} />
+              <span className="flex flex-col items-center leading-tight">
+                <span>一键转发邀请链接</span>
+                <span className="text-[10px] opacity-80 font-medium">打开 Telegram → 选群/好友 → 发送</span>
+              </span>
             </button>
           ) : null}
           <div className="bg-gray-50 rounded-2xl p-4 border border-gray-100 flex items-center justify-between">
@@ -473,7 +477,7 @@ const ProductModal = ({ t, product, onClose, onDirectBuy, onGroupBuy }) => {
   )
 }
 
-const PlayResultModal = ({ data, onClose, onGoOrders, onOpenShipping, needShipping, t }) => {
+const PlayResultModal = ({ data, onClose, onGoOrders, onOpenShipping, needShipping, onGoShop, t }) => {
   const plays = Array.isArray(data && data.plays) ? data.plays : []
   const total = plays.length
   const title = total > 1 ? `🎉 连抽结果 (${total}x)` : '🎉 抽奖结果'
@@ -627,6 +631,14 @@ const PlayResultModal = ({ data, onClose, onGoOrders, onOpenShipping, needShippi
             填写收货
           </button>
         </div>
+
+        <button
+          type="button"
+          onClick={() => onGoShop && onGoShop()}
+          className="mt-3 w-full bg-blue-50 text-blue-700 py-3 rounded-2xl text-xs font-black border border-blue-100 active:scale-[0.99] transition-transform"
+        >
+          中奖查看更多商品 👉 跳转
+        </button>
 
         <div className="mt-4 flex items-center justify-between">
           <p className="text-[10px] text-gray-400 font-bold">{tapHint && revealCount < plays.length ? '点卡牌可加速翻开' : ' '}</p>
@@ -1053,7 +1065,11 @@ const EarnPage = ({ me, activeGroups, discoverGroups, onCopyReferral, onForwardR
             </div>
             <div className="grid grid-cols-2 gap-3">
               <button onClick={() => onForwardReferral && onForwardReferral(referralLink)} className="bg-blue-500 text-white py-3 rounded-xl text-xs font-bold flex items-center justify-center gap-2 shadow-md shadow-blue-100">
-                <Share2 size={14}/> 一键转发
+                <Share2 size={14}/>
+                <span className="flex flex-col items-center leading-tight">
+                  <span>一键转发（发群/好友）</span>
+                  <span className="text-[10px] opacity-90 font-medium">对方点开→领次数→抽奖</span>
+                </span>
               </button>
               <button className="bg-gray-900 text-white py-3 rounded-xl text-xs font-bold flex items-center justify-center gap-2">
                 🖼️ 生成海报
@@ -1518,10 +1534,16 @@ export default function App() {
     }
   }
 
-  const shareLink = (link) => {
+  const shareLink = (link, opts = {}) => {
     const url = String(link || '')
     if (!url) return
-    const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(url)}`
+    const kind = opts && typeof opts.kind === 'string' ? String(opts.kind) : ''
+    const title = kind === 'referral' ? '🎁 RainbowPaw 抽奖活动' : '🎯 RainbowPaw 邀请'
+    const isTelegramLink = /(^|\/\/)(t\.me|telegram\.me)\//i.test(url)
+    const text = kind === 'referral'
+      ? `${title}\n\n怎么参与：\n1）点开链接（Telegram 打开）${isTelegramLink ? '，点【Start/开始】' : ''}\n2）进入抽奖页后点【Get Plays】领取/购买次数\n3）点【抽奖】开奖\n4）中奖后点【中奖查看更多商品 👉 跳转】去逛商品\n\n商品入口：https://rainbowpaw.org/rainbowpaw\n\n我邀请你一起玩：`
+      : `${title}\n\n点开链接加入即可：`
+    const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(url)}&text=${encodeURIComponent(text)}`
     openTelegramLink(shareUrl)
   }
 
@@ -1549,6 +1571,17 @@ export default function App() {
     const raw = (import.meta && import.meta.env && import.meta.env.VITE_SUPPORT_LINK) || ''
     const u = String(raw).trim() || 'https://t.me/rainbowpawbot'
     openTelegramLink(u)
+  }
+
+  const openRainbowMiniApp = () => {
+    try {
+      const base = 'https://rainbowpaw.org/rainbowpaw'
+      const q = window && window.location ? String(window.location.search || '') : ''
+      const h = window && window.location ? String(window.location.hash || '') : ''
+      window.location.assign(`${base}${q}${h}`)
+    } catch {
+      window.location.assign('/rainbowpaw')
+    }
   }
 
   const copyDebugInfo = ({ e, context }) => {
@@ -1834,7 +1867,7 @@ export default function App() {
 
   const forwardReferral = async (link) => {
     if (!link) return showToast('缺少链接')
-    shareLink(link)
+    shareLink(link, { kind: 'referral' })
   }
 
   const previewProof = (id) => {
@@ -1878,7 +1911,7 @@ export default function App() {
       </main>
       
       <BottomTabNav t={t} activeTab={activeTab} setActiveTab={setActiveTab} />
-      <PaymentModal data={paymentModal} onClose={() => setPaymentModal(null)} onSubmitProof={submitProof} onSubmitProofFile={submitProofFile} onShareLink={shareLink} onPreviewProof={previewProof} />
+      <PaymentModal data={paymentModal} onClose={() => setPaymentModal(null)} onSubmitProof={submitProof} onSubmitProofFile={submitProofFile} onShareLink={(link) => shareLink(link, { kind: 'invite' })} onPreviewProof={previewProof} />
       <ActionModal data={actionModal} onClose={() => setActionModal(null)} />
       <ProductModal t={t} product={selectedProduct} onClose={() => setSelectedProduct(null)} onDirectBuy={directBuy} onGroupBuy={groupBuy} />
       <ShippingModal t={t} open={shippingModalOpen} initial={me && me.shipping ? me.shipping : null} onClose={() => setShippingModalOpen(false)} onSubmit={submitShipping} />
@@ -1892,7 +1925,7 @@ export default function App() {
           buyPlays(bundle)
         }}
       />
-      <PlayResultModal t={t} data={playResultModal} onClose={() => setPlayResultModal(null)} onGoOrders={() => { setPlayResultModal(null); setActiveTab('profile') }} onOpenShipping={openShippingModal} needShipping={needShipping} />
+      <PlayResultModal t={t} data={playResultModal} onClose={() => setPlayResultModal(null)} onGoOrders={() => { setPlayResultModal(null); setActiveTab('profile') }} onOpenShipping={openShippingModal} needShipping={needShipping} onGoShop={openRainbowMiniApp} />
       {toast ? (
         <div className="fixed bottom-24 left-1/2 -translate-x-1/2 bg-gray-800 text-white text-xs px-4 py-2 rounded-full animate-in fade-in slide-in-from-bottom duration-300">{toast}</div>
       ) : null}
