@@ -368,6 +368,79 @@ export class AppService {
     return String(process.env.RAINBOWPAW_WEBHOOK_SECRET || '').trim();
   }
 
+  private adminTelegramIds() {
+    const raw = String(process.env.ADMIN_TELEGRAM_IDS || '').trim();
+    if (!raw) return [];
+    return raw
+      .split(/[\s,]+/)
+      .map((x) => Number(String(x).trim()))
+      .filter((x) => Number.isFinite(x) && x > 0);
+  }
+
+  private adminBotToken() {
+    const claw = String(process.env.CLAW_BOT_TOKEN || '').trim();
+    if (claw) return claw;
+    const rainbow = String(process.env.RAINBOW_BOT_TOKEN || '').trim();
+    return rainbow;
+  }
+
+  private async telegramSendMessage(chatId: number, text: string) {
+    const token = this.adminBotToken();
+    if (!token) return;
+    const url = `https://api.telegram.org/bot${token}/sendMessage`;
+    await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: chatId,
+        text,
+        disable_web_page_preview: true,
+      }),
+    });
+  }
+
+  private async notifyAdminsPaymentProof(opts: {
+    displayId: string;
+    proofText?: string;
+    hasFile?: boolean;
+  }) {
+    const ids = this.adminTelegramIds();
+    if (!ids.length) return;
+    const base = this.publicWebBaseUrl();
+    const url = base ? `${base}/api/payments/${encodeURIComponent(opts.displayId)}` : '';
+    const proofUrl = base
+      ? `${base}/api/payments/${encodeURIComponent(opts.displayId)}/proof_file`
+      : '';
+    let mapped: any = null;
+    if (this.settlecoreDbReady()) {
+      try {
+        mapped = await this.settlecoreDbFindPartnerOrder({ displayId: opts.displayId });
+      } catch {
+        mapped = null;
+      }
+    }
+    const lines = [
+      '✅ 收到支付凭证',
+      `payment: ${opts.displayId}`,
+      mapped && mapped.partner_order_id ? `partner_order_id: ${mapped.partner_order_id}` : null,
+      mapped && mapped.global_user_id ? `global_user_id: ${mapped.global_user_id}` : null,
+      mapped && mapped.amount != null ? `amount: ${mapped.amount} ${mapped.currency || ''}` : null,
+      url ? `status: ${url}` : null,
+      opts.hasFile && proofUrl ? `proof_file: ${proofUrl}` : null,
+      opts.proofText ? `proof_text: ${String(opts.proofText).slice(0, 500)}` : null,
+    ].filter(Boolean);
+    const text = lines.join('\n');
+    await Promise.all(
+      ids.map(async (id) => {
+        try {
+          await this.telegramSendMessage(id, text);
+        } catch {
+          void 0;
+        }
+      }),
+    );
+  }
+
   private settlecoreAuthHeaders() {
     const key = this.settlecoreApiKey();
     if (!key) throw new BadGatewayException('settlecore not configured');
@@ -5114,16 +5187,44 @@ export class AppService {
           const amount = Number(row.amount || 0) || 0;
           const st = String(row.status || '').trim();
           const status = st === 'settled' ? 'confirmed' : st === 'failed' ? 'rejected' : 'pending';
+          let hasProofFile = this.paymentProofFiles.has(id);
+          if (!hasProofFile && this.settlecoreDbReady()) {
+            try {
+              const pg = this.getOpsPg();
+              if (!pg) throw new Error('missing pg');
+              const r = await pg.query(
+                `SELECT 1 FROM payments.payment_proofs WHERE display_id = $1 AND file_base64 IS NOT NULL AND file_base64 <> '' LIMIT 1`,
+                [id],
+              );
+              hasProofFile = (r.rowCount || 0) > 0;
+            } catch {
+              void 0;
+            }
+          }
           return {
             code: 0,
             message: 'ok',
             data: {
               display_id: id,
               payment: { id, amount, status },
-              proof_file: this.paymentProofFiles.has(id) ? { payment_id: id } : null,
+              proof_file: hasProofFile ? { payment_id: id } : null,
             },
           };
         }
+      } catch {
+        void 0;
+      }
+    }
+    let hasProofFile = this.paymentProofFiles.has(id);
+    if (!hasProofFile && this.settlecoreDbReady()) {
+      try {
+        const pg = this.getOpsPg();
+        if (!pg) throw new Error('missing pg');
+        const r = await pg.query(
+          `SELECT 1 FROM payments.payment_proofs WHERE display_id = $1 AND file_base64 IS NOT NULL AND file_base64 <> '' LIMIT 1`,
+          [id],
+        );
+        hasProofFile = (r.rowCount || 0) > 0;
       } catch {
         void 0;
       }
@@ -5134,13 +5235,32 @@ export class AppService {
       data: {
         display_id: id,
         payment: { id, amount: 0, status: 'pending' },
-        proof_file: this.paymentProofFiles.has(id) ? { payment_id: id } : null,
+        proof_file: hasProofFile ? { payment_id: id } : null,
       },
     };
   }
 
   async submitProof(opts: { id: string; proof_text: string }) {
-    return { code: 0, message: 'ok', data: { id: opts.id, status: 'pending' } };
+    const id = String(opts.id || '').trim();
+    const proofText = String(opts.proof_text || '').trim();
+    if (this.settlecoreDbReady()) {
+      try {
+        const pg = this.getOpsPg();
+        if (!pg) throw new Error('missing pg');
+        await pg.query(
+          `INSERT INTO payments.payment_proofs (display_id, proof_text)
+           VALUES ($1, $2)
+           ON CONFLICT (display_id) DO UPDATE
+             SET proof_text = EXCLUDED.proof_text,
+                 updated_at = CURRENT_TIMESTAMP`,
+          [id, proofText],
+        );
+      } catch {
+        void 0;
+      }
+    }
+    await this.notifyAdminsPaymentProof({ displayId: id, proofText, hasFile: false });
+    return { code: 0, message: 'ok', data: { id, status: 'pending' } };
   }
 
   async submitProofFile(opts: {
@@ -5150,15 +5270,56 @@ export class AppService {
   }) {
     if (!opts.file_base64)
       throw new BadRequestException('file_base64 required');
-    this.paymentProofFiles.set(opts.id, {
-      mime_type: opts.mime_type,
-      file_base64: opts.file_base64,
-    });
-    return { code: 0, message: 'ok', data: { id: opts.id, status: 'pending' } };
+    const id = String(opts.id || '').trim();
+    const mime = String(opts.mime_type || 'application/octet-stream');
+    const file = String(opts.file_base64 || '');
+    if (this.settlecoreDbReady()) {
+      try {
+        const pg = this.getOpsPg();
+        if (!pg) throw new Error('missing pg');
+        await pg.query(
+          `INSERT INTO payments.payment_proofs (display_id, mime_type, file_base64)
+           VALUES ($1, $2, $3)
+           ON CONFLICT (display_id) DO UPDATE
+             SET mime_type = EXCLUDED.mime_type,
+                 file_base64 = EXCLUDED.file_base64,
+                 updated_at = CURRENT_TIMESTAMP`,
+          [id, mime, file],
+        );
+      } catch {
+        void 0;
+      }
+    } else {
+      this.paymentProofFiles.set(id, {
+        mime_type: mime,
+        file_base64: file,
+      });
+    }
+    await this.notifyAdminsPaymentProof({ displayId: id, hasFile: true });
+    return { code: 0, message: 'ok', data: { id, status: 'pending' } };
   }
 
-  getProofFile(id: string) {
-    return this.paymentProofFiles.get(id) || null;
+  async getProofFile(id: string) {
+    const key = String(id || '').trim();
+    if (!key) return null;
+    if (this.paymentProofFiles.has(key)) return this.paymentProofFiles.get(key) || null;
+    if (!this.settlecoreDbReady()) return null;
+    const pg = this.getOpsPg();
+    if (!pg) return null;
+    try {
+      const r = await pg.query(
+        `SELECT mime_type, file_base64 FROM payments.payment_proofs WHERE display_id = $1 LIMIT 1`,
+        [key],
+      );
+      const row = r.rows && r.rows[0] ? r.rows[0] : null;
+      if (!row) return null;
+      return {
+        mime_type: row.mime_type || 'application/octet-stream',
+        file_base64: row.file_base64 || '',
+      };
+    } catch {
+      return null;
+    }
   }
 
   async saveShipping(opts: {

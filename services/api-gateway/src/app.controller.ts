@@ -462,9 +462,9 @@ export class AppController {
   }
 
   @Get('payments/:id/proof_file')
-  paymentProofFile(@Param('id') id: string, @Res() res: Response) {
-    const file = this.appService.getProofFile(id);
-    if (!file) {
+  async paymentProofFile(@Param('id') id: string, @Res() res: Response) {
+    const file = await this.appService.getProofFile(id);
+    if (!file || !file.file_base64) {
       res.status(404).send('');
       return;
     }
