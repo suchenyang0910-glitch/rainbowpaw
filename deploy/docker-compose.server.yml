@@ -191,7 +191,7 @@ services:
       context: ..
       dockerfile: web-app/Dockerfile
       args:
-        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:3012}
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/api}
         VITE_SUPPORT_LINK: ${VITE_SUPPORT_LINK:-https://t.me/RainbowPawbot}
         VITE_DEV_TELEGRAM_ID: ${VITE_DEV_TELEGRAM_ID:-}
         VITE_MOCK_INIT_DATA: ${VITE_MOCK_INIT_DATA:-}

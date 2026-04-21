@@ -20,8 +20,8 @@ export function getTelegramInitData() {
 }
 
 export function apiBaseUrl() {
-  const raw = (import.meta && import.meta.env && import.meta.env.VITE_API_BASE_URL) || 'http://localhost:3012/api'
-  const base = String(raw).replace(/\/+$/, '')
+  const raw = (import.meta && import.meta.env && import.meta.env.VITE_API_BASE_URL) || ''
+  const base = String(raw || '/api').replace(/\/+$/, '')
   if (/\/api(\/|$)/.test(base)) return base
   return `${base}/api`
 }
