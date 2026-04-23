@@ -136,4 +136,106 @@ Return JSON format exactly like this:
 
     return result;
   }
+
+  async supportReply(globalUserId: string, userMessage: string, contextData: any) {
+    const r = await this.generateSupportResponse(globalUserId, userMessage, contextData);
+    return {
+      reply: String(r?.response_text || '').trim(),
+      suggested_buttons: Array.isArray(r?.suggested_buttons) ? r.suggested_buttons : [],
+      model_hint: this.MODEL_SUPPORT,
+    };
+  }
+
+  async generateGrowthContent(_globalUserId: string, input: any) {
+    const topic = String(input?.campaign?.topic || '增长活动').trim();
+    const kind = String(input?.campaign?.kind || 'push').trim();
+    const tone = String(input?.campaign?.tone || 'warm').trim();
+    const goal = String(input?.goal || '').trim();
+
+    const systemPrompt = `You are Growth AI for a Telegram-first pet lifecycle product.
+You MUST output ONLY valid JSON.
+
+Campaign:
+topic=${topic}
+kind=${kind}
+tone=${tone}
+goal=${goal}
+
+Return JSON exactly like:
+{
+  "push_message": "...",
+  "viral_copy": "...",
+  "strategy": "...",
+  "video_script": {"hook":"...","content":"...","cta":"..."},
+  "model_hint": "..."
+}`;
+
+    const userPrompt = `Generate growth content now.`;
+
+    const result = await this.aiService.generateJsonResponse(
+      systemPrompt,
+      userPrompt,
+      this.MODEL_RECOMMEND,
+    );
+
+    if (result?.fallback) {
+      return {
+        push_message: `【${topic}】别让奖励过期～点我立即完成。`,
+        viral_copy: '转发给好友一起参与，领取额外奖励。',
+        strategy: `语气=${tone}；渠道=Telegram；目标=${goal || '提升转化'}`,
+        video_script: { hook: '开场3秒：一句情绪共鸣', content: '中段讲清楚利益点与截止时间', cta: '结尾CTA：点击进入参与' },
+        model_hint: 'fallback',
+      };
+    }
+
+    return {
+      push_message: result?.push_message || '',
+      viral_copy: result?.viral_copy || '',
+      strategy: result?.strategy || '',
+      video_script: result?.video_script || { hook: '', content: '', cta: '' },
+      model_hint: result?.model_hint || this.MODEL_RECOMMEND,
+    };
+  }
+
+  async analyzeOps(_globalUserId: string, input: any) {
+    const systemPrompt = `You are Ops AI for a microservices pet lifecycle system.
+You MUST output ONLY valid JSON.
+
+Input report:
+${JSON.stringify(input?.report || {})}
+
+Return JSON exactly like:
+{
+  "summary": "...",
+  "issues": ["..."],
+  "pool_suggestion": "...",
+  "reactivation_suggestion": "...",
+  "model_hint": "..."
+}`;
+
+    const userPrompt = `Analyze and propose ops suggestions.`;
+
+    const result = await this.aiService.generateJsonResponse(
+      systemPrompt,
+      userPrompt,
+      this.MODEL_RECOMMEND,
+    );
+
+    if (result?.fallback) {
+      return {
+        summary: 'ops analyze fallback',
+        issues: [],
+        pool_suggestion: 'N/A',
+        reactivation_suggestion: 'N/A',
+        model_hint: 'fallback',
+      };
+    }
+    return {
+      summary: result?.summary || '',
+      issues: Array.isArray(result?.issues) ? result.issues : [],
+      pool_suggestion: result?.pool_suggestion || '',
+      reactivation_suggestion: result?.reactivation_suggestion || '',
+      model_hint: result?.model_hint || this.MODEL_RECOMMEND,
+    };
+  }
 }

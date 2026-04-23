@@ -8332,19 +8332,11 @@ export class AppService {
       throw new BadRequestException('globalUserId is required for subscription');
     }
     
-    // Deduct from wallet first
+    const idemKey = `careSubscribe:${payload.globalUserId}:${payload.planId || 'default'}:${randomUUID()}`
+
+    // Deduct from wallet first (points-based wallet)
     try {
-      await axios.post(
-        `${this.WALLET_SERVICE_URL}/wallet/spend`,
-        {
-          global_user_id: payload.globalUserId,
-          amount_cents: 2900,
-          currency: 'usd',
-          biz_type: 'care_subscription',
-          ref_id: `care_sub_${randomUUID()}`
-        },
-        { headers: { authorization: `Bearer ${this.INTERNAL_TOKEN}` } },
-      );
+      await this.walletSpend(payload.globalUserId, 29, idemKey, 'care_subscription')
     } catch (error: any) {
       throw new BadGatewayException(error?.response?.data?.message || 'Insufficient funds or wallet service error');
     }
@@ -8356,7 +8348,7 @@ export class AppService {
         {
           type: 'service',
           user_id: payload.globalUserId,
-          amount: 29.00,
+          amount: 29.0,
           currency: 'usd',
           status: 'paid',
           flow: 'expense',
@@ -8516,8 +8508,12 @@ export class AppService {
   }
 
   // --- Claw System Proxy ---
-  async clawPlay(payload: { globalUserId: string }) {
+  async clawPlay(payload: { global_user_id: string; idempotency_key?: string }) {
     try {
+      const globalUserId = String(payload?.global_user_id || '').trim();
+      if (!globalUserId) throw new BadRequestException('global_user_id required');
+      const idemKey = String(payload?.idempotency_key || '').trim() || `clawPlay:${globalUserId}:${Date.now()}:${randomUUID()}`;
+
       // 1. Check user profile and active pool
       const poolRes = await axios.get(
         `${this.CLAW_SERVICE_URL}/claw/pool/active`,
@@ -8526,31 +8522,43 @@ export class AppService {
       const activePool = poolRes.data?.data?.pool;
       if (!activePool) throw new BadRequestException('No active claw pool');
 
+      const costPointsRaw = Number(activePool.cost_points || 0);
+      const costPoints = Number.isFinite(costPointsRaw) && costPointsRaw > 0 ? costPointsRaw : 3;
+
       // 2. Deduct wallet points
-      await axios.post(
-        `${this.WALLET_SERVICE_URL}/wallet/spend`,
-        {
-          global_user_id: payload.globalUserId,
-          amount_cents: activePool.cost_points * 100, // Assuming 1 point = 100 cents internal representation or map it
-          currency: 'points',
-          biz_type: 'claw_play',
-          ref_id: `claw_deduct_${randomUUID()}`
-        },
-        { headers: { authorization: `Bearer ${this.INTERNAL_TOKEN}` } },
-      );
+      const spend = await this.walletSpend(globalUserId, costPoints, `${idemKey}:spend`, 'claw_play');
 
       // 3. Play the claw
-      const playRes = await axios.post(
-        `${this.CLAW_SERVICE_URL}/claw/play`,
-        { global_user_id: payload.globalUserId, pool_id: activePool.pool_id },
-        { headers: { authorization: `Bearer ${this.INTERNAL_TOKEN}`, 'x-idempotency-key': randomUUID() } }
-      );
+      let playRes: any;
+      try {
+        playRes = await axios.post(
+          `${this.CLAW_SERVICE_URL}/claw/play`,
+          { global_user_id: globalUserId, pool_id: activePool.pool_id },
+          { headers: { authorization: `Bearer ${this.INTERNAL_TOKEN}`, 'x-idempotency-key': idemKey } }
+        );
+      } catch (e: any) {
+        try {
+          await this.walletEarnAsset({
+            globalUserId,
+            assetType: 'points_locked',
+            amount: costPoints,
+            idemKey: `${idemKey}:refund`,
+            bizType: 'claw_play_refund',
+            refType: 'gateway',
+            refId: idemKey,
+            remark: 'refund claw play due to claw service failure',
+          });
+        } catch {
+          void 0;
+        }
+        throw e;
+      }
       
       const reward = playRes.data?.data?.reward;
 
       // 4. Report to Risk Service
       axios.post(`${this.RISK_SERVICE_URL}/risk/activity`, {
-        global_user_id: payload.globalUserId,
+        global_user_id: globalUserId,
         activity_type: 'claw_play',
         metadata: { reward_type: reward?.reward_type, pool_id: activePool.pool_id }
       }, { headers: { authorization: `Bearer ${this.INTERNAL_TOKEN}` } }).catch(() => {});
@@ -8567,51 +8575,40 @@ export class AppService {
             play_id: reward?.play_id
           },
           wallet: {
-            remainingPoints: 0 // Ideally fetched from wallet again or returned by spend
+            remainingPoints: spend?.wallet && typeof spend.wallet.points_total !== 'undefined' ? Number(spend.wallet.points_total || 0) : 0
           }
         },
         message: 'success'
       };
     } catch (error: any) {
       console.error('clawPlay proxy error:', error?.response?.data || error.message);
-      // Fallback response for graceful UI handling if claw service is down
-      return {
-        code: 0,
-        data: {
-          result: 'fallback_01',
-          reward: { type: 'product', name: 'Basic Pet Snack' },
-          wallet: { remainingPoints: 0 }
-        },
-        message: 'fallback'
-      };
+      if (this.isInsufficientPointsError(error)) {
+        throw new BadRequestException('insufficient points');
+      }
+      throw new BadGatewayException(error?.response?.data || error.message);
     }
   }
 
-  async clawRecycle(payload: { globalUserId: string, originPoints?: number, playId?: string }) {
+  async clawRecycle(payload: { global_user_id: string; play_id?: string; origin_points?: number | null; idempotency_key?: string }) {
     try {
-      if (payload.playId) {
+      const globalUserId = String(payload?.global_user_id || '').trim();
+      if (!globalUserId) throw new BadRequestException('global_user_id required');
+      const playId = String(payload?.play_id || '').trim();
+      const origin = Number(payload?.origin_points || 3);
+      const idemKey = String(payload?.idempotency_key || '').trim() || `clawRecycle:${globalUserId}:${playId || 'no_play'}:${randomUUID()}`;
+
+      if (playId) {
         // Try to recycle in real claw service
         try {
           const recycleRes = await axios.post(
-            `${this.CLAW_SERVICE_URL}/claw/play/${payload.playId}/recycle`,
-            { global_user_id: payload.globalUserId },
+            `${this.CLAW_SERVICE_URL}/claw/play/${playId}/recycle`,
+            { global_user_id: globalUserId },
             { headers: { authorization: `Bearer ${this.INTERNAL_TOKEN}` } }
           );
           const recycledPoints = recycleRes.data?.data?.recycled_points || 0;
 
-          // Add points to wallet
           if (recycledPoints > 0) {
-            await axios.post(
-              `${this.WALLET_SERVICE_URL}/wallet/earn`,
-              {
-                global_user_id: payload.globalUserId,
-                amount_cents: recycledPoints * 100,
-                currency: 'points',
-                biz_type: 'claw_recycle',
-                ref_id: `recycle_${payload.playId}`
-              },
-              { headers: { authorization: `Bearer ${this.INTERNAL_TOKEN}` } }
-            );
+            await this.walletRecycle(globalUserId, Number(recycledPoints), `${idemKey}:recycle`, origin);
           }
 
           return {
@@ -8628,19 +8625,18 @@ export class AppService {
       }
 
       // Fallback old behavior
-      const origin = Number(payload.originPoints || 3);
       // Let's assume 80% recycle rate as an example
       const recycleAmount = origin * 0.8;
       
       const res = await this.walletRecycle(
-        payload.globalUserId,
+        globalUserId,
         recycleAmount,
-        `clawRecycle_${randomUUID()}`,
+        `${idemKey}:fallback`,
         origin
       );
       return {
         code: 0,
-        data: res,
+        data: { recyclePoints: Number(res?.recycle_amount || recycleAmount) },
         message: 'Recycled successfully',
       };
     } catch (error: any) {

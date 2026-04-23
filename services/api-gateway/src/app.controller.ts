@@ -1228,13 +1228,24 @@ export class AppController {
 
   // --- Claw System ---
   @Post('claw/play')
-  apiClawPlay(@Body() body: any) {
-    return this.appService.clawPlay(body || {});
+  apiClawPlay(@Headers('x-idempotency-key') idempotencyKey: string, @Body() body: any) {
+    const b: any = body || {};
+    const global_user_id = String(b.global_user_id || b.globalUserId || '').trim();
+    return this.appService.clawPlay({ global_user_id, idempotency_key: String(idempotencyKey || '').trim() });
   }
 
   @Post('claw/recycle')
-  apiClawRecycle(@Body() body: any) {
-    return this.appService.clawRecycle(body || {});
+  apiClawRecycle(@Headers('x-idempotency-key') idempotencyKey: string, @Body() body: any) {
+    const b: any = body || {};
+    const global_user_id = String(b.global_user_id || b.globalUserId || '').trim();
+    const play_id = String(b.play_id || b.playId || '').trim();
+    const origin_points = b.origin_points != null ? Number(b.origin_points) : b.originPoints != null ? Number(b.originPoints) : null;
+    return this.appService.clawRecycle({
+      global_user_id,
+      play_id,
+      origin_points,
+      idempotency_key: String(idempotencyKey || '').trim(),
+    });
   }
 
   @Get('admin/clawPools')
