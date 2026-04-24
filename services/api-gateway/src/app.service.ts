@@ -5463,7 +5463,7 @@ export class AppService {
       }
     }
 
-    const parse = () => {
+    const parsePlays = () => {
       const parts = String(partnerOrderId || '').split('_');
       if (parts.length < 4) return null;
       if (parts[0] !== 'rpplays') return null;
@@ -5471,58 +5471,120 @@ export class AppService {
       const globalUserId = String(parts[2] || '').trim();
       if (!Number.isFinite(bundle) || bundle <= 0) return null;
       if (!globalUserId) return null;
-      return { bundle, global_user_id: globalUserId };
+      return { product_code: 'plays', bundle, global_user_id: globalUserId };
     };
+
+    const parseMiniapp = () => {
+      const parts = String(partnerOrderId || '').split('_');
+      if (parts.length < 4) return null;
+      if (parts[0] !== 'rpmini') return null;
+      const method = String(parts[1] || '').trim();
+      const globalUserId = String(parts[2] || '').trim();
+      if (!globalUserId) return null;
+      return { product_code: 'miniapp', method, global_user_id: globalUserId };
+    };
+
+    const mappedProductCode = mapped ? String(mapped.product_code || '').trim() : '';
+    const parsed = parsePlays() || parseMiniapp();
+    const productCode = mappedProductCode || (parsed ? String((parsed as any).product_code || '').trim() : '');
 
     const globalUserId =
       (mapped && String(mapped.global_user_id || '').trim()) ||
-      (parse()?.global_user_id || '');
-    const bundle =
-      (mapped && Number(mapped.bundle || 0)) || (parse()?.bundle || 0);
+      (parsed ? String((parsed as any).global_user_id || '').trim() : '');
     if (!globalUserId) throw new BadGatewayException('missing global_user_id');
-    if (!Number.isFinite(bundle) || bundle <= 0)
-      throw new BadGatewayException('missing bundle');
 
-    const points = bundle * 3;
-    await this.walletEarnAsset({
-      globalUserId,
-      assetType: 'points_locked',
-      amount: points,
-      idemKey: opts.idempotencyKey,
-      bizType: 'buy_plays',
-      refType: 'settlecore',
-      refId: String(paymentOrderId),
-      remark: `partner_order_id=${partnerOrderId}`,
-    });
+    const approxEq = (a: number, b: number, eps = 1e-6) => Math.abs(a - b) <= eps;
 
-    await this.orderCreate(
-      {
-        type: 'claw',
-        user_id: globalUserId,
-        amount,
-        currency: 'usd',
-        status: 'paid',
-        flow: 'income',
-        metadata: {
-          source: 'settlecore',
-          product: 'plays',
-          bundle,
-          points,
-          partner_order_id: partnerOrderId,
-          payment_order_id: paymentOrderId,
-        },
-        items: [
-          {
-            item_name: `Plays Bundle (${bundle}x)`,
-            quantity: 1,
-            unit_price: amount,
-            total_price: amount,
-            metadata: { product: 'plays', bundle, points },
+    if (productCode === 'plays') {
+      const bundle =
+        (mapped && Number(mapped.bundle || 0)) || (parsed ? Number((parsed as any).bundle || 0) : 0);
+      if (!Number.isFinite(bundle) || bundle <= 0)
+        throw new BadGatewayException('missing bundle');
+
+      const expectedAmount = bundle === 10 ? 13 : bundle === 3 ? 4 : 1.5;
+      const mappedAmount = mapped ? Number(mapped.amount || 0) : 0;
+      const expected = mappedAmount > 0 ? mappedAmount : expectedAmount;
+      if (!approxEq(Number(amount.toFixed(6)), Number(expected.toFixed(6)), 1e-3)) {
+        throw new BadRequestException('amount mismatch');
+      }
+
+      const points = bundle * 3;
+      await this.walletEarnAsset({
+        globalUserId,
+        assetType: 'points_locked',
+        amount: points,
+        idemKey: opts.idempotencyKey,
+        bizType: 'buy_plays',
+        refType: 'settlecore',
+        refId: String(paymentOrderId),
+        remark: `partner_order_id=${partnerOrderId}`,
+      });
+
+      await this.orderCreate(
+        {
+          type: 'claw',
+          user_id: globalUserId,
+          amount,
+          currency: 'usd',
+          status: 'paid',
+          flow: 'income',
+          metadata: {
+            source: 'settlecore',
+            product: 'plays',
+            bundle,
+            points,
+            partner_order_id: partnerOrderId,
+            payment_order_id: paymentOrderId,
           },
-        ],
-      },
-      opts.idempotencyKey,
-    );
+          items: [
+            {
+              item_name: `Plays Bundle (${bundle}x)`,
+              quantity: 1,
+              unit_price: amount,
+              total_price: amount,
+              metadata: { product: 'plays', bundle, points },
+            },
+          ],
+        },
+        opts.idempotencyKey,
+      );
+    } else if (productCode === 'miniapp') {
+      const method = parsed ? String((parsed as any).method || '').trim() : '';
+      const mappedAmount = mapped ? Number(mapped.amount || 0) : 0;
+      if (mappedAmount > 0 && !approxEq(Number(amount.toFixed(6)), Number(mappedAmount.toFixed(6)), 1e-3)) {
+        throw new BadRequestException('amount mismatch');
+      }
+
+      await this.orderCreate(
+        {
+          type: 'product',
+          user_id: globalUserId,
+          amount,
+          currency: 'usd',
+          status: 'paid',
+          flow: 'income',
+          metadata: {
+            source: 'settlecore',
+            product: 'miniapp',
+            method: method || null,
+            partner_order_id: partnerOrderId,
+            payment_order_id: paymentOrderId,
+          },
+          items: [
+            {
+              item_name: `MiniApp Payment`,
+              quantity: 1,
+              unit_price: amount,
+              total_price: amount,
+              metadata: { product: 'miniapp', method: method || null },
+            },
+          ],
+        },
+        opts.idempotencyKey,
+      );
+    } else {
+      throw new BadRequestException('unknown partner_order_id');
+    }
 
     if (this.settlecoreDbReady() && partnerOrderId) {
       await this.settlecoreDbMarkPartnerOrderSettled({
@@ -5611,6 +5673,9 @@ export class AppService {
   async submitProof(opts: { id: string; proof_text: string }) {
     const id = String(opts.id || '').trim();
     const proofText = String(opts.proof_text || '').trim();
+    if (!id) throw new BadRequestException('id required');
+    if (!proofText) throw new BadRequestException('proof_text required');
+    if (proofText.length > 5000) throw new BadRequestException('proof_text too long');
     if (this.settlecoreDbReady()) {
       try {
         const pg = this.getOpsPg();
@@ -5627,7 +5692,21 @@ export class AppService {
         void 0;
       }
     }
-    await this.notifyAdminsPaymentProof({ displayId: id, proofText, hasFile: false });
+    let hasFile = this.paymentProofFiles.has(id);
+    if (!hasFile && this.settlecoreDbReady()) {
+      try {
+        const pg = this.getOpsPg();
+        if (!pg) throw new Error('missing pg');
+        const r = await pg.query(
+          `SELECT 1 FROM payments.payment_proofs WHERE display_id = $1 AND file_base64 IS NOT NULL AND file_base64 <> '' LIMIT 1`,
+          [id],
+        );
+        hasFile = (r.rowCount || 0) > 0;
+      } catch {
+        void 0;
+      }
+    }
+    await this.notifyAdminsPaymentProof({ displayId: id, proofText, hasFile });
     return { code: 0, message: 'ok', data: { id, status: 'pending' } };
   }
 
@@ -5639,8 +5718,14 @@ export class AppService {
     if (!opts.file_base64)
       throw new BadRequestException('file_base64 required');
     const id = String(opts.id || '').trim();
-    const mime = String(opts.mime_type || 'application/octet-stream');
+    if (!id) throw new BadRequestException('id required');
+    const mime = String(opts.mime_type || 'application/octet-stream').trim();
+    const allowed = new Set(['image/png', 'image/jpeg', 'image/webp']);
+    if (!allowed.has(mime)) throw new BadRequestException('invalid mime_type');
     const file = String(opts.file_base64 || '');
+    const approxBytes = Math.floor((file.length * 3) / 4);
+    if (approxBytes <= 0) throw new BadRequestException('invalid file_base64');
+    if (approxBytes > 5 * 1024 * 1024) throw new BadRequestException('file too large');
     if (this.settlecoreDbReady()) {
       try {
         const pg = this.getOpsPg();
@@ -5663,7 +5748,22 @@ export class AppService {
         file_base64: file,
       });
     }
-    await this.notifyAdminsPaymentProof({ displayId: id, hasFile: true });
+    let proofText: string | undefined = undefined;
+    if (this.settlecoreDbReady()) {
+      try {
+        const pg = this.getOpsPg();
+        if (!pg) throw new Error('missing pg');
+        const r = await pg.query(
+          `SELECT proof_text FROM payments.payment_proofs WHERE display_id = $1 LIMIT 1`,
+          [id],
+        );
+        const row = r.rows && r.rows[0] ? r.rows[0] : null;
+        if (row && row.proof_text) proofText = String(row.proof_text).trim() || undefined;
+      } catch {
+        void 0;
+      }
+    }
+    await this.notifyAdminsPaymentProof({ displayId: id, hasFile: true, proofText });
     return { code: 0, message: 'ok', data: { id, status: 'pending' } };
   }
 
