@@ -441,6 +441,39 @@ export class AppService {
     );
   }
 
+  private async notifyAdminsOrderCreated(opts: {
+    orderId: string;
+    orderType: string;
+    phone?: string;
+    totalUsd?: number;
+    city?: string;
+    pickupAddress?: string;
+    source?: string;
+  }) {
+    const ids = this.adminTelegramIds();
+    if (!ids.length) return;
+    const lines = [
+      '🧾 新订单/咨询',
+      `order_id: ${opts.orderId}`,
+      `type: ${opts.orderType}`,
+      opts.phone ? `phone: ${opts.phone}` : null,
+      typeof opts.totalUsd === 'number' ? `amount: $${opts.totalUsd.toFixed(2)}` : null,
+      opts.city ? `city: ${opts.city}` : null,
+      opts.pickupAddress ? `pickup: ${opts.pickupAddress}` : null,
+      opts.source ? `source: ${opts.source}` : null,
+    ].filter(Boolean);
+    const text = lines.join('\n');
+    await Promise.all(
+      ids.map(async (id) => {
+        try {
+          await this.telegramSendMessage(id, text);
+        } catch {
+          void 0;
+        }
+      }),
+    );
+  }
+
   private settlecoreAuthHeaders() {
     const key = this.settlecoreApiKey();
     if (!key) throw new BadGatewayException('settlecore not configured');
@@ -1836,6 +1869,14 @@ export class AppService {
         items: details,
       };
       this.pushOrder(phone, legacy);
+      await this.notifyAdminsOrderCreated({
+        orderId,
+        orderType: 'product',
+        phone,
+        totalUsd: total / 100,
+        city: city || undefined,
+        source: String(body?.conversation_channel || 'web'),
+      }).catch(() => null);
 
       await this.orderCreate(
         {
@@ -1869,6 +1910,15 @@ export class AppService {
       },
     };
     this.pushOrder(phone, legacy);
+    await this.notifyAdminsOrderCreated({
+      orderId,
+      orderType: 'service',
+      phone,
+      totalUsd: 0,
+      city: city || undefined,
+      pickupAddress: legacy.pickup_address,
+      source: String(body?.conversation_channel || 'web'),
+    }).catch(() => null);
 
     await this.orderCreate(
       {
@@ -1926,6 +1976,15 @@ export class AppService {
       };
 
       this.pushOrder(phone, legacy);
+
+      await this.notifyAdminsOrderCreated({
+        orderId,
+        orderType: 'checkout',
+        phone,
+        totalUsd: total / 100,
+        pickupAddress: legacy.pickup_address,
+        source: String(body?.conversation_channel || 'web'),
+      }).catch(() => null);
 
       await this.orderCreate(
         {
@@ -8261,15 +8320,16 @@ export class AppService {
   }
 
   // --- Support AI Proxy ---
-  async supportChat(payload: { globalUserId: string, question: string }) {
-    if (!payload.globalUserId || !payload.question) {
-      throw new BadRequestException('globalUserId and question are required');
+  async supportChat(payload: { global_user_id?: string; globalUserId?: string; question: string }) {
+    const globalUserId = String(payload?.global_user_id || payload?.globalUserId || '').trim();
+    if (!globalUserId || !payload?.question) {
+      throw new BadRequestException('global_user_id and question are required');
     }
 
     try {
       // 1. Fetch user context (profile & tags) to give AI context
       const profileRes = await axios.get(
-        `${this.IDENTITY_SERVICE_URL}/users/profile/${payload.globalUserId}`,
+        `${this.identityBase()}/identity/profile/${globalUserId}`,
         { headers: { authorization: `Bearer ${this.INTERNAL_TOKEN}` } },
       );
       const context = profileRes.data?.data || {};
@@ -8277,7 +8337,7 @@ export class AppService {
       // 2. Call AI Orchestrator
       const aiRes = await axios.post(
         `${this.AI_ORCHESTRATOR_URL}/ai/support/chat`,
-        { global_user_id: payload.globalUserId, question: payload.question, context },
+        { global_user_id: globalUserId, question: payload.question, context },
         { headers: { authorization: `Bearer ${this.INTERNAL_TOKEN}` } },
       );
       
@@ -8296,11 +8356,13 @@ export class AppService {
   }
 
   // --- Care System Proxy ---
-  async carePlan(payload: { globalUserId: string }) {
+  async carePlan(payload: { global_user_id?: string; globalUserId?: string }) {
     try {
+      const globalUserId = String(payload?.global_user_id || payload?.globalUserId || '').trim();
+      if (!globalUserId) throw new BadRequestException('global_user_id required');
       // 1. Fetch user profile from identity-service
       const profileRes = await axios.get(
-        `${this.IDENTITY_SERVICE_URL}/users/profile/${payload.globalUserId}`,
+        `${this.identityBase()}/identity/profile/${globalUserId}`,
         { headers: { authorization: `Bearer ${this.INTERNAL_TOKEN}` } },
       );
       const profile = profileRes.data?.data || {};
@@ -8308,7 +8370,7 @@ export class AppService {
       // 2. Call AI Orchestrator to generate plan
       const aiRes = await axios.post(
         `${this.AI_ORCHESTRATOR_URL}/ai/care/plan`,
-        { global_user_id: payload.globalUserId, profile },
+        { global_user_id: globalUserId, profile },
         { headers: { authorization: `Bearer ${this.INTERNAL_TOKEN}` } },
       );
       
@@ -8378,20 +8440,30 @@ export class AppService {
   }
 
   // --- Bridge System Proxy ---
-  async bridgeCreate(payload: { globalUserId: string, targetBot: string }) {
+  async bridgeCreate(payload: any) {
     try {
+      const globalUserId = String(payload?.global_user_id || payload?.globalUserId || '').trim();
+      if (!globalUserId) throw new BadRequestException('global_user_id required');
+      const toBot = String(payload?.to_bot || payload?.target_bot || payload?.targetBot || 'rainbowpaw_bot').trim();
+      const scene = String(payload?.scene || 'aftercare').trim();
+      const extraData = payload?.extra_data && typeof payload.extra_data === 'object' ? payload.extra_data : payload?.extraData && typeof payload.extraData === 'object' ? payload.extraData : undefined;
+      const ttlMinutes = payload?.ttl_minutes != null ? Number(payload.ttl_minutes) : payload?.ttlMinutes != null ? Number(payload.ttlMinutes) : 60;
+
       const res = await axios.post(
-        `${this.BRIDGE_SERVICE_URL}/bridge/generate-link`,
+        `${this.bridgeBase()}/bridge/generate-link`,
         {
-          global_user_id: payload.globalUserId,
-          target_bot: payload.targetBot,
-          from_bot: 'claw_bot',
-          purpose: 'service_redirect',
-          expires_in_minutes: 60
+          global_user_id: globalUserId,
+          from_bot: String(payload?.from_bot || payload?.fromBot || 'claw_bot'),
+          to_bot: toBot,
+          scene,
+          ...(extraData ? { extra_data: extraData } : {}),
+          ttl_minutes: Number.isFinite(ttlMinutes) && ttlMinutes > 0 ? ttlMinutes : 60,
         },
         { headers: { authorization: `Bearer ${this.INTERNAL_TOKEN}` } },
       );
-      return res.data;
+      const deep = res.data?.data?.deep_link || res.data?.data?.link;
+      const token = res.data?.data?.token;
+      return { code: 0, message: 'ok', data: { token, link: deep, deep_link: deep } };
     } catch (error: any) {
       throw new BadGatewayException(error?.response?.data || error.message);
     }
@@ -8400,7 +8472,7 @@ export class AppService {
   async bridgeResolve(payload: { token: string }) {
     try {
       const res = await axios.get(
-        `${this.BRIDGE_SERVICE_URL}/bridge/deep-link/${payload.token}?consume=true`,
+        `${this.bridgeBase()}/bridge/deep-link/${payload.token}?consume=true`,
         { headers: { authorization: `Bearer ${this.INTERNAL_TOKEN}` } },
       );
       return res.data;
@@ -8500,6 +8572,16 @@ export class AppService {
         },
         { headers: { authorization: `Bearer ${this.INTERNAL_TOKEN}` } }
       );
+      const bookingId = res.data?.data?.booking_id;
+      await this.notifyAdminsOrderCreated({
+        orderId: String(bookingId || ''),
+        orderType: 'aftercare_booking',
+        phone: undefined,
+        totalUsd: undefined,
+        city: undefined,
+        pickupAddress: undefined,
+        source: 'service_book',
+      }).catch(() => null);
       return res.data;
     } catch (error: any) {
       console.error('serviceBook error:', error?.message);

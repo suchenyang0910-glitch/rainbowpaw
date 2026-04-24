@@ -51,8 +51,64 @@ function registerClawStartRoute() {
       const parts = data.split(':');
       const age = parts[1];
       const type = parts[2];
-      
-      // Update identity service with the profile
+
+      const opts = {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '<2 kg', callback_data: `pet_weight:<2:${age}:${type}` }, { text: '2-5 kg', callback_data: `pet_weight:2-5:${age}:${type}` }],
+            [{ text: '5-15 kg', callback_data: `pet_weight:5-15:${age}:${type}` }, { text: '15+ kg', callback_data: `pet_weight:15+:${age}:${type}` }],
+          ],
+        },
+      };
+
+      await clawBot.editMessageText('About how much does your pet weigh?', {
+        chat_id: chatId,
+        message_id: query.message.message_id,
+        ...opts,
+      });
+      await clawBot.answerCallbackQuery(query.id);
+    }
+
+    if (data.startsWith('pet_weight:')) {
+      const parts = data.split(':');
+      const weightRange = parts[1];
+      const age = parts[2];
+      const type = parts[3];
+
+      const opts = {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: 'Joint / Mobility', callback_data: `pet_issue:joint:${weightRange}:${age}:${type}` }, { text: 'Kidney', callback_data: `pet_issue:kidney:${weightRange}:${age}:${type}` }],
+            [{ text: 'Digestive', callback_data: `pet_issue:digestive:${weightRange}:${age}:${type}` }, { text: 'Skin', callback_data: `pet_issue:skin:${weightRange}:${age}:${type}` }],
+            [{ text: 'No issues', callback_data: `pet_issue:none:${weightRange}:${age}:${type}` }],
+          ],
+        },
+      };
+
+      await clawBot.editMessageText('Any main health concern right now?', {
+        chat_id: chatId,
+        message_id: query.message.message_id,
+        ...opts,
+      });
+      await clawBot.answerCallbackQuery(query.id);
+    }
+
+    if (data.startsWith('pet_issue:')) {
+      const parts = data.split(':');
+      const issue = parts[1];
+      const weightRange = parts[2];
+      const age = parts[3];
+      const type = parts[4];
+
+      const weightMap = {
+        '<2': 1.5,
+        '2-5': 3.5,
+        '5-15': 10,
+        '15+': 20,
+      };
+      const petWeightKg = weightMap[weightRange] || null;
+      const healthIssues = issue && issue !== 'none' ? [issue] : [];
+
       try {
         const linked = await identityService.linkUser({
           source_bot: 'claw_bot',
@@ -61,32 +117,33 @@ function registerClawStartRoute() {
           username: query.from.username || '',
           first_source: 'telegram',
         });
-        
+
         await identityService.updatePetProfile(linked.global_user_id, {
           petType: type,
-          petAgeStage: age
+          petAgeStage: age,
+          ...(petWeightKg ? { petWeightKg } : {}),
+          ...(healthIssues.length ? { healthIssues } : {}),
         });
       } catch (error) {
         console.error('Failed to update pet profile:', error);
       }
 
-      // Show Main Menu
       const webBase = webUrl('');
       const opts = {
         reply_markup: {
           inline_keyboard: [
-            [{ text: '🎮 Play Claw', callback_data: 'action_play_claw' }], // Changed from web_app to callback_data
-            [webAppButton('🐾 Care Plan', `${webBase}/care`)], 
+            [{ text: '🎮 Play Claw', callback_data: 'action_play_claw' }],
+            [webAppButton('🐾 Care Plan', `${webBase}/care`)],
             [webAppButton('🛍 Shop', `${webBase}/rainbowpaw/marketplace`)],
-            [{ text: '🌈 Services', callback_data: 'action_bridge_services' }] // Bridge to rainbow bot
-          ]
-        }
+            [{ text: '🌈 Services', callback_data: 'action_bridge_services' }],
+          ],
+        },
       };
-      
+
       await clawBot.editMessageText('🎮 You can try your luck or explore care options\n\n👇 Choose what to do:', {
         chat_id: chatId,
         message_id: query.message.message_id,
-        ...opts
+        ...opts,
       });
       await clawBot.answerCallbackQuery(query.id);
     }

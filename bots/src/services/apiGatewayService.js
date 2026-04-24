@@ -23,12 +23,22 @@ async function marketplaceProducts(opts) {
 }
 
 async function clawPlay(globalUserId) {
-  const { data } = await client.post('/claw/play', { global_user_id: globalUserId });
+  const idem = `claw_play_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+  const { data } = await client.post(
+    '/claw/play',
+    { global_user_id: globalUserId },
+    { headers: { 'x-idempotency-key': idem } },
+  );
   return data;
 }
 
 async function clawRecycle(globalUserId, playId) {
-  const { data } = await client.post('/claw/recycle', { global_user_id: globalUserId, playId });
+  const idem = `claw_recycle_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+  const { data } = await client.post(
+    '/claw/recycle',
+    { global_user_id: globalUserId, play_id: playId },
+    { headers: { 'x-idempotency-key': idem } },
+  );
   return data;
 }
 
@@ -42,8 +52,16 @@ async function chatSupport(globalUserId, question) {
   return data;
 }
 
-async function createBridgeLink(globalUserId, targetBot = 'rainbowpaw_bot') {
-  const { data } = await client.post('/bridge/create', { global_user_id: globalUserId, target_bot: targetBot });
+async function createBridgeLink(globalUserId, opts = {}) {
+  const toBot = String(opts.to_bot || opts.target_bot || 'rainbowpaw_bot');
+  const scene = String(opts.scene || 'aftercare');
+  const extraData = opts.extra_data && typeof opts.extra_data === 'object' ? opts.extra_data : undefined;
+  const { data } = await client.post('/bridge/create', {
+    global_user_id: globalUserId,
+    to_bot: toBot,
+    scene,
+    ...(extraData ? { extra_data: extraData } : {}),
+  });
   return data;
 }
 
@@ -55,4 +73,3 @@ module.exports = {
   chatSupport,
   createBridgeLink
 };
-

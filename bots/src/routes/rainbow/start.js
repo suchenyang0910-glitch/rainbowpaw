@@ -126,8 +126,17 @@ function registerRainbowStartRoute() {
          text += `\n\n你的宠物类型：${profile.pet_type}`;
       }
 
+      const extraPath = parsed.extra_data && parsed.extra_data.path ? String(parsed.extra_data.path) : '';
+      const openUrl = extraPath ? webUrl(extraPath) : null;
+      const inline = openUrl
+        ? {
+            inline_keyboard: [[webAppButton('立即打开', openUrl)]],
+          }
+        : null;
+
       await rainbowBot.sendMessage(chatId, text, {
         reply_markup: {
+          ...(inline ? inline : {}),
           keyboard: [
             ['🛍 商城', '🕊 善终服务'],
             ['📸 纪念页', '👩‍💼 客服'],

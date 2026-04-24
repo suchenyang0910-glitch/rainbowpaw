@@ -1174,18 +1174,26 @@ export class AppController {
   // --- Support AI ---
   @Post('support/chat')
   apiSupportChat(@Body() body: any) {
-    return this.appService.supportChat(body || {});
+    const b: any = body || {};
+    const global_user_id = String(b.global_user_id || b.globalUserId || b.globalUserID || '').trim();
+    const question = String(b.question || '').trim();
+    return this.appService.supportChat({ global_user_id, question });
   }
 
   // --- Care System ---
   @Post('care/plan')
   apiCarePlan(@Body() body: any) {
-    return this.appService.carePlan(body || {});
+    const b: any = body || {};
+    const global_user_id = String(b.global_user_id || b.globalUserId || b.globalUserID || '').trim();
+    return this.appService.carePlan({ global_user_id });
   }
 
   @Post('care/subscribe')
   apiCareSubscribe(@Body() body: any) {
-    return this.appService.careSubscribe(body || {});
+    const b: any = body || {};
+    const globalUserId = String(b.global_user_id || b.globalUserId || b.globalUserID || '').trim();
+    const planId = String(b.plan_id || b.planId || b.planID || '').trim();
+    return this.appService.careSubscribe({ globalUserId, planId });
   }
 
   // --- Bridge System ---
