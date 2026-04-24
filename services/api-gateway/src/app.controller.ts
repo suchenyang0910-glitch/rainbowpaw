@@ -1103,6 +1103,11 @@ export class AppController {
     return this.appService.adminCrmRunDueFollowups(body || {});
   }
 
+  @Post('admin/growth/campaign-link')
+  adminGrowthCampaignLink(@Body() body: any) {
+    return this.appService.adminGrowthCampaignLink(body || {});
+  }
+
   @Post('admin/outreach/telegram/send')
   adminOutreachTelegramSend(@Body() body: any) {
     return this.appService.adminOutreachTelegramSend(body || {});

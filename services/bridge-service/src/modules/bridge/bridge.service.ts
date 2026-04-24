@@ -16,6 +16,12 @@ export class BridgeService {
     private readonly tokenRepo: Repository<DeepLinkTokenEntity>,
   ) {}
 
+  private botUsername(toBot: string) {
+    const key = String(toBot || '').trim();
+    if (key === 'claw_bot' || key === 'claw') return 'rainbowpay_claw_Bot';
+    return 'RainbowPawbot';
+  }
+
   async reportEvent(dto: BridgeEventDto) {
     const idem = String(dto.idempotency_key || '').trim();
     if (idem) {
@@ -59,7 +65,8 @@ export class BridgeService {
       }),
     );
 
-    return { token, deep_link: `https://t.me/RainbowPawbot?start=${token}` };
+    const username = this.botUsername(dto.to_bot);
+    return { token, deep_link: `https://t.me/${username}?start=${token}` };
   }
 
   async parseDeepLink(token: string, opts?: { to_bot?: string; consume?: boolean }) {
@@ -75,7 +82,8 @@ export class BridgeService {
     const expectedToBot = String(opts?.to_bot || '').trim();
     const toBotOk = !expectedToBot || expectedToBot === rec.to_bot;
 
-    const valid = notExpired && toBotOk;
+    const alreadyUsed = Boolean(rec.used_at);
+    const valid = notExpired && toBotOk && (!opts?.consume || !alreadyUsed);
 
     let used_at = rec.used_at;
     if (opts?.consume && valid && !used_at) {
@@ -91,7 +99,15 @@ export class BridgeService {
       scene: rec.scene,
       extra_data: rec.extra_data || {},
       used_at,
-      error_reason: valid ? null : !notExpired ? 'expired' : !toBotOk ? 'to_bot_mismatch' : 'invalid',
+      error_reason: valid
+        ? null
+        : !notExpired
+          ? 'expired'
+          : !toBotOk
+            ? 'to_bot_mismatch'
+            : alreadyUsed && opts?.consume
+              ? 'already_used'
+              : 'invalid',
     };
   }
 }

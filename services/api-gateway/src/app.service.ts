@@ -3943,6 +3943,35 @@ export class AppService {
     return { code: 0, message: 'ok', data: { executed, failed } };
   }
 
+  async adminGrowthCampaignLink(body: any) {
+    const toBot = String(body?.to_bot || 'claw_bot').trim() || 'claw_bot';
+    const scene = String(body?.scene || 'campaign').trim() || 'campaign';
+    const ttl = Number(body?.ttl_minutes || 1440);
+    const ttlMinutes = Number.isFinite(ttl) && ttl > 0 ? ttl : 1440;
+    const utm = body?.utm && typeof body.utm === 'object' ? body.utm : {};
+    const campaign = body?.campaign && typeof body.campaign === 'object' ? body.campaign : null;
+    const extraData = {
+      utm,
+      ...(campaign ? { campaign } : {}),
+      ...(body?.extra_data && typeof body.extra_data === 'object' ? body.extra_data : {}),
+    };
+
+    const res: any = await this.internalPost(
+      `${this.bridgeBase()}/bridge/generate-link`,
+      {
+        global_user_id: 'system',
+        from_bot: 'admin',
+        to_bot: toBot,
+        scene,
+        ttl_minutes: ttlMinutes,
+        extra_data: extraData,
+      },
+      {},
+    );
+    const link = res?.data?.deep_link || res?.data?.link;
+    return { code: 0, message: 'ok', data: { token: res?.data?.token || null, link } };
+  }
+
   private telegramBotToken(bot: string) {
     const key = String(bot || '').trim();
     if (key === 'claw') return String(process.env.CLAW_BOT_TOKEN || '').trim();

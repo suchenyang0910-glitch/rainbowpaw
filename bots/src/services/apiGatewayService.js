@@ -96,6 +96,11 @@ async function reportEvent(globalUserId, eventName, eventData) {
   return data;
 }
 
+async function bridgeResolve(token) {
+  const { data } = await client.get(`/bridge/resolve?token=${encodeURIComponent(String(token || ''))}`);
+  return data;
+}
+
 module.exports = {
   marketplaceProducts,
   clawPlay,
@@ -106,4 +111,5 @@ module.exports = {
   ensureReferralCode,
   consumeReferral,
   reportEvent,
+  bridgeResolve,
 };

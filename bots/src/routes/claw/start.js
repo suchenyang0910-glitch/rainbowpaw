@@ -4,6 +4,7 @@ const apiGatewayService = require('../../services/apiGatewayService');
 const config = require('../../config');
 
 const pendingReferralByTelegramId = new Map();
+const pendingAttributionByTelegramId = new Map();
 
 function webUrl(pathname) {
   const base = String(config.publicWebBaseUrl || '').trim().replace(/\/+$/, '');
@@ -128,6 +129,10 @@ function registerClawStartRoute() {
           ...(healthIssues.length ? { healthIssues } : {}),
         });
 
+        const extra = pendingAttributionByTelegramId.get(Number(query.from.id));
+        const utm = extra && extra.utm && typeof extra.utm === 'object' ? extra.utm : null;
+        const campaign = extra && extra.campaign && typeof extra.campaign === 'object' ? extra.campaign : null;
+
         await apiGatewayService
           .reportEvent(linked.global_user_id, 'lead_submit', {
             country: 'KH',
@@ -136,10 +141,13 @@ function registerClawStartRoute() {
             session_id: String(chatId),
             telegram_id: Number(query.from.id),
             chat_id: Number(chatId),
-            utm: { source: 'telegram', campaign: 'claw_onboarding', content: String(issue || 'none') },
+            utm: utm || { source: 'telegram', campaign: 'claw_onboarding', content: String(issue || 'none') },
+            campaign: campaign || null,
             ref: { bot: 'claw_bot', telegram_id: Number(query.from.id) },
           })
           .catch(() => null);
+
+        pendingAttributionByTelegramId.delete(Number(query.from.id));
 
         const pending = pendingReferralByTelegramId.get(Number(query.from.id));
         if (pending && String(pending).startsWith('ref_')) {
@@ -188,6 +196,16 @@ function registerClawStartRoute() {
       if (token && token.startsWith('ref_')) {
         pendingReferralByTelegramId.set(Number(msg.from.id), token);
         apiGatewayService.ensureReferralCode(linked.global_user_id).catch(() => null);
+      }
+      if (token && token.startsWith('dl_')) {
+        try {
+          const parsed = await apiGatewayService.bridgeResolve(token);
+          if (parsed && parsed.code === 0 && parsed.data && parsed.data.valid) {
+            pendingAttributionByTelegramId.set(Number(msg.from.id), parsed.data.extra_data || {});
+          }
+        } catch {
+          void 0;
+        }
       }
 
       // Step 1: Welcome and Pet Type
