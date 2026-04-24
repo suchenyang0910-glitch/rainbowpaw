@@ -3,7 +3,7 @@ import { CanAccess, useCustomMutation } from '@refinedev/core'
 import { Button, Space, Table, Tag, message } from 'antd'
 
 export function ReferralsPage() {
-  const { tableProps, tableQueryResult } = useTable({ resource: 'referrals' })
+  const { tableProps, tableQuery } = useTable({ resource: 'referrals' })
   const { mutateAsync, mutation } = useCustomMutation()
 
   const activate = async (id: number, on: boolean) => {
@@ -13,7 +13,7 @@ export function ReferralsPage() {
       values: {},
     })
     message.success(on ? '已启用' : '已停用')
-    await tableQueryResult.refetch()
+    await tableQuery.refetch()
   }
 
   return (
@@ -69,4 +69,3 @@ export function ReferralsPage() {
     </List>
   )
 }
-

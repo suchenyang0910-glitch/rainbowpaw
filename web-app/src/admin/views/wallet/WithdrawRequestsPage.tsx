@@ -14,7 +14,7 @@ type WithdrawRequestRow = {
 }
 
 export function WithdrawRequestsPage() {
-  const { tableProps, tableQueryResult } = useTable<WithdrawRequestRow>({ resource: 'withdrawRequests' })
+  const { tableProps, tableQuery } = useTable<WithdrawRequestRow>({ resource: 'withdrawRequests' })
   const { mutateAsync, mutation } = useCustomMutation()
 
   const onDecision = async (row: WithdrawRequestRow, action: 'approve' | 'reject') => {
@@ -36,7 +36,7 @@ export function WithdrawRequestsPage() {
       values: {},
     })
     message.success(action === 'approve' ? '已通过' : '已驳回')
-    await tableQueryResult.refetch()
+    await tableQuery.refetch()
   }
 
   const onPaid = async (row: WithdrawRequestRow) => {
@@ -57,7 +57,7 @@ export function WithdrawRequestsPage() {
       values: {},
     })
     message.success('已标记打款')
-    await tableQueryResult.refetch()
+    await tableQuery.refetch()
   }
 
   return (

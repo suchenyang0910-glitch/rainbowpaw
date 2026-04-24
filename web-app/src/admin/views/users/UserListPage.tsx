@@ -42,7 +42,7 @@ export function UserListPage() {
 
   return (
     <PageContainer title={false}>
-      <List title="用户列表">
+      <List title="身份中心">
         <Table {...tableProps} rowKey="global_user_id">
           <Table.Column dataIndex="global_user_id" title="Global User ID" />
           <Table.Column dataIndex="telegram_id" title="Telegram ID" />

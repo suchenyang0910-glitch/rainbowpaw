@@ -3,7 +3,7 @@ import { CanAccess, useCustomMutation } from '@refinedev/core'
 import { Button, Space, Table, Tag, message } from 'antd'
 
 export function GroupsPage() {
-  const { tableProps, tableQueryResult } = useTable({ resource: 'groups' })
+  const { tableProps, tableQuery } = useTable({ resource: 'groups' })
   const { mutateAsync, mutation } = useCustomMutation()
 
   const activate = async (id: number, on: boolean) => {
@@ -13,7 +13,7 @@ export function GroupsPage() {
       values: {},
     })
     message.success(on ? '已启用' : '已停用')
-    await tableQueryResult.refetch()
+    await tableQuery.refetch()
   }
 
   return (
@@ -71,4 +71,3 @@ export function GroupsPage() {
     </List>
   )
 }
-

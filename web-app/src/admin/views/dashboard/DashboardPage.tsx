@@ -123,7 +123,7 @@ export function DashboardPage() {
   }, [wallet])
 
   return (
-    <PageContainer title="仪表盘">
+    <PageContainer title="工作台">
       {query.error ? (
         <Alert
           type="warning"

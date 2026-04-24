@@ -3,7 +3,7 @@ import { CanAccess, useCustomMutation } from '@refinedev/core'
 import { Button, Space, Table, Tag, message } from 'antd'
 
 export function RewardsPage() {
-  const { tableProps, tableQueryResult } = useTable({ resource: 'rewards' })
+  const { tableProps, tableQuery } = useTable({ resource: 'rewards' })
   const { mutateAsync, mutation } = useCustomMutation()
 
   const revoke = async (id: number) => {
@@ -13,7 +13,7 @@ export function RewardsPage() {
       values: {},
     })
     message.success('已撤销')
-    await tableQueryResult.refetch()
+    await tableQuery.refetch()
   }
 
   return (
@@ -60,4 +60,3 @@ export function RewardsPage() {
     </List>
   )
 }
-

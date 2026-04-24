@@ -4,7 +4,7 @@ import { Button, Form, Input, Modal, Space, Table, Tag, message } from 'antd'
 import { useState } from 'react'
 
 export function RiskBlacklistPage() {
-  const { tableProps, tableQueryResult } = useTable({ resource: 'riskBlacklist' })
+  const { tableProps, tableQuery } = useTable({ resource: 'riskBlacklist' })
   const { mutateAsync, mutation } = useCustomMutation()
   const [open, setOpen] = useState(false)
   const [form] = Form.useForm()
@@ -15,7 +15,7 @@ export function RiskBlacklistPage() {
     message.success('已添加')
     setOpen(false)
     form.resetFields()
-    await tableQueryResult.refetch()
+    await tableQuery.refetch()
   }
 
   return (
@@ -71,4 +71,3 @@ export function RiskBlacklistPage() {
     </List>
   )
 }
-

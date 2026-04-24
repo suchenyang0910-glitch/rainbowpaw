@@ -3,7 +3,7 @@ import { CanAccess, useCustomMutation } from '@refinedev/core'
 import { Button, Space, Table, Tag, message } from 'antd'
 
 export function CampaignsPage() {
-  const { tableProps, tableQueryResult } = useTable({ resource: 'campaigns' })
+  const { tableProps, tableQuery } = useTable({ resource: 'campaigns' })
   const { mutateAsync, mutation } = useCustomMutation()
 
   const setStatus = async (id: number, action: 'publish' | 'deactivate') => {
@@ -13,7 +13,7 @@ export function CampaignsPage() {
       values: {},
     })
     message.success(action === 'publish' ? '已发布' : '已停用')
-    await tableQueryResult.refetch()
+    await tableQuery.refetch()
   }
 
   return (
@@ -69,4 +69,3 @@ export function CampaignsPage() {
     </List>
   )
 }
-

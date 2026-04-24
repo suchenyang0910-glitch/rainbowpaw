@@ -6,7 +6,7 @@ import React from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useGetIdentity, useLogout } from '@refinedev/core'
 import { loadSession, hasPermission } from '../providers/adminSession'
-import { resources } from '../resources/resources'
+import { resourcesResolved } from '../resources/resources'
 
 type MenuItem = {
   path?: string
@@ -17,9 +17,10 @@ type MenuItem = {
 
 function buildMenu(): MenuItem[] {
   const session = loadSession()
-  const top = resources.filter((r) => Boolean(r.list) && !r.meta?.parent)
+  const all = resourcesResolved.filter((r) => !(r as any)?.meta?.hideInMenu)
+  const top = all.filter((r) => Boolean(r.list) && !r.meta?.parent)
   const childrenByParent = new Map<string, any[]>()
-  for (const r of resources) {
+  for (const r of all) {
     const parent = r.meta?.parent
     if (!parent) continue
     if (!childrenByParent.has(parent)) childrenByParent.set(parent, [])
