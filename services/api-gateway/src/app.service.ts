@@ -55,6 +55,183 @@ export class AppService {
 
   private settlecoreAckLoopStarted = false;
 
+  private referralBotLink(bot: string, referralCode: string) {
+    const code = String(referralCode || '').trim();
+    if (!code) return '';
+    const b = String(bot || '').trim().toLowerCase();
+    if (b === 'rainbow' || b === 'rainbowpaw') return `https://t.me/RainbowPawbot?start=${encodeURIComponent(code)}`;
+    return `https://t.me/rainbowpay_claw_Bot?start=${encodeURIComponent(code)}`;
+  }
+
+  private async opsEnsureReferralCode(opts: { globalUserId: string }) {
+    const globalUserId = String(opts.globalUserId || '').trim();
+    if (!globalUserId) throw new BadRequestException('global_user_id required');
+    const raw = `ref_${globalUserId.slice(0, 8)}`;
+    const preferred = raw;
+    const pg = this.getOpsPg();
+    if (!pg) throw new BadRequestException('db not configured');
+
+    const check = await this.opsQuery<{ global_user_id: string }>(
+      `SELECT global_user_id FROM ops.referral_codes WHERE referral_code = $1 LIMIT 1`,
+      [preferred],
+    );
+    if (check.rowCount && String(check.rows[0].global_user_id) !== globalUserId) {
+      const alt = `ref_${this.hashShort(globalUserId)}`;
+      await this.opsQuery(
+        `INSERT INTO ops.referral_codes(referral_code, global_user_id)
+         VALUES ($1,$2)
+         ON CONFLICT (referral_code)
+         DO UPDATE SET global_user_id = EXCLUDED.global_user_id, updated_at = CURRENT_TIMESTAMP`,
+        [alt, globalUserId],
+      );
+      return { referral_code: alt };
+    }
+
+    await this.opsQuery(
+      `INSERT INTO ops.referral_codes(referral_code, global_user_id)
+       VALUES ($1,$2)
+       ON CONFLICT (referral_code)
+       DO UPDATE SET global_user_id = EXCLUDED.global_user_id, updated_at = CURRENT_TIMESTAMP`,
+      [preferred, globalUserId],
+    );
+    return { referral_code: preferred };
+  }
+
+  async referralEnsure(opts: { global_user_id: string; bot?: string }) {
+    const globalUserId = String(opts.global_user_id || '').trim();
+    const bot = String(opts.bot || 'claw').trim();
+    const rec = await this.opsEnsureReferralCode({ globalUserId });
+    return {
+      code: 0,
+      message: 'ok',
+      data: {
+        referral_code: rec.referral_code,
+        link: this.referralBotLink(bot, rec.referral_code),
+      },
+    };
+  }
+
+  async referralConsume(opts: {
+    invitee_global_user_id: string;
+    referral_code: string;
+    stage: string;
+    source_bot: string;
+    idempotency_key?: string;
+  }) {
+    const invitee = String(opts.invitee_global_user_id || '').trim();
+    const code = String(opts.referral_code || '').trim();
+    const stage = String(opts.stage || 'start').trim().toLowerCase();
+    const sourceBot = String(opts.source_bot || 'claw_bot').trim();
+    if (!invitee) throw new BadRequestException('invitee_global_user_id required');
+    if (!code || !code.startsWith('ref_')) {
+      return { code: 0, message: 'ok', data: { status: 'noop' } };
+    }
+
+    const idem = String(opts.idempotency_key || '').trim();
+    const idemKey = idem ? `ref_consume:${invitee}:${stage}:${idem}` : `ref_consume:${invitee}:${stage}`;
+    return this.runIdempotent(idemKey, 10 * 60 * 1000, async () => {
+      const pg = this.getOpsPg();
+      if (!pg) throw new BadRequestException('db not configured');
+
+      const q = await this.opsQuery<{ global_user_id: string }>(
+        `SELECT global_user_id FROM ops.referral_codes WHERE referral_code = $1 LIMIT 1`,
+        [code],
+      );
+      const inviter = q.rowCount ? String(q.rows[0].global_user_id || '').trim() : '';
+      if (!inviter || inviter === invitee) {
+        return { code: 0, message: 'ok', data: { status: 'unknown' } };
+      }
+
+      const existing = await this.opsQuery<{ status: string; inviter_global_user_id: string }>(
+        `SELECT status, inviter_global_user_id FROM ops.user_referrals WHERE invitee_global_user_id = $1 LIMIT 1`,
+        [invitee],
+      );
+      if (existing.rowCount) {
+        const existingInviter = String(existing.rows[0].inviter_global_user_id || '').trim();
+        const existingStatus = String(existing.rows[0].status || '').trim();
+        if (existingInviter !== inviter) {
+          return { code: 0, message: 'ok', data: { status: 'already_bound' } };
+        }
+        if (stage === 'profiled' && existingStatus !== 'rewarded') {
+          await this.opsQuery(
+            `UPDATE ops.user_referrals
+             SET status = 'rewarded', updated_at = CURRENT_TIMESTAMP, rewarded_at = CURRENT_TIMESTAMP
+             WHERE invitee_global_user_id = $1`,
+            [invitee],
+          );
+
+          const inviterReward = 3;
+          const inviteeReward = 3;
+          await this.walletEarnAsset({
+            globalUserId: inviter,
+            assetType: 'points_locked',
+            amount: inviterReward,
+            idemKey: `ref_reward_inviter:${inviter}:${invitee}`,
+            bizType: 'referral_invite_reward',
+            refType: 'referral',
+            refId: invitee,
+            remark: null,
+          }).catch(() => null);
+          await this.walletEarnAsset({
+            globalUserId: invitee,
+            assetType: 'points_locked',
+            amount: inviteeReward,
+            idemKey: `ref_reward_invitee:${invitee}:${inviter}`,
+            bizType: 'referral_join_reward',
+            refType: 'referral',
+            refId: inviter,
+            remark: null,
+          }).catch(() => null);
+          return { code: 0, message: 'ok', data: { status: 'rewarded', inviter_global_user_id: inviter } };
+        }
+        return { code: 0, message: 'ok', data: { status: existingStatus, inviter_global_user_id: inviter } };
+      }
+
+      await this.opsQuery(
+        `INSERT INTO ops.user_referrals(inviter_global_user_id, invitee_global_user_id, source_bot, status)
+         VALUES ($1,$2,$3,$4)
+         ON CONFLICT (invitee_global_user_id)
+         DO NOTHING`,
+        [inviter, invitee, sourceBot, stage === 'profiled' ? 'profiled' : 'started'],
+      );
+
+      if (stage === 'profiled') {
+        await this.opsQuery(
+          `UPDATE ops.user_referrals
+           SET status = 'rewarded', updated_at = CURRENT_TIMESTAMP, rewarded_at = CURRENT_TIMESTAMP
+           WHERE invitee_global_user_id = $1 AND inviter_global_user_id = $2 AND status <> 'rewarded'`,
+          [invitee, inviter],
+        );
+
+        const inviterReward = 3;
+        const inviteeReward = 3;
+        await this.walletEarnAsset({
+          globalUserId: inviter,
+          assetType: 'points_locked',
+          amount: inviterReward,
+          idemKey: `ref_reward_inviter:${inviter}:${invitee}`,
+          bizType: 'referral_invite_reward',
+          refType: 'referral',
+          refId: invitee,
+          remark: null,
+        }).catch(() => null);
+        await this.walletEarnAsset({
+          globalUserId: invitee,
+          assetType: 'points_locked',
+          amount: inviteeReward,
+          idemKey: `ref_reward_invitee:${invitee}:${inviter}`,
+          bizType: 'referral_join_reward',
+          refType: 'referral',
+          refId: inviter,
+          remark: null,
+        }).catch(() => null);
+        return { code: 0, message: 'ok', data: { status: 'rewarded', inviter_global_user_id: inviter } };
+      }
+
+      return { code: 0, message: 'ok', data: { status: 'started', inviter_global_user_id: inviter } };
+    });
+  }
+
   private marketplaceProductsStore = [
     // --- 1. Senior Care (老年护理) ---
     {
@@ -1168,7 +1345,15 @@ export class AppService {
       }
     }
 
-    const referralCode = `ref_${String(linked.global_user_id).slice(0, 8)}`;
+    let referralCode = `ref_${String(linked.global_user_id).slice(0, 8)}`;
+    try {
+      if (this.getOpsPg()) {
+        const ensured = await this.opsEnsureReferralCode({ globalUserId: linked.global_user_id });
+        referralCode = ensured.referral_code;
+      }
+    } catch {
+      void 0;
+    }
     return {
       code: 0,
       message: 'ok',

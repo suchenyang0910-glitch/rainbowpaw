@@ -1,5 +1,6 @@
 const clawBot = require('../../bots/clawBot');
 const identityService = require('../../services/identityService');
+const apiGatewayService = require('../../services/apiGatewayService');
 
 function registerReferralRoute() {
   if (!clawBot) return;
@@ -16,9 +17,17 @@ function registerReferralRoute() {
         username: msg.from.username || '',
       });
 
-      // Simple mock for referral code
-      const referralCode = `ref_${linked.global_user_id.substring(0, 8)}`;
-      const referralLink = `https://t.me/rainbowpay_claw_Bot?start=${referralCode}`;
+      let referralCode = `ref_${linked.global_user_id.substring(0, 8)}`;
+      let referralLink = `https://t.me/rainbowpay_claw_Bot?start=${referralCode}`;
+      try {
+        const ensured = await apiGatewayService.ensureReferralCode(linked.global_user_id);
+        if (ensured && ensured.code === 0 && ensured.data) {
+          referralCode = ensured.data.referral_code || referralCode;
+          referralLink = ensured.data.link || referralLink;
+        }
+      } catch {
+        void 0;
+      }
 
       clawBot.sendMessage(
         chatId,

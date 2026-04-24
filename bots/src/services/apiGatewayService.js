@@ -65,11 +65,28 @@ async function createBridgeLink(globalUserId, opts = {}) {
   return data;
 }
 
+async function ensureReferralCode(globalUserId) {
+  const { data } = await client.post('/referrals/ensure', { global_user_id: globalUserId, bot: 'claw' });
+  return data;
+}
+
+async function consumeReferral(inviteeGlobalUserId, referralCode, stage = 'start') {
+  const idem = `ref_${stage}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+  const { data } = await client.post(
+    '/referrals/consume',
+    { invitee_global_user_id: inviteeGlobalUserId, referral_code: referralCode, stage, source_bot: 'claw_bot' },
+    { headers: { 'x-idempotency-key': idem } },
+  );
+  return data;
+}
+
 module.exports = {
   marketplaceProducts,
   clawPlay,
   clawRecycle,
   getCarePlan,
   chatSupport,
-  createBridgeLink
+  createBridgeLink,
+  ensureReferralCode,
+  consumeReferral,
 };

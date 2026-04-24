@@ -1,6 +1,9 @@
 const clawBot = require('../../bots/clawBot');
 const identityService = require('../../services/identityService');
+const apiGatewayService = require('../../services/apiGatewayService');
 const config = require('../../config');
+
+const pendingReferralByTelegramId = new Map();
 
 function webUrl(pathname) {
   const base = String(config.publicWebBaseUrl || '').trim().replace(/\/+$/, '');
@@ -124,6 +127,12 @@ function registerClawStartRoute() {
           ...(petWeightKg ? { petWeightKg } : {}),
           ...(healthIssues.length ? { healthIssues } : {}),
         });
+
+        const pending = pendingReferralByTelegramId.get(Number(query.from.id));
+        if (pending && String(pending).startsWith('ref_')) {
+          await apiGatewayService.consumeReferral(linked.global_user_id, String(pending), 'profiled').catch(() => null);
+          pendingReferralByTelegramId.delete(Number(query.from.id));
+        }
       } catch (error) {
         console.error('Failed to update pet profile:', error);
       }
@@ -155,13 +164,18 @@ function registerClawStartRoute() {
 
     try {
       // First register user if they don't exist, but don't show the main menu yet
-      await identityService.linkUser({
+      const linked = await identityService.linkUser({
         source_bot: 'claw_bot',
         source_user_id: String(msg.from.id),
         telegram_id: msg.from.id,
         username: msg.from.username || '',
         first_source: 'telegram',
       });
+
+      if (token && token.startsWith('ref_')) {
+        pendingReferralByTelegramId.set(Number(msg.from.id), token);
+        apiGatewayService.ensureReferralCode(linked.global_user_id).catch(() => null);
+      }
 
       // Step 1: Welcome and Pet Type
       const opts = {

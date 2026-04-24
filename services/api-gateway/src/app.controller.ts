@@ -1202,6 +1202,31 @@ export class AppController {
     return this.appService.bridgeCreate(body || {});
   }
 
+  // --- Referral System ---
+  @Post('referrals/ensure')
+  apiReferralEnsure(@Body() body: any) {
+    const b: any = body || {};
+    const global_user_id = String(b.global_user_id || b.globalUserId || '').trim();
+    const bot = String(b.bot || 'claw').trim();
+    return this.appService.referralEnsure({ global_user_id, bot });
+  }
+
+  @Post('referrals/consume')
+  apiReferralConsume(@Headers('x-idempotency-key') idempotencyKey: string, @Body() body: any) {
+    const b: any = body || {};
+    const invitee_global_user_id = String(b.invitee_global_user_id || b.global_user_id || '').trim();
+    const referral_code = String(b.referral_code || b.token || '').trim();
+    const stage = String(b.stage || 'start').trim();
+    const source_bot = String(b.source_bot || 'claw_bot').trim();
+    return this.appService.referralConsume({
+      invitee_global_user_id,
+      referral_code,
+      stage,
+      source_bot,
+      idempotency_key: String(idempotencyKey || '').trim(),
+    });
+  }
+
   @Get('bridge/resolve')
   apiBridgeResolve(@Query('token') token: string) {
     return this.appService.bridgeResolve({ token });
