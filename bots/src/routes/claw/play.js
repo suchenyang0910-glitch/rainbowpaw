@@ -124,6 +124,19 @@ function registerClawPlayRoute() {
           source_user_id: String(query.from.id),
         });
 
+        await apiGatewayService
+          .reportEvent(linked.global_user_id, 'checkout_started', {
+            country: 'KH',
+            city: 'Phnom Penh',
+            language: query.from.language_code || 'en',
+            session_id: String(chatId),
+            telegram_id: Number(query.from.id),
+            chat_id: Number(chatId),
+            utm: { source: 'telegram', campaign: 'claw_care', content: `pack:${String(packId)}` },
+            ref: { bot: 'claw_bot', telegram_id: Number(query.from.id) },
+          })
+          .catch(() => null);
+
         const category = String(packId).includes('senior') ? 'senior_care' : '';
         const path = category ? `/rainbowpaw/marketplace?category=${encodeURIComponent(category)}` : '/rainbowpaw/marketplace';
 

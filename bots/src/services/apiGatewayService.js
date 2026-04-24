@@ -80,6 +80,22 @@ async function consumeReferral(inviteeGlobalUserId, referralCode, stage = 'start
   return data;
 }
 
+async function reportEvent(globalUserId, eventName, eventData) {
+  const idem = `evt_${eventName}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+  const { data } = await client.post(
+    '/events',
+    {
+      global_user_id: globalUserId,
+      event_name: eventName,
+      source_bot: 'claw_bot',
+      idempotency_key: idem,
+      event_data: { ...(eventData || {}), idempotency_key: idem },
+    },
+    { headers: { 'x-idempotency-key': idem } },
+  );
+  return data;
+}
+
 module.exports = {
   marketplaceProducts,
   clawPlay,
@@ -89,4 +105,5 @@ module.exports = {
   createBridgeLink,
   ensureReferralCode,
   consumeReferral,
+  reportEvent,
 };

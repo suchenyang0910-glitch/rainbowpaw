@@ -128,6 +128,19 @@ function registerClawStartRoute() {
           ...(healthIssues.length ? { healthIssues } : {}),
         });
 
+        await apiGatewayService
+          .reportEvent(linked.global_user_id, 'lead_submit', {
+            country: 'KH',
+            city: 'Phnom Penh',
+            language: query.from.language_code || 'en',
+            session_id: String(chatId),
+            telegram_id: Number(query.from.id),
+            chat_id: Number(chatId),
+            utm: { source: 'telegram', campaign: 'claw_onboarding', content: String(issue || 'none') },
+            ref: { bot: 'claw_bot', telegram_id: Number(query.from.id) },
+          })
+          .catch(() => null);
+
         const pending = pendingReferralByTelegramId.get(Number(query.from.id));
         if (pending && String(pending).startsWith('ref_')) {
           await apiGatewayService.consumeReferral(linked.global_user_id, String(pending), 'profiled').catch(() => null);

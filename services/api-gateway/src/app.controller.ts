@@ -1098,6 +1098,11 @@ export class AppController {
     return this.appService.adminCrmExecuteFollowup({ id, ...(body || {}) });
   }
 
+  @Post('admin/crm/followups/run-due')
+  adminCrmRunDueFollowups(@Body() body: any) {
+    return this.appService.adminCrmRunDueFollowups(body || {});
+  }
+
   @Post('admin/outreach/telegram/send')
   adminOutreachTelegramSend(@Body() body: any) {
     return this.appService.adminOutreachTelegramSend(body || {});

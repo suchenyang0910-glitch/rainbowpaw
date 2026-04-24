@@ -1799,6 +1799,70 @@ export class AppService {
         now,
       ],
     );
+
+    try {
+      const bot = String(payload?.source_bot || '').includes('claw') ? 'claw' : 'rainbow';
+      const chatId = data?.chat_id != null ? String(data.chat_id) : data?.telegram_id != null ? String(data.telegram_id) : '';
+
+      const insertFollowup = async (templateKey: string, minutes: number, message: string) => {
+        const dueAt = new Date(Date.now() + minutes * 60 * 1000);
+        const dedupeKey = this.stableDedupeKey('p1_fu', {
+          lead_id: leadId,
+          template_key: templateKey,
+          due_min: minutes,
+        });
+        await pg.query(
+          `INSERT INTO crm.followups (lead_id, channel, dedupe_key, status, due_at, template_key, payload, last_error, created_at, updated_at)
+           VALUES ($1,$2,$3,'pending',$4,$5,$6::jsonb,NULL,$7,$7)
+           ON CONFLICT (dedupe_key) DO NOTHING`,
+          [
+            leadId,
+            channel || 'telegram',
+            dedupeKey,
+            dueAt,
+            templateKey,
+            JSON.stringify({ bot, ...(chatId ? { chat_id: chatId } : {}), message }),
+            now,
+          ],
+        );
+      };
+
+      if (eventName === 'lead_submit') {
+        await insertFollowup(
+          'P0_WELCOME',
+          0,
+          '你好，我是 RainbowPaw。想让我根据你宠物的年龄/体重/健康问题，推荐一个最省钱的护理组合吗？回复“推荐”。',
+        );
+        await insertFollowup(
+          'P0_CARE_2H',
+          120,
+          '提醒一下：我可以给你一份 1 分钟护理建议（含推荐产品/禁忌点）。需要的话回复“护理”。',
+        );
+      }
+
+      if (eventName === 'order_created' || eventName === 'checkout_started' || eventName === 'checkout_completed') {
+        await insertFollowup(
+          'P0_PAY_2H',
+          120,
+          '你好，刚才的订单是否遇到支付/下单问题？我可以帮你快速完成（也可发支付凭证截图）。',
+        );
+        await insertFollowup(
+          'P0_PAY_24H',
+          1440,
+          '昨天的护理包订单还需要我协助吗？如果方便，告诉我宠物类型+年龄+主要问题，我给你最合适的方案。',
+        );
+      }
+
+      if (eventName.includes('aftercare')) {
+        await insertFollowup(
+          'P0_AFTERCARE_2H',
+          120,
+          '关于善终咨询，我需要确认 3 个信息：城市/宠物体重/希望时间。你方便回复一下吗？',
+        );
+      }
+    } catch {
+      void 0;
+    }
   }
 
   async products() {
@@ -3846,6 +3910,37 @@ export class AppService {
       await this.adminCrmFollowupResult({ id, status: 'failed', last_error: String(e?.message || e) });
       return { code: 0, message: 'ok', data: { sent: false, reason: 'send failed' } };
     }
+  }
+
+  async adminCrmRunDueFollowups(body: any) {
+    const pg = this.getOpsPg();
+    if (!pg) return { code: 0, message: 'ok', data: { executed: 0, failed: 0, reason: 'no db' } };
+    const limit = Math.max(1, Math.min(200, Number(body?.limit || 50)));
+    const bot = String(body?.bot || 'rainbow').trim() || 'rainbow';
+
+    const due = await pg.query(
+      `SELECT id
+       FROM crm.followups
+       WHERE status = 'pending'
+         AND due_at <= NOW()
+       ORDER BY due_at ASC
+       LIMIT $1`,
+      [limit],
+    );
+
+    let executed = 0;
+    let failed = 0;
+    for (const r of due.rows || []) {
+      const id = r?.id;
+      if (id == null) continue;
+      try {
+        await this.adminCrmExecuteFollowup({ id, bot });
+        executed += 1;
+      } catch {
+        failed += 1;
+      }
+    }
+    return { code: 0, message: 'ok', data: { executed, failed } };
   }
 
   private telegramBotToken(bot: string) {
