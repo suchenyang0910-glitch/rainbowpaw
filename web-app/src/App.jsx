@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import {
   Home,
   ShoppingBag,
+  Shield,
   Wallet,
   User,
   Ticket,
@@ -725,6 +726,7 @@ const BottomTabNav = ({ activeTab, setActiveTab, t }) => {
     { id: 'earn', label: t ? t('tabs.earn') : '赚钱', icon: TrendingUp },
     { id: 'wallet', label: t ? t('tabs.wallet') : '钱包', icon: Wallet },
     { id: 'profile', label: t ? t('tabs.profile') : '我的', icon: User },
+    { id: 'admin', label: '管理', icon: Shield },
   ];
 
   return (
@@ -1415,6 +1417,94 @@ const ProfilePage = ({ me, orders, onPayOrder, onEditShipping, onSupport, lang, 
 
 // --- Main App ---
 
+/** 管理员 - 待确认付款页面 */
+const AdminPaymentsPage = ({ telegram }) => {
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [busy, setBusy] = useState({});
+  const [adminId, setAdminId] = useState(null);
+  const [toast, setToast] = useState('');
+
+  const doFetch = async (path, opts) => {
+    const base = '/api';
+    const origin = window && window.location ? window.location.origin : '';
+    const fullUrl = origin.replace(/\/+$/, '') + base + path;
+    const initData = getTelegramInitData();
+    const headers = { 'content-type': 'application/json' };
+    if (initData) headers['x-telegram-init-data'] = initData;
+    const devId = (import.meta && import.meta.env && import.meta.env.VITE_DEV_TELEGRAM_ID) || '';
+    if (!initData && devId) headers['x-dev-telegram-id'] = devId;
+    const res = await fetch(fullUrl, {
+      method: opts && opts.method ? opts.method : 'GET',
+      headers,
+      body: opts && typeof opts.body !== 'undefined' ? JSON.stringify(opts.body) : undefined,
+    });
+    const json = await res.json().catch(() => ({}));
+    if (json && json.code === 0) return json.data;
+    throw new Error((json && json.message) || '请求失败');
+  };
+
+  const loadPending = async () => {
+    setLoading(true);
+    try {
+      const data = await doFetch('/payments/pending');
+      setItems(Array.isArray(data.items) ? data.items : []);
+    } catch (e) {
+      setLocalToast(e && e.message ? e.message : '加载失败');
+    }
+    setLoading(false);
+  };
+  useState(() => { loadPending(); }, []);
+
+  useEffect(() => {
+    const tid = telegram && telegram.id ? Number(telegram.id) : null;
+    setAdminId(tid);
+  }, [telegram]);
+
+  const confirmPayment = async (displayId) => {
+    setBusy((prev) => ({ ...prev, [displayId]: true }));
+    try {
+      await doFetch('/payments/' + encodeURIComponent(displayId) + '/confirm', { method: 'POST', body: {} });
+      setLocalToast('已确认收款');
+      loadPending();
+    } catch (e) {
+      setLocalToast(e && e.message ? e.message : '确认失败');
+    }
+    setBusy((prev) => ({ ...prev, [displayId]: false }));
+  };
+
+  return (
+    <div className="pb-20 animate-in fade-in duration-300 px-4 py-6">
+      <h2 className="text-lg font-black mb-4">待确认付款</h2>
+      {loading ? <p className="text-xs text-gray-400">加载中...</p> : null}
+      {localToast ? <p className="text-xs text-blue-500 mb-2">{localToast}</p> : null}
+      {!loading && items.length === 0 ? <p className="text-xs text-gray-400">暂无待确认订单</p> : null}
+      <div className="space-y-3">
+        {items.map((o) => (
+          <div key={o.display_id} className="bg-white border border-gray-100 rounded-2xl p-4 shadow-sm">
+            <div className="flex justify-between items-start">
+              <div>
+                <p className="text-xs font-bold">ID: {o.display_id}</p>
+                <p className="text-[10px] text-gray-400 mt-1">用户: {o.global_user_id}</p>
+                <p className="text-[10px] text-gray-400">凭证: {o.has_proof ? '✅ 已提交' : '❌ 未提交'}</p>
+                <p className="text-[10px] text-gray-400">时间: {o.created_at}</p>
+              </div>
+              <p className="text-sm font-black text-gray-800">${Number(o.amount || 0).toFixed(2)}</p>
+            </div>
+            <button
+              disabled={busy[o.display_id]}
+              onClick={() => confirmPayment(o.display_id)}
+              className={`mt-3 w-full py-3 rounded-2xl text-xs font-bold ${busy[o.display_id] ? 'bg-gray-200 text-gray-500' : 'bg-green-500 text-white'}`}
+            >
+              {busy[o.display_id] ? '确认中...' : '✅ 确认已收款'}
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
 export default function App() {
   const [lang, setLang] = useState(() => {
     try {
@@ -1955,6 +2045,7 @@ export default function App() {
         {activeTab === 'earn' && <EarnPage me={me} activeGroups={activeGroups} discoverGroups={discoverGroups} onCopyReferral={copyReferral} onForwardReferral={forwardReferral} onInviteGroup={inviteGroup} onJoinGroupPay={joinGroupPay} />}
         {activeTab === 'wallet' && <WalletPage t={t} wallet={wallet} logs={walletLogs} pricing={me ? me.pricing : null} pay={me ? me.pay : null} onBuyPlays={buyPlays} onSubmitProof={submitProof} />}
         {activeTab === 'profile' && <ProfilePage t={t} lang={lang} setLang={setLang} me={me} orders={orders} onPayOrder={payOrder} onEditShipping={openShippingModal} onSupport={openSupport} />}
+        {activeTab === 'admin' && <AdminPaymentsPage telegram={telegram} />}
       </main>
       
       <BottomTabNav t={t} activeTab={activeTab} setActiveTab={setActiveTab} />

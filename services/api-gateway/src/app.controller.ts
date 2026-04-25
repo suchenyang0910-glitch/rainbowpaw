@@ -439,6 +439,17 @@ export class AppController {
     return this.appService.settlecoreUsdtTopupWebhook({ req, body });
   }
 
+  @Get('payments/pending')
+  paymentsPending(
+    @Headers('x-dev-telegram-id') devTelegramId: string,
+    @Headers('x-telegram-init-data') telegramInitData: string,
+  ) {
+    return this.appService.paymentsPending({
+      devTelegramId,
+      telegramInitData,
+    });
+  }
+
   @Get('payments/:id')
   payment(@Param('id') id: string) {
     return this.appService.payment({ id });
@@ -472,6 +483,19 @@ export class AppController {
     const buf = Buffer.from(file.file_base64 || '', 'base64');
     res.setHeader('content-type', file.mime_type || 'application/octet-stream');
     res.status(200).send(buf);
+  }
+
+  @Post('payments/:id/confirm')
+  confirmPayment(
+    @Param('id') id: string,
+    @Headers('x-dev-telegram-id') devTelegramId: string,
+    @Headers('x-telegram-init-data') telegramInitData: string,
+  ) {
+    return this.appService.confirmPayment({
+      id,
+      devTelegramId,
+      telegramInitData,
+    });
   }
 
   @Post('shipping')

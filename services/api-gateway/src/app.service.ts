@@ -1,6 +1,7 @@
 import {
   BadGatewayException,
   BadRequestException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -5807,6 +5808,68 @@ export class AppService {
       address: opts.address,
     });
     return { code: 0, message: 'ok', data: { saved: true } };
+  }
+
+  /** 管理员查看待确认付款订单 */
+  async paymentsPending(opts: { devTelegramId: string; telegramInitData: string }) {
+    const tgId = this.getTelegramId(opts.devTelegramId, opts.telegramInitData);
+    if (!tgId) throw new BadRequestException('missing telegram id');
+    const adminIds = this.adminTelegramIds();
+    if (!adminIds.includes(Number(tgId))) throw new ForbiddenException('not admin');
+    const items: any[] = [];
+    if (this.settlecoreDbReady()) {
+      try {
+        const pg = this.getOpsPg();
+        if (pg) {
+          const r = await pg.query(
+            `SELECT * FROM payments.settlecore_partner_orders WHERE status = $1 ORDER BY updated_at DESC LIMIT 50`,
+            ['pending'],
+          );
+          for (const row of r.rows || []) {
+            let hasProof = false;
+            try {
+              const pr = await pg.query(
+                `SELECT 1 FROM payments.payment_proofs WHERE display_id = $1 AND file_base64 IS NOT NULL AND file_base64 <> '' LIMIT 1`,
+                [row.display_id],
+              );
+              hasProof = (pr.rowCount || 0) > 0;
+            } catch { void 0; }
+            items.push({
+              display_id: row.display_id,
+              global_user_id: row.global_user_id,
+              amount: Number(row.amount || 0),
+              currency: row.currency || 'USD',
+              status: row.status,
+              has_proof: hasProof,
+              created_at: String(row.created_at || ''),
+            });
+          }
+        }
+      } catch { void 0; }
+    }
+    return { code: 0, message: 'ok', data: { items } };
+  }
+
+  /** 管理员确认收款 */
+  async confirmPayment(opts: { id: string; devTelegramId: string; telegramInitData: string }) {
+    const id = String(opts.id || '').trim();
+    if (!id) throw new BadRequestException('id required');
+    const tgId = this.getTelegramId(opts.devTelegramId, opts.telegramInitData);
+    if (!tgId) throw new BadRequestException('missing telegram id');
+    const adminIds = this.adminTelegramIds();
+    if (!adminIds.includes(Number(tgId))) throw new ForbiddenException('not admin');
+    if (this.settlecoreDbReady()) {
+      try {
+        const pg = this.getOpsPg();
+        if (pg) {
+          await pg.query(
+            `UPDATE payments.settlecore_partner_orders SET status = 'settled', settled_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE display_id = $1`,
+            [id],
+          );
+        }
+      } catch { void 0; }
+    }
+    return { code: 0, message: 'ok', data: { id, status: 'settled' } };
   }
 
   private findProductPoints(productId: number) {
