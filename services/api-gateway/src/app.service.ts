@@ -9017,7 +9017,7 @@ export class AppService {
       const costPoints = Number.isFinite(costPointsRaw) ? costPointsRaw : 3;
 
       // 2. Deduct wallet points (skip if free)
-      let spend = null;
+      let spend: any = null;
       if (costPoints > 0) {
         spend = await this.walletSpend(globalUserId, costPoints, `${idemKey}:spend`, 'claw_play');
       }
