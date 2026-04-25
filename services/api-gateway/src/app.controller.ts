@@ -456,20 +456,41 @@ export class AppController {
   }
 
   @Post('payments/:id/proof')
-  submitProof(@Param('id') id: string, @Body() body: any) {
+  submitProof(@Param('id') id: string, @Headers('x-dev-telegram-id') devTelegramId: string, @Body() body: any) {
     return this.appService.submitProof({
       id,
       proof_text: String(body?.proof_text || ''),
+      telegram_id: devTelegramId ? Number(devTelegramId) : undefined,
+      bundle: body?.bundle != null ? Number(body.bundle) : undefined,
     });
   }
 
   @Post('payments/:id/proof_file')
-  submitProofFile(@Param('id') id: string, @Body() body: any) {
+  submitProofFile(@Param('id') id: string, @Headers('x-dev-telegram-id') devTelegramId: string, @Body() body: any) {
     return this.appService.submitProofFile({
       id,
       mime_type: String(body?.mime_type || 'application/octet-stream'),
       file_base64: String(body?.file_base64 || ''),
+      telegram_id: devTelegramId ? Number(devTelegramId) : undefined,
+      bundle: body?.bundle != null ? Number(body.bundle) : undefined,
     });
+  }
+
+  @Get('payments/pending')
+  paymentsPending(
+    @Headers('x-dev-telegram-id') devTelegramId: string,
+    @Headers('x-telegram-init-data') telegramInitData: string,
+  ) {
+    return this.appService.paymentsPending({ devTelegramId, telegramInitData });
+  }
+
+  @Post('payments/:id/confirm')
+  confirmPayment(
+    @Param('id') id: string,
+    @Headers('x-dev-telegram-id') devTelegramId: string,
+    @Headers('x-telegram-init-data') telegramInitData: string,
+  ) {
+    return this.appService.confirmPayment({ id, devTelegramId, telegramInitData });
   }
 
   @Get('payments/:id/proof_file')

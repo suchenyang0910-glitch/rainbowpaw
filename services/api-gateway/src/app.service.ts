@@ -55,6 +55,8 @@ export class AppService {
   >();
 
   private settlecoreAckLoopStarted = false;
+  private _botPollingStarted = false;
+  private _botLastUpdateId = 0;
 
   private referralBotLink(bot: string, referralCode: string) {
     const code = String(referralCode || '').trim();
@@ -562,10 +564,12 @@ export class AppService {
     return rainbow;
   }
 
-  private async telegramSendMessage(chatId: number, text: string, inlineButtons?: { text: string; url: string }[]) {
+  private async telegramSendMessage(chatId: number, text: string, inlineButtons?: any[]) {
     const token = this.adminBotToken();
     if (!token) return;
     const url = `https://api.telegram.org/bot${token}/sendMessage`;
+    console.log('[DEBUG telegramSendMessage] chatId=' + chatId + ' inlineButtons=' + JSON.stringify(inlineButtons));
+    if (!this._botPollingStarted) { this._botPollingStarted = true; this._startBotPolling(); }
     const body: any = {
       chat_id: chatId,
       text,
@@ -573,7 +577,12 @@ export class AppService {
     };
     if (inlineButtons && inlineButtons.length) {
       body.reply_markup = {
-        inline_keyboard: inlineButtons.map((btn) => [{ text: btn.text, url: btn.url }]),
+        inline_keyboard: inlineButtons.map((btn: any) => {
+          const b: any = { text: btn.text };
+          if (btn.url) b.url = btn.url;
+          if (btn.callback_data) b.callback_data = btn.callback_data;
+          return [b];
+        }),
       };
     }
     await fetch(url, {
@@ -603,21 +612,35 @@ export class AppService {
         mapped = null;
       }
     }
+    // Try to fetch order details for richer notification
+    let orderInfo: any = null;
+    try {
+      const pg = this.getOpsPg();
+      if (pg) {
+        const r = await pg.query('SELECT display_id, amount, currency, telegram_username, telegram_id, bundle, item_name, created_at FROM payments.settlecore_partner_orders WHERE display_id = $1 LIMIT 1', [opts.displayId]);
+        if (r && r.rows && r.rows.length) orderInfo = r.rows[0];
+      }
+    } catch {}
     const lines = [
       '✅ 收到支付凭证',
-      `payment: ${opts.displayId}`,
-      mapped && mapped.partner_order_id ? `partner_order_id: ${mapped.partner_order_id}` : null,
-      mapped && mapped.global_user_id ? `global_user_id: ${mapped.global_user_id}` : null,
-      mapped && mapped.amount != null ? `amount: ${mapped.amount} ${mapped.currency || ''}` : null,
-      url ? `status: ${url}` : null,
-      opts.hasFile && proofUrl ? `proof_file: ${proofUrl}` : null,
+      `📋 订单号: ${opts.displayId}`,
+      orderInfo ? `⏰ 支付时间: ${orderInfo.created_at ? new Date(orderInfo.created_at).toLocaleString('zh-CN', {timeZone:'Asia/Phnom_Penh'}) : '---'}` : null,
+      orderInfo ? `👤 支付人: ${orderInfo.telegram_username ? '@' + orderInfo.telegram_username : 'ID:' + (orderInfo.telegram_id || '---')}` : null,
+      orderInfo ? `💰 支付金额: ${orderInfo.amount || '?'} ${orderInfo.currency || 'USD'}` : null,
+      orderInfo ? `📦 购买项目: ${orderInfo.item_name || '抽奖次数'} (${(orderInfo.bundle||1)*3} 次抽奖, ${(orderInfo.bundle||1)*9} 积分)` : null,
+      !orderInfo && mapped && mapped.amount != null ? `amount: ${mapped.amount} ${mapped.currency || ''}` : null,
       opts.proofText ? `proof_text: ${String(opts.proofText).slice(0, 500)}` : null,
     ].filter(Boolean);
     const text = lines.join('\n');
+    console.log('[DEBUG notifyAdminsPaymentProof] ids=' + JSON.stringify(ids));
+    const buttons: any[] = [];
+    if (base) {
+      buttons.push({ text: '✅ 确认支付订单', callback_data: 'confirm_payment:' + opts.displayId });
+    }
     await Promise.all(
       ids.map(async (id) => {
         try {
-          await this.telegramSendMessage(id, text);
+          await this.telegramSendMessage(id, text, buttons);
         } catch {
           void 0;
         }
@@ -5677,23 +5700,27 @@ export class AppService {
     };
   }
 
-  async submitProof(opts: { id: string; proof_text: string }) {
+  async submitProof(opts: { id: string; proof_text: string; telegram_id?: number; bundle?: number }) {
     const id = String(opts.id || '').trim();
     const proofText = String(opts.proof_text || '').trim();
     if (!id) throw new BadRequestException('id required');
     if (!proofText) throw new BadRequestException('proof_text required');
     if (proofText.length > 5000) throw new BadRequestException('proof_text too long');
+    const telegramId = opts.telegram_id != null ? Number(opts.telegram_id) : null;
+    const bundle = opts.bundle != null ? Number(opts.bundle) : 0;
     if (this.settlecoreDbReady()) {
       try {
         const pg = this.getOpsPg();
         if (!pg) throw new Error('missing pg');
         await pg.query(
-          `INSERT INTO payments.payment_proofs (display_id, proof_text)
-           VALUES ($1, $2)
+          `INSERT INTO payments.payment_proofs (display_id, proof_text, telegram_id, bundle)
+           VALUES ($1, $2, $3, $4)
            ON CONFLICT (display_id) DO UPDATE
              SET proof_text = EXCLUDED.proof_text,
+                 telegram_id = COALESCE(EXCLUDED.telegram_id, payments.payment_proofs.telegram_id),
+                 bundle = COALESCE(EXCLUDED.bundle, payments.payment_proofs.bundle),
                  updated_at = CURRENT_TIMESTAMP`,
-          [id, proofText],
+          [id, proofText, telegramId, bundle || 1],
         );
       } catch {
         void 0;
@@ -5721,6 +5748,8 @@ export class AppService {
     id: string;
     mime_type: string;
     file_base64: string;
+    telegram_id?: number;
+    bundle?: number;
   }) {
     if (!opts.file_base64)
       throw new BadRequestException('file_base64 required');
@@ -5772,6 +5801,201 @@ export class AppService {
     }
     await this.notifyAdminsPaymentProof({ displayId: id, hasFile: true, proofText });
     return { code: 0, message: 'ok', data: { id, status: 'pending' } };
+  }
+
+  async paymentsPending(opts: { devTelegramId: string; telegramInitData: string }) {
+    const tgId = this.getTelegramId(opts.devTelegramId, opts.telegramInitData);
+    if (!tgId) throw new BadRequestException('missing telegram id');
+    const adminIds = this.adminTelegramIds();
+    if (!adminIds.includes(Number(tgId))) throw new ForbiddenException('not admin');
+    const items: any[] = [];
+    if (this.settlecoreDbReady()) {
+      try {
+        const pg = this.getOpsPg();
+        if (pg) {
+          const r = await pg.query(`SELECT * FROM payments.settlecore_partner_orders WHERE status = $1 ORDER BY updated_at DESC LIMIT 50`, ['pending']);
+          for (const row of (r.rows || [])) {
+            let hasProof = false;
+            try {
+              const pr = await pg.query(`SELECT 1 FROM payments.payment_proofs WHERE display_id = $1 AND file_base64 IS NOT NULL AND file_base64 <> '' LIMIT 1`, [row.display_id]);
+              hasProof = (pr.rowCount || 0) > 0;
+            } catch { void 0; }
+            items.push({
+              display_id: row.display_id,
+              global_user_id: row.global_user_id,
+              amount: Number(row.amount || 0),
+              currency: row.currency || 'USD',
+              status: row.status,
+              has_proof: hasProof,
+              created_at: String(row.created_at || ''),
+            });
+          }
+        }
+      } catch { void 0; }
+    }
+    return { code: 0, message: 'ok', data: { items } };
+  }
+
+  async confirmPayment(opts: { id: string; devTelegramId: string; telegramInitData: string }) {
+    const id = String(opts.id || '').trim();
+    if (!id) throw new BadRequestException('id required');
+    const tgId = this.getTelegramId(opts.devTelegramId, opts.telegramInitData);
+    if (!tgId) throw new BadRequestException('missing telegram id');
+    const adminIds = this.adminTelegramIds();
+    if (!adminIds.includes(Number(tgId))) throw new ForbiddenException('not admin');
+    let globalUserId: string | null = null;
+    let userTgId: number | null = null;
+    let pointsToCredit = 0;
+    let bundle = 0;
+    if (this.settlecoreDbReady()) {
+      try {
+        const pg = this.getOpsPg();
+        if (pg) {
+          const r = await pg.query(`SELECT global_user_id, telegram_id, bundle FROM payments.settlecore_partner_orders WHERE display_id = $1 LIMIT 1`, [id]);
+          if (r && r.rows && r.rows.length) {
+            globalUserId = r.rows[0].global_user_id || null;
+            userTgId = r.rows[0].telegram_id != null ? Number(r.rows[0].telegram_id) : null;
+            bundle = r.rows[0].bundle != null ? Number(r.rows[0].bundle) : 0;
+          }
+          await pg.query(`UPDATE payments.settlecore_partner_orders SET status = 'settled', settled_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE display_id = $1`, [id]);
+        }
+      } catch { void 0; }
+    }
+    if (bundle > 0) {
+      pointsToCredit = bundle * 9;
+    }
+    if (globalUserId && pointsToCredit > 0) {
+      try {
+        const idemKey = `confirmPayment:${id}:${Date.now()}`;
+        await this.walletEarn(globalUserId, pointsToCredit, idemKey, 'admin_confirm');
+        if (userTgId) {
+          const msgText = `✅ 付款确认成功！已到账 ${pointsToCredit} 积分（${bundle * 3} 次抽奖机会）`;
+          await this.telegramSendMessage(userTgId, msgText);
+        }
+      } catch { void 0; }
+    }
+    return { code: 0, message: 'ok', data: { id, status: 'settled', points_credited: pointsToCredit, plays_added: bundle * 3 } };
+  }
+
+  private async _startBotPolling() {
+    const token = this.adminBotToken();
+    if (!token) return;
+    console.log('[BotPolling] started for admin confirm');
+    console.log('[BotPolling] initial offset=' + this._botLastUpdateId);
+    const pollOnce = async () => {
+      try {
+        const url = 'https://api.telegram.org/bot' + token + '/getUpdates?offset=' + this._botLastUpdateId + '&timeout=2';
+        const res = await fetch(url);
+        const data = await res.json();
+        if (!data.ok) {
+          console.log('[BotPolling] getUpdates error: ' + (data.error_code||'') + ' ' + (data.description||''));
+          setTimeout(pollOnce, 5000);
+          return;
+        }
+        if (data.result && data.result.length) {
+          for (const update of data.result) {
+            if (update.update_id >= this._botLastUpdateId) {
+              this._botLastUpdateId = update.update_id + 1;
+            }
+            const cq = update.callback_query;
+            if (!cq) continue;
+            const cqId = cq.id;
+            const cbData = String(cq.data || '');
+            const fromId = cq.from && cq.from.id ? Number(cq.from.id) : 0;
+            const msgChatId = cq.message && cq.message.chat ? cq.message.chat.id : 0;
+            const msgId = cq.message && cq.message.message_id ? cq.message.message_id : 0;
+            try {
+              const ansUrl = 'https://api.telegram.org/bot' + token + '/answerCallbackQuery';
+              await fetch(ansUrl, {
+                method: 'POST', headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ callback_query_id: cqId, text: '处理中...', show_alert: false }),
+              });
+            } catch {}
+            if (cbData.startsWith('confirm_payment:')) {
+              const paymentId = cbData.slice('confirm_payment:'.length).trim();
+              if (!paymentId) continue;
+              const adminIds = this.adminTelegramIds();
+              if (!adminIds.includes(fromId)) {
+                try {
+                  await fetch('https://api.telegram.org/bot' + token + '/answerCallbackQuery', {
+                    method: 'POST', headers: { 'content-type': 'application/json' },
+                    body: JSON.stringify({ callback_query_id: cqId, text: '你不是管理员', show_alert: true }),
+                  });
+                } catch {}
+                continue;
+              }
+              try {
+                const pg = this.getOpsPg();
+                let globalUserId: string | null = null;
+                let userTgId: number | null = null;
+                let bundle = 0;
+                let pointsToCredit = 0;
+                if (pg) {
+                  try {
+                    const r = await pg.query('SELECT global_user_id, telegram_id, bundle FROM payments.settlecore_partner_orders WHERE display_id = $1 LIMIT 1', [paymentId]);
+                    if (r && r.rows && r.rows.length) {
+                      globalUserId = r.rows[0].global_user_id || null;
+                      userTgId = r.rows[0].telegram_id != null ? Number(r.rows[0].telegram_id) : null;
+                      bundle = r.rows[0].bundle != null ? Number(r.rows[0].bundle) : 0;
+                    } else {
+                      const r2 = await pg.query('SELECT telegram_id, bundle, global_user_id FROM payments.payment_proofs WHERE display_id = $1 LIMIT 1', [paymentId]);
+                      if (r2 && r2.rows && r2.rows.length) {
+                        userTgId = r2.rows[0].telegram_id != null ? Number(r2.rows[0].telegram_id) : null;
+                        bundle = r2.rows[0].bundle != null ? Number(r2.rows[0].bundle) : 1;
+                        globalUserId = r2.rows[0].global_user_id || null;
+                        if (!globalUserId && userTgId) {
+                          try {
+                            const r3 = await pg.query('SELECT global_user_id FROM identity.global_users WHERE telegram_id = $1 LIMIT 1', [userTgId]);
+                            if (r3 && r3.rows && r3.rows.length) {
+                              globalUserId = r3.rows[0].global_user_id || null;
+                            }
+                          } catch {}
+                        }
+                      }
+                    }
+                    await pg.query("UPDATE payments.settlecore_partner_orders SET status = 'settled', settled_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE display_id = $1", [paymentId]);
+                  } catch {}
+                }
+                if (bundle > 0) pointsToCredit = bundle * 9;
+                if (globalUserId && pointsToCredit > 0) {
+                  try {
+                    await this.walletEarn(globalUserId, pointsToCredit, 'confirm_polling:' + paymentId + ':' + Date.now(), 'admin_confirm');
+                    if (userTgId) {
+                      await this.telegramSendMessage(userTgId, '✅ 付款确认成功！已到账 ' + pointsToCredit + ' 积分（' + (bundle * 3) + ' 次抽奖机会）');
+                    }
+                  } catch {}
+                }
+                if (msgChatId && msgId) {
+                  try {
+                    await fetch('https://api.telegram.org/bot' + token + '/editMessageText', {
+                      method: 'POST', headers: { 'content-type': 'application/json' },
+                      body: JSON.stringify({ chat_id: msgChatId, message_id: msgId, text: cq.message && cq.message.text ? cq.message.text : '✅ 已确认收款', reply_markup: { inline_keyboard: [] } }),
+                    });
+                  } catch {}
+                }
+                try {
+                  await fetch('https://api.telegram.org/bot' + token + '/answerCallbackQuery', {
+                    method: 'POST', headers: { 'content-type': 'application/json' },
+                    body: JSON.stringify({ callback_query_id: cqId, text: '✅ 确认成功！已通知用户', show_alert: true }),
+                  });
+                } catch {}
+              } catch (e: any) {
+                try {
+                  await fetch('https://api.telegram.org/bot' + token + '/answerCallbackQuery', {
+                    method: 'POST', headers: { 'content-type': 'application/json' },
+                    body: JSON.stringify({ callback_query_id: cqId, text: '确认失败: ' + String(e.message || e), show_alert: true }),
+                  });
+                } catch {}
+              }
+            }
+          }
+        }
+      } catch (e: any) {
+        console.log('[BotPolling] poll error: ' + (e.message||e));
+      }
+      setTimeout(pollOnce, 3000);
+    };
+    pollOnce();
   }
 
   async getProofFile(id: string) {
