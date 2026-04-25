@@ -4987,7 +4987,24 @@ export class AppService {
   }
 
   async orders(opts: { limit: number }) {
-    return { code: 0, message: 'ok', data: { orders: [] } };
+    try {
+      const pg = (this as any).getOpsPg();
+      if (!pg) return { code: 0, message: 'ok', data: { orders: [] } };
+      const limit = Math.max(1, Math.min(100, Number(opts.limit) || 30));
+      // Use query with fixed constant strings for source column
+      const r = await pg.query(
+        "SELECT id as order_id, display_id, (bundle * 1.5) as amount, bundle, 'proof'::text as source, status, created_at FROM payments.payment_proofs " +
+        "UNION ALL " +
+        "SELECT id as order_id, display_id, amount, bundle, 'order'::text as source, status, created_at FROM payments.settlecore_partner_orders " +
+        "ORDER BY created_at DESC LIMIT $1",
+        [limit]
+      );
+      const orders = (r && r.rows) || [];
+      return { code: 0, message: 'ok', data: { orders } };
+    } catch (e: any) {
+      console.error('orders error:', e.message);
+      return { code: 0, message: 'ok', data: { orders: [] } };
+    }
   }
 
   async groupsActive() {
