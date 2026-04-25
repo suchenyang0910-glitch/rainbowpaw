@@ -148,6 +148,7 @@ services:
       WALLET_SERVICE_URL: http://wallet-service:3002/api
       BRIDGE_SERVICE_URL: http://bridge-service:3003/api
       AI_ORCHESTRATOR_SERVICE_URL: http://ai-orchestrator:3005/api
+      CLAW_SERVICE_URL: http://claw-service:3005
       ENABLE_AI_RECOMMEND_ON_PLAY: ${ENABLE_AI_RECOMMEND_ON_PLAY:-false}
     depends_on:
       identity-service:
@@ -176,6 +177,7 @@ services:
       WALLET_SERVICE_URL: http://wallet-service:3002/api
       BRIDGE_SERVICE_URL: http://bridge-service:3003/api
       AI_ORCHESTRATOR_SERVICE_URL: http://ai-orchestrator:3005/api
+      CLAW_SERVICE_URL: http://claw-service:3005
       REPORT_SERVICE_URL: ${REPORT_SERVICE_URL:-http://localhost:3004/api}
       API_GATEWAY_URL: http://api-gateway:3012/api
       AI_ALERT_MIN_REQUESTS: ${AI_ALERT_MIN_REQUESTS:-20}

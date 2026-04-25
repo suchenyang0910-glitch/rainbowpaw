@@ -104,6 +104,7 @@ services:
       WALLET_SERVICE_URL: http://wallet-service:3002/api
       BRIDGE_SERVICE_URL: http://bridge-service:3003/api
       AI_ORCHESTRATOR_SERVICE_URL: http://ai-orchestrator:3005/api
+      CLAW_SERVICE_URL: http://host.docker.internal:13005
       ENABLE_AI_RECOMMEND_ON_PLAY: "false"
     depends_on:
       identity-service:

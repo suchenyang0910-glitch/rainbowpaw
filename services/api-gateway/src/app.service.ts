@@ -9014,10 +9014,13 @@ export class AppService {
       if (!activePool) throw new BadRequestException('No active claw pool');
 
       const costPointsRaw = Number(activePool.cost_points || 0);
-      const costPoints = Number.isFinite(costPointsRaw) && costPointsRaw > 0 ? costPointsRaw : 3;
+      const costPoints = Number.isFinite(costPointsRaw) ? costPointsRaw : 3;
 
-      // 2. Deduct wallet points
-      const spend = await this.walletSpend(globalUserId, costPoints, `${idemKey}:spend`, 'claw_play');
+      // 2. Deduct wallet points (skip if free)
+      let spend = null;
+      if (costPoints > 0) {
+        spend = await this.walletSpend(globalUserId, costPoints, `${idemKey}:spend`, 'claw_play');
+      }
 
       // 3. Play the claw
       let playRes: any;
