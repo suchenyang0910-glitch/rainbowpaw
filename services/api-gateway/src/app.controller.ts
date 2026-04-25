@@ -475,37 +475,6 @@ export class AppController {
       bundle: body?.bundle != null ? Number(body.bundle) : undefined,
     });
   }
-
-  @Get('payments/pending')
-  paymentsPending(
-    @Headers('x-dev-telegram-id') devTelegramId: string,
-    @Headers('x-telegram-init-data') telegramInitData: string,
-  ) {
-    return this.appService.paymentsPending({ devTelegramId, telegramInitData });
-  }
-
-  @Post('payments/:id/confirm')
-  confirmPayment(
-    @Param('id') id: string,
-    @Headers('x-dev-telegram-id') devTelegramId: string,
-    @Headers('x-telegram-init-data') telegramInitData: string,
-  ) {
-    return this.appService.confirmPayment({ id, devTelegramId, telegramInitData });
-  }
-
-  @Get('payments/:id/proof_file')
-  async paymentProofFile(@Param('id') id: string, @Res() res: Response) {
-    const file = await this.appService.getProofFile(id);
-    if (!file || !file.file_base64) {
-      res.status(404).send('');
-      return;
-    }
-
-    const buf = Buffer.from(file.file_base64 || '', 'base64');
-    res.setHeader('content-type', file.mime_type || 'application/octet-stream');
-    res.status(200).send(buf);
-  }
-
   @Post('payments/:id/confirm')
   confirmPayment(
     @Param('id') id: string,
@@ -516,21 +485,6 @@ export class AppController {
       id,
       devTelegramId,
       telegramInitData,
-    });
-  }
-
-  @Post('shipping')
-  saveShipping(
-    @Headers('x-dev-telegram-id') devTelegramId: string,
-    @Headers('x-telegram-init-data') telegramInitData: string,
-    @Body() body: any,
-  ) {
-    return this.appService.saveShipping({
-      devTelegramId,
-      telegramInitData,
-      name: String(body?.name || ''),
-      phone: String(body?.phone || ''),
-      address: String(body?.address || ''),
     });
   }
 
@@ -1323,13 +1277,18 @@ export class AppController {
   }
 
   @Post('claw/recycle')
-  apiClawRecycle(@Headers('x-idempotency-key') idempotencyKey: string, @Body() body: any) {
+  apiClawRecycle(
+    @Headers('x-dev-telegram-id') devTelegramId: string,
+    @Headers('x-telegram-init-data') telegramInitData: string,
+    @Headers('x-idempotency-key') idempotencyKey: string,
+    @Body() body: any,
+  ) {
     const b: any = body || {};
-    const global_user_id = String(b.global_user_id || b.globalUserId || '').trim();
     const play_id = String(b.play_id || b.playId || '').trim();
     const origin_points = b.origin_points != null ? Number(b.origin_points) : b.originPoints != null ? Number(b.originPoints) : null;
-    return this.appService.clawRecycle({
-      global_user_id,
+    return this.appService.clawRecycleWithUser({
+      devTelegramId,
+      telegramInitData,
       play_id,
       origin_points,
       idempotency_key: String(idempotencyKey || '').trim(),

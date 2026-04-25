@@ -9107,6 +9107,32 @@ export class AppService {
     }
   }
 
+  async clawRecycleWithUser(opts: {
+    devTelegramId: string;
+    telegramInitData: string;
+    play_id?: string;
+    origin_points?: number | null;
+    idempotency_key?: string;
+  }) {
+    try {
+      const tg = this.getTelegramUserInfo(
+        opts.devTelegramId,
+        opts.telegramInitData,
+      );
+      if (!tg) throw new BadRequestException('missing telegram id');
+      const linked = await this.linkUser(tg);
+      return await this.clawRecycle({
+        global_user_id: linked.global_user_id,
+        play_id: opts.play_id,
+        origin_points: opts.origin_points,
+        idempotency_key: opts.idempotency_key,
+      });
+    } catch (error: any) {
+      throw new BadGatewayException(error?.response?.data || error.message);
+    }
+  }
+
+
   async bridgeResolve(payload: { token: string }) {
     try {
       const res = await axios.get(
@@ -9328,7 +9354,7 @@ export class AppService {
             { global_user_id: globalUserId },
             { headers: { authorization: `Bearer ${this.INTERNAL_TOKEN}` } }
           );
-          const recycledPoints = recycleRes.data?.data?.recycled_points || 0;
+          const recycledPoints = recycleRes.data?.data?.recycled_points || recycleRes.data?.data?.redeem_points || 0;
 
           if (recycledPoints > 0) {
             await this.walletRecycle(globalUserId, Number(recycledPoints), `${idemKey}:recycle`, origin);
