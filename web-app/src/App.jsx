@@ -795,6 +795,26 @@ const HomePage = ({ me, onPlay, products, onSelectProduct, orders, activeGroups,
         </div>
       ) : null}
 
+      {/* Plays 不足提醒横幅 */}
+      {user && user.plays_left !== undefined && user.plays_left <= 3 ? (
+        <div className="px-4 mt-4">
+          <div className="bg-gradient-to-r from-red-500 to-orange-500 rounded-2xl p-4 shadow-lg flex items-center justify-between">
+            <div>
+              <p className="text-sm font-black text-white">🎯 抽奖次数不足</p>
+              <p className="text-[10px] text-white/80 mt-1">
+                {user.plays_left === 0 ? "当前没有免费抽奖次数，购买即可继续" : "还剩 " + user.plays_left + " 次免费抽奖，购买更多继续玩"}
+              </p>
+            </div>
+            <button
+              onClick={() => onGoTab && onGoTab("wallet")}
+              className="bg-white text-red-600 px-5 py-2.5 rounded-xl text-xs font-black shadow-lg active:scale-95 transition-transform"
+            >
+              立即购买 »
+            </button>
+          </div>
+        </div>
+      ) : null}
+
       <div className="bg-orange-50 py-1.5 overflow-hidden border-y border-orange-100">
         <div className="whitespace-nowrap flex gap-8 animate-marquee text-xs text-orange-600 font-medium">
           <span>🎉 恭喜 @CryptoKing 抽中了 Legendary 盲盒!</span>
@@ -1238,12 +1258,39 @@ const WalletPage = ({ wallet, logs, pricing, pay, onBuyPlays, onSubmitProof, t }
             <button onClick={() => handleCopy(`${(pay && pay.abaName) || ''} ${(pay && pay.abaId) || ''}`.trim())} className="p-2 text-blue-500 bg-blue-50 rounded-lg"><Copy size={16} /></button>
           </div>
           <div className="bg-white p-3 rounded-xl flex justify-between items-center border border-gray-100">
-            <div className="flex-1 pr-3">
+          <div className="flex-1 pr-3">
               <p className="text-[10px] text-gray-400 uppercase font-bold">USDT (TRC20)</p>
-              <p className="text-xs font-mono font-bold break-all">{pay && pay.usdtTrc20Address ? pay.usdtTrc20Address : '-'}</p>
+              <p className="text-xs font-mono font-bold break-all">{pay && pay.usdtTrc20Address ? pay.usdtTrc20Address : "-"}</p>
             </div>
-            <button onClick={() => handleCopy((pay && pay.usdtTrc20Address) || '')} className="p-2 text-blue-500 bg-blue-50 rounded-lg"><Copy size={16} /></button>
+            <button onClick={() => handleCopy((pay && pay.usdtTrc20Address) || "")} className="p-2 text-blue-500 bg-blue-50 rounded-lg"><Copy size={16} /></button>
           </div>
+          {/* ABA PayLink 按钮 */}
+          {pay && pay.payLink ? (
+            <a
+              href={pay.payLink}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="block bg-gradient-to-r from-blue-500 to-blue-600 text-white rounded-2xl p-4 text-center font-bold shadow-lg active:scale-95 transition-transform"
+            >
+              <span className="block text-sm">🏦 用 ABA App 支付</span>
+              <span className="block text-[10px] opacity-80 mt-1">点击跳转 ABA 支付页面</span>
+            </a>
+          ) : null}
+          {/* USDT 二维码 */}
+          {pay && pay.usdtTrc20Address ? (
+            <div className="bg-white p-3 rounded-xl border border-gray-100 text-center mt-3">
+              <p className="text-[10px] text-gray-400 uppercase font-bold mb-2">USDT 收款码</p>
+              <img
+                src={"https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=" + encodeURIComponent(pay.usdtTrc20Address)}
+                alt="USDT QR Code"
+                className="mx-auto rounded-lg"
+                width="150"
+                height="150"
+                style={{ imageRendering: "pixelated" }}
+              />
+              <p className="text-[8px] text-gray-400 mt-2">TRC20 网络，扫码或复制地址转账</p>
+            </div>
+          ) : null}
           <div className="flex gap-2">
             <input value={manualId} onChange={(e) => setManualId(e.target.value)} type="text" placeholder="输入 payment_id / order_id" className="flex-1 bg-white border border-gray-200 rounded-xl px-4 py-2 text-xs focus:ring-2 focus:ring-blue-500 outline-none" />
           </div>
