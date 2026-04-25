@@ -1372,7 +1372,7 @@ export class AppService {
         },
         wallet,
         pricing: { playUsd: 1.5, bundle3xUsd: 4, bundle10xUsd: 13 },
-        pay: { usdtTrc20Address, abaName, abaId },
+        pay: { usdtTrc20Address, abaName, abaId, payLink: process.env.ABA_PAYLINK || '' },
         links: {
           referral: `https://t.me/rainbowpay_claw_Bot?start=${referralCode}`,
         },
