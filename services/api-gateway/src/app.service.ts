@@ -1366,7 +1366,7 @@ export class AppService {
         },
         user: {
           global_user_id: linked.global_user_id,
-          plays_left: 0,
+          plays_left: Math.max(0, Math.floor(Number(wallet?.points_total || 0) / 3)),
           state: 'idle',
           referral_code: referralCode,
         },
@@ -1565,7 +1565,7 @@ export class AppService {
     return {
       code: 0,
       message: 'ok',
-      data: { plays, plays_left: 0, wallet, ai_recommendation },
+      data: { plays, plays_left: Math.max(0, Math.floor(Number(wallet?.points_total || 0) / 3)), wallet, ai_recommendation },
     };
   }
 
