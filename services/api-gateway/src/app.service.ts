@@ -1374,6 +1374,25 @@ export class AppService {
       }
     }
 
+    // If dev mode and username is empty, try to fill from database
+    if (!tg.username && !tg.first_name) {
+      try {
+        const pg = this.getOpsPg();
+        if (pg) {
+          const r = await pg.query(
+            'SELECT username FROM identity.global_users WHERE telegram_id = $1 LIMIT 1',
+            [tg.telegram_id],
+          );
+          if (r.rows.length > 0 && r.rows[0].username) {
+            tg.username = String(r.rows[0].username || '').trim();
+            tg.first_name = tg.username;
+          }
+        }
+      } catch {
+        // silently fall back
+      }
+    }
+
     let referralCode = `ref_${String(linked.global_user_id).slice(0, 8)}`;
     try {
       if (this.getOpsPg()) {
