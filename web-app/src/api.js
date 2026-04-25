@@ -320,6 +320,9 @@ export const api = {
   memorialDetail(id) {
     return apiFetch(`/memorial/${encodeURIComponent(String(id))}`)
   },
+  recyclePlay(playId, originPoints) {
+    return apiFetch('/claw/recycle', { method: 'POST', body: { play_id: playId, origin_points: originPoints }, timeoutMs: 15000 })
+  },
   memorialLightCandle(globalUserId, memorialId) {
     return apiFetch(`/memorial/${encodeURIComponent(String(memorialId))}/candle`, {
       method: 'POST',

@@ -478,7 +478,7 @@ const ProductModal = ({ t, product, onClose, onDirectBuy, onGroupBuy }) => {
   )
 }
 
-const PlayResultModal = ({ data, onClose, onGoOrders, onOpenShipping, needShipping, onGoShop, t }) => {
+const PlayResultModal = ({ data, onClose, onGoOrders, onOpenShipping, needShipping, onGoShop, t, api }) => {
   const plays = Array.isArray(data && data.plays) ? data.plays : []
   const total = plays.length
   const title = total > 1 ? `🎉 连抽结果 (${total}x)` : '🎉 抽奖结果'
@@ -624,7 +624,26 @@ const PlayResultModal = ({ data, onClose, onGoOrders, onOpenShipping, needShippi
           </div>
         </div>
 
-        <div className="mt-4 grid grid-cols-2 gap-3">
+        <div className="mt-4 grid grid-cols-3 gap-2">
+          <button onClick={async () => {
+            if (!api || !plays.length) return
+            try {
+              const allRecycled = await Promise.allSettled(
+                plays.map((p) => p && p.play_id ? api.recyclePlay(p.play_id, 3).catch(() => null) : Promise.resolve(null))
+              )
+              const ok = allRecycled.filter((r) => r.status === 'fulfilled' && r.value)
+              if (ok.length > 0) {
+                alert(`✅ 回收成功！共返还 ${ok.length} 次奖品的积分`)
+              } else {
+                alert('❌ 回收失败，请重试')
+              }
+              onClose && onClose()
+            } catch (err) {
+              alert('回收失败: ' + (err && err.message ? err.message : '未知错误'))
+            }
+          }} className="bg-green-600 text-white py-3 rounded-2xl text-xs font-black active:bg-green-700">
+            🔄 全部回收
+          </button>
           <button onClick={() => onGoOrders && onGoOrders()} className="bg-gray-900 text-white py-3 rounded-2xl text-xs font-black">
             去订单
           </button>
@@ -695,17 +714,39 @@ const PlayResultModal = ({ data, onClose, onGoOrders, onOpenShipping, needShippi
                           <p className="text-[10px] text-gray-400 truncate">order_id: {x && x.order_id ? x.order_id : '-'}</p>
                         </div>
                       </div>
-                      <button
-                        onClick={async (e) => {
-                          e.preventDefault()
-                          e.stopPropagation()
-                          const ok = await safeCopy(x && x.order_id ? x.order_id : '')
-                          if (!ok) return
-                        }}
-                        className="relative mt-3 w-full bg-gray-100 text-gray-700 py-2 rounded-xl text-[10px] font-bold"
-                      >
-                        {t ? t('order.copyId') : '复制订单号'}
-                      </button>
+                      <div className="relative mt-3 flex gap-2">
+                        <button
+                          onClick={async (e) => {
+                            e.preventDefault()
+                            e.stopPropagation()
+                            const ok = await safeCopy(x && x.order_id ? x.order_id : '')
+                            if (!ok) return
+                          }}
+                          className="flex-1 bg-gray-100 text-gray-700 py-2 rounded-xl text-[10px] font-bold"
+                        >
+                          {t ? t('order.copyId') : '复制单号'}
+                        </button>
+                        <button
+                          onClick={async (e) => {
+                            e.preventDefault()
+                            e.stopPropagation()
+                            if (!api) return
+                            const playId = x && x.play_id ? x.play_id : ''
+                            if (!playId) return
+                            try {
+                              const res = await api.recyclePlay(playId, 3)
+                              const pts = res && res.recyclePoints != null ? Number(res.recyclePoints).toFixed(1) : '2.4'
+                              alert(`✅ 回购成功！返还 $${pts} 积分`)
+                              onClose && onClose()
+                            } catch (err) {
+                              alert('回购失败: ' + (err && err.message ? err.message : '未知错误'))
+                            }
+                          }}
+                          className="flex-1 bg-green-50 text-green-700 py-2 rounded-xl text-[10px] font-bold border border-green-100"
+                        >
+                          🔄 回购
+                        </button>
+                      </div>
                       {isLegendary ? <div className="legendary-shine" /> : null}
                     </div>
                   </div>
@@ -2063,7 +2104,7 @@ export default function App() {
           buyPlays(bundle)
         }}
       />
-      <PlayResultModal t={t} data={playResultModal} onClose={() => setPlayResultModal(null)} onGoOrders={() => { setPlayResultModal(null); setActiveTab('profile') }} onOpenShipping={openShippingModal} needShipping={needShipping} onGoShop={openRainbowMiniApp} />
+      <PlayResultModal t={t} data={playResultModal} onClose={() => setPlayResultModal(null)} onGoOrders={() => { setPlayResultModal(null); setActiveTab('profile') }} onOpenShipping={openShippingModal} needShipping={needShipping} onGoShop={openRainbowMiniApp} api={api} />
       {toast ? (
         <div className="fixed bottom-24 left-1/2 -translate-x-1/2 bg-gray-800 text-white text-xs px-4 py-2 rounded-full animate-in fade-in slide-in-from-bottom duration-300">{toast}</div>
       ) : null}

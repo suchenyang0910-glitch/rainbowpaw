@@ -569,7 +569,6 @@ export class AppService {
     if (!token) return;
     const url = `https://api.telegram.org/bot${token}/sendMessage`;
     console.log('[DEBUG telegramSendMessage] chatId=' + chatId + ' inlineButtons=' + JSON.stringify(inlineButtons));
-    if (!this._botPollingStarted) { this._botPollingStarted = true; this._startBotPolling(); }
     const body: any = {
       chat_id: chatId,
       text,
@@ -617,20 +616,20 @@ export class AppService {
     try {
       const pg = this.getOpsPg();
       if (pg) {
-        const r = await pg.query('SELECT display_id, amount, currency, telegram_username, telegram_id, bundle, item_name, created_at FROM payments.settlecore_partner_orders WHERE display_id = $1 LIMIT 1', [opts.displayId]);
+        const r = await pg.query('SELECT display_id, amount, currency, telegram_id, bundle, product_code, created_at FROM payments.settlecore_partner_orders WHERE display_id = $1 LIMIT 1', [opts.displayId]);
         if (r && r.rows && r.rows.length) orderInfo = r.rows[0];
       }
     } catch {}
-    const lines = [
-      '✅ 收到支付凭证',
-      `📋 订单号: ${opts.displayId}`,
-      orderInfo ? `⏰ 支付时间: ${orderInfo.created_at ? new Date(orderInfo.created_at).toLocaleString('zh-CN', {timeZone:'Asia/Phnom_Penh'}) : '---'}` : null,
-      orderInfo ? `👤 支付人: ${orderInfo.telegram_username ? '@' + orderInfo.telegram_username : 'ID:' + (orderInfo.telegram_id || '---')}` : null,
-      orderInfo ? `💰 支付金额: ${orderInfo.amount || '?'} ${orderInfo.currency || 'USD'}` : null,
-      orderInfo ? `📦 购买项目: ${orderInfo.item_name || '抽奖次数'} (${(orderInfo.bundle||1)*3} 次抽奖, ${(orderInfo.bundle||1)*9} 积分)` : null,
-      !orderInfo && mapped && mapped.amount != null ? `amount: ${mapped.amount} ${mapped.currency || ''}` : null,
-      opts.proofText ? `proof_text: ${String(opts.proofText).slice(0, 500)}` : null,
-    ].filter(Boolean);
+          const lines = [
+        '✅ 收到支付凭证',
+        `📋 订单号: ${opts.displayId}`,
+        orderInfo ? `⏰ 支付时间: ${orderInfo.created_at ? new Date(orderInfo.created_at).toLocaleString('zh-CN', {timeZone:'Asia/Phnom_Penh'}) : '---'}` : null,
+        orderInfo ? `👤 支付人: ${orderInfo.telegram_id || '---'}` : null,
+        orderInfo ? `💰 支付金额: ${orderInfo.amount || '?'}$` : null,
+        orderInfo ? `📦 购买项目: ${orderInfo.bundle || 1}次抽奖` : null,
+        !orderInfo && mapped && mapped.amount != null ? `amount: ${mapped.amount} ${mapped.currency || ''}` : null,
+        opts.proofText ? `proof_text: ${String(opts.proofText).slice(0, 500)}` : null,
+      ].filter(Boolean);
     const text = lines.join('\n');
     console.log('[DEBUG notifyAdminsPaymentProof] ids=' + JSON.stringify(ids));
     const buttons: any[] = [];
@@ -6033,6 +6032,109 @@ export class AppService {
     if (!opts.name || !opts.phone || !opts.address)
       throw new BadRequestException('invalid shipping');
     this.shippingByTelegramId.set(tgId, {
+      name: opts.name,
+      phone: opts.phone,
+      address: opts.address,
+    });
+    return { code: 0, message: 'ok', data: { saved: true } };
+  }
+  private findProductPoints(productId: number) {
+    const list = [
+      { id: 101, points: 10 },
+      { id: 102, points: 25 },
+    ];
+    return list.find((p) => p.id === productId) || null;
+  }
+
+  async purchaseDirect(opts: {
+    devTelegramId: string;
+    telegramInitData: string;
+    product_id: number;
+    idempotency_key?: string;
+  }) {
+    const tg = this.getTelegramUserInfo(
+      opts.devTelegramId,
+      opts.telegramInitData,
+    );
+    if (!tg) throw new BadRequestException('missing telegram id');
+    const linked = await this.linkUser(tg);
+    const p = this.findProductPoints(opts.product_id);
+    if (!p) throw new BadRequestException('invalid product_id');
+
+    const idem = String(opts.idempotency_key || '').trim();
+    const idemKey = idem
+      ? `purchaseDirect:${linked.global_user_id}:${opts.product_id}:${idem}`
+      : '';
+    return this.runIdempotent(idemKey, 10 * 60 * 1000, async () => {
+      try {
+        await this.walletSpend(
+          linked.global_user_id,
+          p.points,
+          idem
+            ? `direct:${linked.global_user_id}:${opts.product_id}:${idem}`
+            : `direct:${linked.global_user_id}:${opts.product_id}:${Date.now()}`,
+          'store_consume',
+        );
+      } catch (e: any) {
+        if (this.isInsufficientPointsError(e))
+          throw new BadRequestException('insufficient points');
+        throw new BadGatewayException('wallet service unavailable');
+      }
+      let wallet: any = null;
+      try {
+        wallet = await this.getWallet(linked.global_user_id);
+      } catch {
+        wallet = null;
+      }
+      return {
+        code: 0,
+        message: 'ok',
+        data: { order_id: idem ? `so_${this.hashShort(idem)}` : `so_${Date.now()}`, wallet },
+      };
+    });
+  }
+
+  async purchaseGroup(opts: {
+    devTelegramId: string;
+    telegramInitData: string;
+    product_id: number;
+    idempotency_key?: string;
+  }) {
+    const tg = this.getTelegramUserInfo(
+      opts.devTelegramId,
+      opts.telegramInitData,
+    );
+    if (!tg) throw new BadRequestException('missing telegram id');
+    const linked = await this.linkUser(tg);
+    const p = this.findProductPoints(opts.product_id);
+    if (!p) throw new BadRequestException('invalid product_id');
+    const idem = String(opts.idempotency_key || '').trim();
+    const idemKey = idem
+      ? `purchaseGroup:${linked.global_user_id}:${opts.product_id}:${idem}`
+      : '';
+    return this.runIdempotent(idemKey, 10 * 60 * 1000, async () => {
+      return {
+        code: 0,
+        message: 'ok',
+        data: {
+          group_id: idem ? `g_${this.hashShort(idem)}` : `g_${Date.now()}`,
+          product_id: p.id,
+          points: p.points,
+          global_user_id: linked.global_user_id,
+        },
+      };
+    });
+  }
+
+  async createGroup(opts: { product_id: number }) {
+    const p = this.findProductPoints(opts.product_id);
+    if (!p) throw new BadRequestException('invalid product_id');
+    return {
+      code: 0,
+      message: 'ok',
+      data: { group_id: `g_${Date.now()}`, product_id: p.id },
+    };
+  }
 
   async joinGroup(opts: { groupId: string }) {
     return {
