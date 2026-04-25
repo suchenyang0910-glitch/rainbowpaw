@@ -562,18 +562,24 @@ export class AppService {
     return rainbow;
   }
 
-  private async telegramSendMessage(chatId: number, text: string) {
+  private async telegramSendMessage(chatId: number, text: string, inlineButtons?: { text: string; url: string }[]) {
     const token = this.adminBotToken();
     if (!token) return;
     const url = `https://api.telegram.org/bot${token}/sendMessage`;
+    const body: any = {
+      chat_id: chatId,
+      text,
+      disable_web_page_preview: true,
+    };
+    if (inlineButtons && inlineButtons.length) {
+      body.reply_markup = {
+        inline_keyboard: inlineButtons.map((btn) => [{ text: btn.text, url: btn.url }]),
+      };
+    }
     await fetch(url, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: chatId,
-        text,
-        disable_web_page_preview: true,
-      }),
+      body: JSON.stringify(body),
     });
   }
 
@@ -5858,10 +5864,25 @@ export class AppService {
     if (!tgId) throw new BadRequestException('missing telegram id');
     const adminIds = this.adminTelegramIds();
     if (!adminIds.includes(Number(tgId))) throw new ForbiddenException('not admin');
+
+    let globalUserId: string | null = null;
+    let userTgId: number | null = null;
+    let pointsToCredit: number = 0;
+    let bundle: number = 0;
+
     if (this.settlecoreDbReady()) {
       try {
         const pg = this.getOpsPg();
         if (pg) {
+          const r = await pg.query(
+            `SELECT global_user_id, telegram_id, bundle FROM payments.settlecore_partner_orders WHERE display_id = $1 LIMIT 1`,
+            [id],
+          );
+          if (r && r.rows && r.rows.length) {
+            globalUserId = r.rows[0].global_user_id || null;
+            userTgId = r.rows[0].telegram_id != null ? Number(r.rows[0].telegram_id) : null;
+            bundle = r.rows[0].bundle != null ? Number(r.rows[0].bundle) : 0;
+          }
           await pg.query(
             `UPDATE payments.settlecore_partner_orders SET status = 'settled', settled_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE display_id = $1`,
             [id],
@@ -5869,7 +5890,23 @@ export class AppService {
         }
       } catch { void 0; }
     }
-    return { code: 0, message: 'ok', data: { id, status: 'settled' } };
+
+    if (bundle > 0) {
+      pointsToCredit = bundle * 9;
+    }
+
+    if (globalUserId && pointsToCredit > 0) {
+      try {
+        const idemKey = `confirmPayment:${id}:${Date.now()}`;
+        await this.walletEarn(globalUserId, pointsToCredit, idemKey, 'admin_confirm');
+        if (userTgId) {
+          const msgText = `✅ 付款确认成功！已到账 ${pointsToCredit} 积分（${bundle * 3} 次抽奖机会）`;
+          await this.telegramSendMessage(userTgId, msgText);
+        }
+      } catch { void 0; }
+    }
+
+    return { code: 0, message: 'ok', data: { id, status: 'settled', points_credited: pointsToCredit, plays_added: bundle * 3 } };
   }
 
   private findProductPoints(productId: number) {
