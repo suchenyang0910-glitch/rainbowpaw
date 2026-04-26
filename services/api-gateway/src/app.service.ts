@@ -1,9431 +1,17834 @@
 import {
+
   BadGatewayException,
+
   BadRequestException,
+
   ForbiddenException,
+
   Injectable,
+
   NotFoundException,
+
 } from '@nestjs/common';
+
 import axios from 'axios';
+
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'crypto';
+
 import { Pool } from 'pg';
+
 import type { QueryResult, QueryResultRow } from 'pg';
 
 type TelegramWebAppUser = {
+
   id: number;
+
   username?: string;
+
   first_name?: string;
+
   last_name?: string;
+
   language_code?: string;
+
   [k: string]: any;
+
 };
 
 type TelegramUserInfo = {
+
   telegram_id: number;
+
   username: string;
+
   first_name: string;
+
   last_name: string;
+
   source_bot: 'rainbow_bot' | 'claw_bot' | 'dev' | 'unknown';
+
 };
 
 @Injectable()
+
 export class AppService {
+
   private readonly INTERNAL_TOKEN = process.env.INTERNAL_TOKEN || 'dev-internal-token';
+
   private readonly BRIDGE_SERVICE_URL = process.env.BRIDGE_SERVICE_URL || 'http://localhost:3003';
+
   private readonly WALLET_SERVICE_URL = process.env.WALLET_SERVICE_URL || 'http://localhost:3002';
+
   private readonly IDENTITY_SERVICE_URL = process.env.IDENTITY_SERVICE_URL || 'http://localhost:3001';
+
   private readonly ORDER_SERVICE_URL = process.env.ORDER_SERVICE_URL || 'http://localhost:3004';
+
   private readonly CLAW_SERVICE_URL = process.env.CLAW_SERVICE_URL || 'http://localhost:3005';
+
   private readonly STORE_SERVICE_URL = process.env.STORE_SERVICE_URL || 'http://localhost:3006';
+
   private readonly SERVICE_SERVICE_URL = process.env.SERVICE_SERVICE_URL || 'http://localhost:3007';
+
   private readonly RISK_SERVICE_URL = process.env.RISK_SERVICE_URL || 'http://localhost:3008';
+
   private readonly AI_ORCHESTRATOR_URL = process.env.AI_ORCHESTRATOR_URL || 'http://localhost:3009';
 
   private opsPg: Pool | null = null;
+
   private paymentProofFiles = new Map<
+
     string,
+
     { mime_type: string; file_base64: string }
+
   >();
+
   private idempotencyCache = new Map<
+
     string,
+
     { expiresAt: number; promise: Promise<any> }
+
   >();
+
   private shippingByTelegramId = new Map<
+
     number,
+
     { name: string; phone: string; address: string }
+
   >();
 
   private settlecoreAckLoopStarted = false;
+
   private _botPollingStarted = false;
+
   private _botLastUpdateId = 0;
 
   private referralBotLink(bot: string, referralCode: string) {
+
     const code = String(referralCode || '').trim();
+
     if (!code) return '';
+
     const b = String(bot || '').trim().toLowerCase();
+
     if (b === 'rainbow' || b === 'rainbowpaw') return `https://t.me/RainbowPawbot?start=${encodeURIComponent(code)}`;
+
     return `https://t.me/rainbowpay_claw_Bot?start=${encodeURIComponent(code)}`;
+
   }
 
   private async opsEnsureReferralCode(opts: { globalUserId: string }) {
+
     const globalUserId = String(opts.globalUserId || '').trim();
+
     if (!globalUserId) throw new BadRequestException('global_user_id required');
+
     const raw = `ref_${globalUserId.slice(0, 8)}`;
+
     const preferred = raw;
+
     const pg = this.getOpsPg();
+
     if (!pg) throw new BadRequestException('db not configured');
 
     const check = await this.opsQuery<{ global_user_id: string }>(
+
       `SELECT global_user_id FROM ops.referral_codes WHERE referral_code = $1 LIMIT 1`,
+
       [preferred],
+
     );
+
     if (check.rowCount && String(check.rows[0].global_user_id) !== globalUserId) {
+
       const alt = `ref_${this.hashShort(globalUserId)}`;
+
       await this.opsQuery(
+
         `INSERT INTO ops.referral_codes(referral_code, global_user_id)
+
          VALUES ($1,$2)
+
          ON CONFLICT (referral_code)
+
          DO UPDATE SET global_user_id = EXCLUDED.global_user_id, updated_at = CURRENT_TIMESTAMP`,
+
         [alt, globalUserId],
+
       );
+
       return { referral_code: alt };
+
     }
 
     await this.opsQuery(
+
       `INSERT INTO ops.referral_codes(referral_code, global_user_id)
+
        VALUES ($1,$2)
+
        ON CONFLICT (referral_code)
+
        DO UPDATE SET global_user_id = EXCLUDED.global_user_id, updated_at = CURRENT_TIMESTAMP`,
+
       [preferred, globalUserId],
+
     );
+
     return { referral_code: preferred };
+
   }
 
   async referralEnsure(opts: { global_user_id: string; bot?: string }) {
+
     const globalUserId = String(opts.global_user_id || '').trim();
+
     const bot = String(opts.bot || 'claw').trim();
+
     const rec = await this.opsEnsureReferralCode({ globalUserId });
+
     return {
+
       code: 0,
+
       message: 'ok',
+
       data: {
+
         referral_code: rec.referral_code,
+
         link: this.referralBotLink(bot, rec.referral_code),
+
       },
+
     };
+
   }
 
   async referralConsume(opts: {
+
     invitee_global_user_id: string;
+
     referral_code: string;
+
     stage: string;
+
     source_bot: string;
+
     idempotency_key?: string;
+
   }) {
+
     const invitee = String(opts.invitee_global_user_id || '').trim();
+
     const code = String(opts.referral_code || '').trim();
+
     const stage = String(opts.stage || 'start').trim().toLowerCase();
+
     const sourceBot = String(opts.source_bot || 'claw_bot').trim();
+
     if (!invitee) throw new BadRequestException('invitee_global_user_id required');
+
     if (!code || !code.startsWith('ref_')) {
+
       return { code: 0, message: 'ok', data: { status: 'noop' } };
+
     }
 
     const idem = String(opts.idempotency_key || '').trim();
+
     const idemKey = idem ? `ref_consume:${invitee}:${stage}:${idem}` : `ref_consume:${invitee}:${stage}`;
+
     return this.runIdempotent(idemKey, 10 * 60 * 1000, async () => {
+
       const pg = this.getOpsPg();
+
       if (!pg) throw new BadRequestException('db not configured');
 
       const q = await this.opsQuery<{ global_user_id: string }>(
+
         `SELECT global_user_id FROM ops.referral_codes WHERE referral_code = $1 LIMIT 1`,
+
         [code],
+
       );
+
       const inviter = q.rowCount ? String(q.rows[0].global_user_id || '').trim() : '';
+
       if (!inviter || inviter === invitee) {
+
         return { code: 0, message: 'ok', data: { status: 'unknown' } };
+
       }
 
       const existing = await this.opsQuery<{ status: string; inviter_global_user_id: string }>(
+
         `SELECT status, inviter_global_user_id FROM ops.user_referrals WHERE invitee_global_user_id = $1 LIMIT 1`,
+
         [invitee],
+
       );
+
       if (existing.rowCount) {
+
         const existingInviter = String(existing.rows[0].inviter_global_user_id || '').trim();
+
         const existingStatus = String(existing.rows[0].status || '').trim();
+
         if (existingInviter !== inviter) {
+
           return { code: 0, message: 'ok', data: { status: 'already_bound' } };
+
         }
+
         if (stage === 'profiled' && existingStatus !== 'rewarded') {
+
           await this.opsQuery(
+
             `UPDATE ops.user_referrals
+
              SET status = 'rewarded', updated_at = CURRENT_TIMESTAMP, rewarded_at = CURRENT_TIMESTAMP
+
              WHERE invitee_global_user_id = $1`,
+
             [invitee],
+
           );
 
           const inviterReward = 3;
+
           const inviteeReward = 3;
+
           await this.walletEarnAsset({
+
             globalUserId: inviter,
+
             assetType: 'points_locked',
+
             amount: inviterReward,
+
             idemKey: `ref_reward_inviter:${inviter}:${invitee}`,
+
             bizType: 'referral_invite_reward',
+
             refType: 'referral',
+
             refId: invitee,
+
             remark: null,
+
           }).catch(() => null);
+
           await this.walletEarnAsset({
+
             globalUserId: invitee,
+
             assetType: 'points_locked',
+
             amount: inviteeReward,
+
             idemKey: `ref_reward_invitee:${invitee}:${inviter}`,
+
             bizType: 'referral_join_reward',
+
             refType: 'referral',
+
             refId: inviter,
+
             remark: null,
+
           }).catch(() => null);
+
           return { code: 0, message: 'ok', data: { status: 'rewarded', inviter_global_user_id: inviter } };
+
         }
+
         return { code: 0, message: 'ok', data: { status: existingStatus, inviter_global_user_id: inviter } };
+
       }
 
       await this.opsQuery(
+
         `INSERT INTO ops.user_referrals(inviter_global_user_id, invitee_global_user_id, source_bot, status)
+
          VALUES ($1,$2,$3,$4)
+
          ON CONFLICT (invitee_global_user_id)
+
          DO NOTHING`,
+
         [inviter, invitee, sourceBot, stage === 'profiled' ? 'profiled' : 'started'],
+
       );
 
       if (stage === 'profiled') {
+
         await this.opsQuery(
+
           `UPDATE ops.user_referrals
+
            SET status = 'rewarded', updated_at = CURRENT_TIMESTAMP, rewarded_at = CURRENT_TIMESTAMP
+
            WHERE invitee_global_user_id = $1 AND inviter_global_user_id = $2 AND status <> 'rewarded'`,
+
           [invitee, inviter],
+
         );
 
         const inviterReward = 3;
+
         const inviteeReward = 3;
+
         await this.walletEarnAsset({
+
           globalUserId: inviter,
+
           assetType: 'points_locked',
+
           amount: inviterReward,
+
           idemKey: `ref_reward_inviter:${inviter}:${invitee}`,
+
           bizType: 'referral_invite_reward',
+
           refType: 'referral',
+
           refId: invitee,
+
           remark: null,
+
         }).catch(() => null);
+
         await this.walletEarnAsset({
+
           globalUserId: invitee,
+
           assetType: 'points_locked',
+
           amount: inviteeReward,
+
           idemKey: `ref_reward_invitee:${invitee}:${inviter}`,
+
           bizType: 'referral_join_reward',
+
           refType: 'referral',
+
           refId: inviter,
+
           remark: null,
+
         }).catch(() => null);
+
         return { code: 0, message: 'ok', data: { status: 'rewarded', inviter_global_user_id: inviter } };
+
       }
 
       return { code: 0, message: 'ok', data: { status: 'started', inviter_global_user_id: inviter } };
+
     });
+
   }
 
   private marketplaceProductsStore = [
+
     // --- 1. Senior Care (老年护理) ---
+
     {
+
       id: 201,
+
       category: 'senior_care',
+
       name: 'Senior Joint Support Chews',
+
       description: 'Premium glucosamine and chondroitin for elder pets to improve mobility.',
+
       price_cents: 3500,
+
       currency: 'USD',
+
       images: [{ image_url: 'https://images.unsplash.com/photo-1583337130417-3346a1be7dee?q=80&w=800&auto=format&fit=crop' }],
+
       merchant: { id: 'm_official', name: 'RainbowPaw Care' },
+
       production_time_days: 1,
+
       delivery_type: 'shipment',
+
       sales_7d: 45,
+
     },
+
     {
+
       id: 202,
+
       category: 'senior_care',
+
       name: 'Elder Pet Comfort Pad',
+
       description: 'Orthopedic memory foam pad to relieve joint pressure and prevent bedsores.',
+
       price_cents: 4900,
+
       currency: 'USD',
+
       images: [{ image_url: 'https://images.unsplash.com/photo-1583337130417-3346a1be7dee?q=80&w=800&auto=format&fit=crop' }],
+
       merchant: { id: 'm_official', name: 'RainbowPaw Care' },
+
       production_time_days: 1,
+
       delivery_type: 'shipment',
+
       sales_7d: 32,
+
     },
+
     // --- 2. Care Packs (套餐商品) ---
+
     {
+
       id: 301,
+
       category: 'care_pack',
+
       name: 'Recovery Pack (Monthly)',
+
       description: 'A curated pack containing probiotics, hydration supplements, and soft treats for post-surgery or illness recovery.',
+
       price_cents: 5500,
+
       currency: 'USD',
+
       images: [{ image_url: 'https://images.unsplash.com/photo-1583337130417-3346a1be7dee?q=80&w=800&auto=format&fit=crop' }],
+
       merchant: { id: 'm_official', name: 'RainbowPaw Care' },
+
       production_time_days: 1,
+
       delivery_type: 'shipment',
+
       sales_7d: 15,
+
     },
+
     // --- 3. Memory & Comfort Items (情感与纪念商品) ---
+
     {
+
       id: 101,
+
       category: 'memory',
+
       name: 'Paw Print Keepsake Kit',
+
       description: 'Create a lasting impression of your pet\'s paw with this easy-to-use, non-toxic clay kit.',
+
       price_cents: 1800,
+
       currency: 'USD',
+
       images: [{ image_url: 'https://images.unsplash.com/photo-1520975916090-3105956dac38?q=80&w=800&auto=format&fit=crop' }],
+
       merchant: { id: 'm_official', name: 'RainbowPaw Memory' },
+
       production_time_days: 1,
+
       delivery_type: 'shipment',
+
       sales_7d: 88,
+
     },
+
     {
+
       id: 102,
+
       category: 'memory',
+
       name: 'Custom Memorial Crystal Pendant',
+
       description: 'Keep your beloved pet close to your heart with this beautifully crafted crystal pendant (engraving available).',
+
       price_cents: 4500,
+
       currency: 'USD',
+
       images: [{ image_url: 'https://images.unsplash.com/photo-1535632066927-ab7c9ab60908?q=80&w=800&auto=format&fit=crop' }],
+
       merchant: { id: 'm_official', name: 'RainbowPaw Memory' },
+
       production_time_days: 2,
+
       delivery_type: 'shipment',
+
       sales_7d: 24,
+
     },
+
     {
+
       id: 103,
+
       category: 'urn',
+
       name: 'Peaceful Ceramic Urn',
+
       description: 'A matte-finish ceramic urn designed for a dignified and peaceful resting place.',
+
       price_cents: 8900,
+
       currency: 'USD',
+
       images: [{ image_url: 'https://images.unsplash.com/photo-1582555172866-f73bb12a2ab3?q=80&w=800&auto=format&fit=crop' }],
+
       merchant: { id: 'm_official', name: 'RainbowPaw Memory' },
+
       production_time_days: 3,
+
       delivery_type: 'shipment',
+
       sales_7d: 12,
+
     },
+
   ];
 
   private async marketplaceGetProductById(productId: number, lang?: any) {
+
     const id = Number(productId);
+
     if (!Number.isFinite(id)) return null;
+
     try {
+
       return await this.marketplaceDbGetProduct({ id: String(id), lang });
+
     } catch {
+
       const p = this.marketplaceProductsStore.find((x) => Number(x.id) === id);
+
       if (!p) return null;
+
       const txt = this.resolveProductTextByLang(p, lang);
+
       return {
+
         ...p,
+
         name: txt.name,
+
         category_label: txt.category_label,
+
         description: txt.description,
+
       };
+
     }
+
   }
 
   private marketplaceFirstImageUrl(images: any) {
+
     const list = Array.isArray(images) ? images : [];
+
     if (!list.length) return null;
+
     const first = list[0];
+
     if (!first) return null;
+
     if (typeof first === 'string') return first;
+
     if (typeof first === 'object') {
+
       if (first.image_url) return String(first.image_url);
+
       if (first.url) return String(first.url);
+
     }
+
     return null;
+
   }
 
   private marketplaceServicesStore = [
+
     {
+
       id: 'svc_cremation_basic',
+
       category: 'cremation',
+
       city: 'Phnom Penh',
+
       service_name: '善终服务·Basic',
+
       description: '基础火化服务 + 取回安排，适合轻量需求。',
+
       price_cents: 4900,
+
       currency: 'USD',
+
     },
+
     {
+
       id: 'svc_cremation_standard',
+
       category: 'cremation',
+
       city: 'Phnom Penh',
+
       service_name: '善终服务·Standard',
+
       description: '含上门接宠 + 独立火化 + 基础纪念组件。',
+
       price_cents: 12900,
+
       currency: 'USD',
+
     },
+
   ];
 
   private cartByPhone = new Map<string, { items: any[] }>();
+
   private ordersByPhone = new Map<string, any[]>();
 
   private v1UsersByPhone = new Map<string, any>();
+
   private v1PetsByPhone = new Map<string, any[]>();
+
   private v1PaymentsStoreByPhone = new Map<string, any[]>();
+
   private v1MemorialFavoritesByPhone = new Map<string, Set<number>>();
+
   private v1MerchantsById = new Map<string, any>();
+
   private v1MerchantTokenToId = new Map<string, string>();
 
   private businessSettings = {
+
     points_per_usd: 2,
+
     claw_cost_points: 3,
+
     recycle_ratio: 0.8,
+
     recycle_locked_ratio: 0.6,
+
     recycle_cashable_ratio: 0.4,
+
     withdraw_min_points: 20,
+
     withdraw_fee_ratio: 0.05,
+
     reward_mode: 'normal' as 'low' | 'normal' | 'boost',
+
     legendary_rate: 0.05,
+
   };
 
   private adminUsersStore = new Map<
+
     string,
+
     {
+
       global_user_id: string;
+
       telegram_id: number | null;
+
       username: string | null;
+
       pet_type: string | null;
+
       spend_total: number;
+
       spend_level: string;
+
       status: string;
+
       last_active_at: string | null;
+
     }
+
   >([
+
     [
+
       'g_demo_admin',
+
       {
+
         global_user_id: 'g_demo_admin',
+
         telegram_id: 123,
+
         username: 'demo',
+
         pet_type: 'cat',
+
         spend_total: 0,
+
         spend_level: 'low',
+
         status: 'active',
+
         last_active_at: new Date().toISOString(),
+
       },
+
     ],
+
   ]);
 
   private adminWithdrawRequestsStore = new Map<
+
     string,
+
     {
+
       id: string;
+
       request_no: string;
+
       global_user_id: string;
+
       points_cashable_amount: number;
+
       cash_amount: number;
+
       status: string;
+
       created_at: string;
+
     }
+
   >();
 
   private adminMerchantsStore = new Map<
+
     string,
+
     {
+
       id: string;
+
       name: string;
+
       category: string;
+
       status: 'pending' | 'approved' | 'rejected' | 'suspended';
+
       created_at: string;
+
     }
+
   >([
+
     [
+
       'm_official',
+
       {
+
         id: 'm_official',
+
         name: 'RainbowPaw Care',
+
         category: 'official',
+
         status: 'approved',
+
         created_at: new Date().toISOString(),
+
       },
+
     ],
+
   ]);
 
   private adminClawPoolsStore = new Map<
+
     string,
+
     {
+
       id: string;
+
       pool_name: string;
+
       mode: 'low' | 'normal' | 'boost';
+
       legendary_rate: number;
+
       recycle_ratio: number;
+
       status: 'draft' | 'active' | 'inactive';
+
       updated_at: string;
+
     }
+
   >([
+
     [
+
       'pool_default',
+
       {
+
         id: 'pool_default',
+
         pool_name: '默认奖池',
+
         mode: 'normal',
+
         legendary_rate: 0.05,
+
         recycle_ratio: 0.8,
+
         status: 'active',
+
         updated_at: new Date().toISOString(),
+
       },
+
     ],
+
   ]);
 
   private riskAlertsStore = [
+
     {
+
       id: 'risk_001',
+
       type: 'withdraw_anomaly',
+
       level: 'medium',
+
       title: '提现异常',
+
       description: '检测到异常提现频率（示例数据）',
+
       global_user_id: 'g_demo_admin',
+
       created_at: new Date().toISOString(),
+
     },
+
   ];
 
   private aiOpsState: {
+
     last_daily?: {
+
       generated_at: string;
+
       summary: string;
+
       issues: string[];
+
       pool_suggestion: string;
+
       reactivation_suggestion: string;
+
       model_hint: string;
+
     };
+
     last_publish?: { published_at: string; title: string; payload: any };
+
     last_smoke?: { ran_at: string; status: 'pass' | 'fail'; details: string[] };
+
   } = {};
 
   private internalToken() {
+
     return process.env.INTERNAL_TOKEN || 'dev-secret-token';
+
   }
 
   private identityBase() {
+
     return process.env.IDENTITY_SERVICE_URL || 'http://localhost:3001/api';
+
   }
 
   private walletBase() {
+
     return process.env.WALLET_SERVICE_URL || 'http://localhost:3002/api';
+
   }
 
   private bridgeBase() {
+
     return process.env.BRIDGE_SERVICE_URL || 'http://localhost:3003/api';
+
   }
 
   private orderBase() {
+
     return process.env.ORDER_SERVICE_URL || 'http://localhost:3006/api';
+
   }
 
   private reportBase() {
+
     return process.env.REPORT_SERVICE_URL || 'http://localhost:3004/api';
+
   }
 
   private settlecorePartnerBase() {
+
     const base = String(
+
       process.env.SETTLECORE_BASE_URL || 'https://api.settlecore.org',
+
     )
+
       .trim()
+
       .replace(/\/+$/, '');
+
     return `${base}/api/partners/rainbowpaw`;
+
   }
 
   private settlecoreApiKey() {
+
     return String(process.env.RAINBOWPAW_API_KEY || '').trim();
+
   }
 
   private settlecoreWebhookSecret() {
+
     return String(process.env.RAINBOWPAW_WEBHOOK_SECRET || '').trim();
+
   }
 
   private adminTelegramIds() {
+
     const raw = String(process.env.ADMIN_TELEGRAM_IDS || '').trim();
+
     if (!raw) return [];
+
     return raw
+
       .split(/[\s,]+/)
+
       .map((x) => Number(String(x).trim()))
+
       .filter((x) => Number.isFinite(x) && x > 0);
+
   }
 
   private adminBotToken() {
+
     const claw = String(process.env.CLAW_BOT_TOKEN || '').trim();
+
     if (claw) return claw;
+
     const rainbow = String(process.env.RAINBOW_BOT_TOKEN || '').trim();
+
     return rainbow;
+
   }
 
   private async telegramSendMessage(chatId: number, text: string, inlineButtons?: any[]) {
+
     const token = this.adminBotToken();
+
     if (!token) return;
+
     const url = `https://api.telegram.org/bot${token}/sendMessage`;
+
     console.log('[DEBUG telegramSendMessage] chatId=' + chatId + ' inlineButtons=' + JSON.stringify(inlineButtons));
+
     const body: any = {
+
       chat_id: chatId,
+
       text,
+
       disable_web_page_preview: true,
+
     };
+
     if (inlineButtons && inlineButtons.length) {
+
       body.reply_markup = {
+
         inline_keyboard: inlineButtons.map((btn: any) => {
+
           const b: any = { text: btn.text };
+
           if (btn.url) b.url = btn.url;
+
           if (btn.callback_data) b.callback_data = btn.callback_data;
+
           return [b];
+
         }),
+
       };
+
     }
+
     await fetch(url, {
+
       method: 'POST',
+
       headers: { 'content-type': 'application/json' },
+
       body: JSON.stringify(body),
+
     });
+
   }
 
   private async notifyAdminsPaymentProof(opts: {
+
     displayId: string;
+
     proofText?: string;
+
     hasFile?: boolean;
+
   }) {
-    const ids = this.adminTelegramIds();
-    if (!ids.length) return;
-    const base = this.publicWebBaseUrl();
-    const url = base ? `${base}/api/payments/${encodeURIComponent(opts.displayId)}` : '';
-    const proofUrl = base
-      ? `${base}/api/payments/${encodeURIComponent(opts.displayId)}/proof_file`
-      : '';
-    let mapped: any = null;
-    if (this.settlecoreDbReady()) {
-      try {
-        mapped = await this.settlecoreDbFindPartnerOrder({ displayId: opts.displayId });
-      } catch {
-        mapped = null;
-      }
+    if (!this._botPollingStarted) {
+      this._startBotPolling().catch(() => {});
     }
-    // Try to fetch order details for richer notification
+
+    const ids = this.adminTelegramIds();
+
+    if (!ids.length) return;
+
+    const base = this.publicWebBaseUrl();
+
+    const url = base ? `${base}/api/payments/${encodeURIComponent(opts.displayId)}` : '';
+
+    const proofUrl = base
+
+      ? `${base}/api/payments/${encodeURIComponent(opts.displayId)}/proof_file`
+
+      : '';
+
+    let mapped: any = null;
+
+    if (this.settlecoreDbReady()) {
+
+      try {
+
+        mapped = await this.settlecoreDbFindPartnerOrder({ displayId: opts.displayId });
+
+      } catch {
+
+        mapped = null;
+
+      }
+
+    }
+
+    // Try to fetch order details for richer notification from payment_proofs
     let orderInfo: any = null;
     try {
       const pg = this.getOpsPg();
       if (pg) {
-        const r = await pg.query('SELECT display_id, amount, currency, telegram_id, bundle, product_code, created_at FROM payments.settlecore_partner_orders WHERE display_id = $1 LIMIT 1', [opts.displayId]);
+        const r = await pg.query('SELECT display_id, telegram_id, bundle, global_user_id, proof_text, created_at FROM payments.payment_proofs WHERE display_id = $1 LIMIT 1', [opts.displayId]);
         if (r && r.rows && r.rows.length) orderInfo = r.rows[0];
+      }
+    } catch {}
+    // Also try settlecore_partner_orders for amount
+    let mappedInfo: any = null;
+    try {
+      const pg = this.getOpsPg();
+      if (pg) {
+        const r = await pg.query('SELECT amount, currency FROM payments.settlecore_partner_orders WHERE display_id = $1 LIMIT 1', [opts.displayId]);
+        if (r && r.rows && r.rows.length) mappedInfo = r.rows[0];
       }
     } catch {}
           const lines = [
         '✅ 收到支付凭证',
         `📋 订单号: ${opts.displayId}`,
-        orderInfo ? `⏰ 支付时间: ${orderInfo.created_at ? new Date(orderInfo.created_at).toLocaleString('zh-CN', {timeZone:'Asia/Phnom_Penh'}) : '---'}` : null,
-        orderInfo ? `👤 支付人: ${orderInfo.telegram_id || '---'}` : null,
-        orderInfo ? `💰 支付金额: ${orderInfo.amount || '?'}$` : null,
-        orderInfo ? `📦 购买项目: ${orderInfo.bundle || 1}次抽奖` : null,
-        !orderInfo && mapped && mapped.amount != null ? `amount: ${mapped.amount} ${mapped.currency || ''}` : null,
-        opts.proofText ? `proof_text: ${String(opts.proofText).slice(0, 500)}` : null,
+        orderInfo && orderInfo.created_at ? `⏰ 支付时间: ${new Date(orderInfo.created_at).toLocaleString('zh-CN', {timeZone:'Asia/Phnom_Penh'})}` : null,
+        orderInfo && orderInfo.telegram_id ? `👤 支付人: ${orderInfo.global_user_id || orderInfo.telegram_id}` : null,
+        mappedInfo && mappedInfo.amount != null ? `💰 金额: $${Number(mappedInfo.amount).toFixed(2)}` : null,
+        orderInfo && orderInfo.bundle ? `📦 购买: ${orderInfo.bundle}次抽奖` : null,
+        !mappedInfo && mapped && mapped.amount != null ? `amount: ${mapped.amount} ${mapped.currency || ''}` : null,
+        opts.proofText ? `✏️ 凭证说明: ${String(opts.proofText).slice(0, 500)}` : null,
       ].filter(Boolean);
     const text = lines.join('\n');
+
     console.log('[DEBUG notifyAdminsPaymentProof] ids=' + JSON.stringify(ids));
+
     const buttons: any[] = [];
+
     if (base) {
+
       buttons.push({ text: '✅ 确认支付订单', callback_data: 'confirm_payment:' + opts.displayId });
+
     }
+
     await Promise.all(
+
       ids.map(async (id) => {
+
         try {
+
           await this.telegramSendMessage(id, text, buttons);
+
         } catch {
+
           void 0;
+
         }
+
       }),
+
     );
+
   }
 
   private async notifyAdminsOrderCreated(opts: {
+
     orderId: string;
+
     orderType: string;
+
     phone?: string;
+
     totalUsd?: number;
+
     city?: string;
+
     pickupAddress?: string;
+
     source?: string;
+
   }) {
+
     const ids = this.adminTelegramIds();
+
     if (!ids.length) return;
+
     const lines = [
+
       '🧾 新订单/咨询',
+
       `order_id: ${opts.orderId}`,
+
       `type: ${opts.orderType}`,
+
       opts.phone ? `phone: ${opts.phone}` : null,
+
       typeof opts.totalUsd === 'number' ? `amount: $${opts.totalUsd.toFixed(2)}` : null,
+
       opts.city ? `city: ${opts.city}` : null,
+
       opts.pickupAddress ? `pickup: ${opts.pickupAddress}` : null,
+
       opts.source ? `source: ${opts.source}` : null,
+
     ].filter(Boolean);
+
     const text = lines.join('\n');
+
     await Promise.all(
+
       ids.map(async (id) => {
+
         try {
+
           await this.telegramSendMessage(id, text);
+
         } catch {
+
           void 0;
+
         }
+
       }),
+
     );
+
   }
 
   private settlecoreAuthHeaders() {
+
     const key = this.settlecoreApiKey();
+
     if (!key) throw new BadGatewayException('settlecore not configured');
+
     return {
+
       Authorization: `Bearer ${key}`,
+
       'X-Rainbowpaw-Key': key,
+
       'Content-Type': 'application/json',
+
     } as Record<string, string>;
+
   }
 
   private async settlecoreLogin(tg: TelegramUserInfo) {
+
     const url = `${this.settlecorePartnerBase()}/login`;
+
     const { data } = await axios.post(
+
       url,
+
       {
+
         telegram_id: tg.telegram_id,
+
         username: tg.username || undefined,
+
         first_name: tg.first_name || undefined,
+
         last_name: tg.last_name || undefined,
+
         language_code: 'zh',
+
       },
+
       { headers: this.settlecoreAuthHeaders() },
+
     );
+
     return data as {
+
       access_token: string;
+
       token_type: string;
+
       user_id: string;
+
       platform_user_id: number;
+
     };
+
   }
 
   private async settlecoreDepositAddress(telegramId: number) {
+
     const url = `${this.settlecorePartnerBase()}/deposit-address`;
+
     const { data } = await axios.get(url, {
+
       params: { telegram_id: telegramId },
+
       headers: this.settlecoreAuthHeaders(),
+
     });
+
     return data as {
+
       telegram_id: number;
+
       user_id: string;
+
       address: string;
+
       chain: string;
+
     };
+
   }
 
   private async settlecoreCreatePayment(opts: {
+
     partnerOrderId: string;
+
     telegramId?: number;
+
     amount: number;
+
     currency?: string;
+
     note?: string;
+
     metadata?: any;
+
   }) {
+
     const url = `${this.settlecorePartnerBase()}/payments/create`;
+
     const { data } = await axios.post(
+
       url,
+
       {
+
         partner_order_id: opts.partnerOrderId,
+
         telegram_id: opts.telegramId,
+
         amount: opts.amount,
+
         currency: opts.currency || 'USDT',
+
         note: opts.note || undefined,
+
         metadata: typeof opts.metadata === 'undefined' ? undefined : opts.metadata,
+
       },
+
       { headers: this.settlecoreAuthHeaders() },
+
     );
+
     return data as {
+
       partner_code: string;
+
       partner_order_id: string;
+
       payment_order_id: number;
+
       status: string;
+
       amount: number;
+
       currency: string;
+
       payment_address: string | null;
+
       payment_url: string | null;
+
       expires_at: string | null;
+
     };
+
   }
 
   private async settlecoreWebhookAck(eventType: string, idempotencyKey: string) {
+
     const url = `${this.settlecorePartnerBase()}/webhook-ack`;
+
     const { data } = await axios.post(
+
       url,
+
       { event_type: eventType, idempotency_key: idempotencyKey },
+
       { headers: this.settlecoreAuthHeaders() },
+
     );
+
     return data as { success: boolean };
+
   }
 
   private settlecoreDbReady() {
+
     return Boolean(this.getOpsPg());
+
   }
 
   private async settlecoreDbUpsertPartnerOrder(row: {
+
     displayId: string;
+
     productCode: string;
+
     bundle: number | null;
+
     globalUserId: string | null;
+
     telegramId: number | null;
+
     partnerOrderId: string;
+
     paymentOrderId: number | null;
+
     expectedWebhookIdemKey: string | null;
+
     amount: number;
+
     currency: string;
+
     status: 'pending' | 'settled' | 'failed';
+
     rawCreateResponse: any;
+
   }) {
+
     await this.opsQuery(
+
       `INSERT INTO payments.settlecore_partner_orders(
+
         display_id, product_code, bundle, global_user_id, telegram_id,
+
         partner_order_id, payment_order_id, expected_webhook_idem_key,
+
         amount, currency, status, raw_create_response, updated_at
+
       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,CURRENT_TIMESTAMP)
+
       ON CONFLICT (display_id)
+
       DO UPDATE SET
+
         product_code = EXCLUDED.product_code,
+
         bundle = EXCLUDED.bundle,
+
         global_user_id = EXCLUDED.global_user_id,
+
         telegram_id = EXCLUDED.telegram_id,
+
         partner_order_id = EXCLUDED.partner_order_id,
+
         payment_order_id = COALESCE(EXCLUDED.payment_order_id, payments.settlecore_partner_orders.payment_order_id),
+
         expected_webhook_idem_key = COALESCE(EXCLUDED.expected_webhook_idem_key, payments.settlecore_partner_orders.expected_webhook_idem_key),
+
         amount = EXCLUDED.amount,
+
         currency = EXCLUDED.currency,
+
         status = EXCLUDED.status,
+
         raw_create_response = COALESCE(EXCLUDED.raw_create_response, payments.settlecore_partner_orders.raw_create_response),
+
         updated_at = CURRENT_TIMESTAMP`,
+
       [
+
         row.displayId,
+
         row.productCode,
+
         row.bundle,
+
         row.globalUserId,
+
         row.telegramId,
+
         row.partnerOrderId,
+
         row.paymentOrderId,
+
         row.expectedWebhookIdemKey,
+
         row.amount,
+
         row.currency,
+
         row.status,
+
         row.rawCreateResponse ?? null,
+
       ],
+
     );
+
   }
 
   private async settlecoreDbFindPartnerOrder(opts: {
+
     displayId?: string;
+
     partnerOrderId?: string;
+
     paymentOrderId?: number;
+
   }) {
+
     const where: string[] = [];
+
     const params: any[] = [];
+
     if (opts.displayId) {
+
       params.push(String(opts.displayId));
+
       where.push(`display_id = $${params.length}`);
+
     }
+
     if (opts.partnerOrderId) {
+
       params.push(String(opts.partnerOrderId));
+
       where.push(`partner_order_id = $${params.length}`);
+
     }
+
     if (Number.isFinite(Number(opts.paymentOrderId)) && Number(opts.paymentOrderId) > 0) {
+
       params.push(Number(opts.paymentOrderId));
+
       where.push(`payment_order_id = $${params.length}`);
+
     }
+
     if (!where.length) return null;
+
     const res = await this.opsQuery<any>(
+
       `SELECT * FROM payments.settlecore_partner_orders WHERE ${where.join(' OR ')} ORDER BY id DESC LIMIT 1`,
+
       params,
+
     );
+
     return res.rows?.[0] || null;
+
   }
 
   private async settlecoreDbMarkPartnerOrderSettled(opts: {
+
     partnerOrderId: string;
+
     paymentOrderId: number;
+
     settledBody: any;
+
   }) {
+
     await this.opsQuery(
+
       `UPDATE payments.settlecore_partner_orders
+
        SET status = 'settled', payment_order_id = $2, raw_settled_body = $3, settled_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+
        WHERE partner_order_id = $1`,
+
       [opts.partnerOrderId, opts.paymentOrderId, opts.settledBody ?? null],
+
     );
+
   }
 
   private async settlecoreDbUpsertWebhookEventReceived(row: {
+
     eventType: string;
+
     idempotencyKey: string;
+
     partnerCode: string | null;
+
     signature: string | null;
+
     rawBody: string;
+
   }) {
+
     const res = await this.opsQuery<any>(
+
       `INSERT INTO payments.settlecore_webhook_events(
+
         event_type, idempotency_key, partner_code, signature, raw_body,
+
         status, ack_status, ack_attempts, created_at, updated_at
+
       ) VALUES ($1,$2,$3,$4,$5,'received','pending',0,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
+
       ON CONFLICT (event_type, idempotency_key)
+
       DO UPDATE SET
+
         partner_code = COALESCE(EXCLUDED.partner_code, payments.settlecore_webhook_events.partner_code),
+
         signature = COALESCE(EXCLUDED.signature, payments.settlecore_webhook_events.signature),
+
         raw_body = COALESCE(EXCLUDED.raw_body, payments.settlecore_webhook_events.raw_body),
+
         updated_at = CURRENT_TIMESTAMP
+
       RETURNING *`,
+
       [
+
         row.eventType,
+
         row.idempotencyKey,
+
         row.partnerCode,
+
         row.signature,
+
         row.rawBody,
+
       ],
+
     );
+
     return res.rows?.[0] || null;
+
   }
 
   private async settlecoreDbUpdateWebhookVerified(id: number, ok: boolean, error?: string) {
+
     if (ok) {
+
       await this.opsQuery(
+
         `UPDATE payments.settlecore_webhook_events
+
          SET verified_at = CURRENT_TIMESTAMP, status = 'verified', error = NULL, updated_at = CURRENT_TIMESTAMP
+
          WHERE id = $1`,
+
         [id],
+
       );
+
       return;
+
     }
+
     await this.opsQuery(
+
       `UPDATE payments.settlecore_webhook_events
+
        SET status = 'invalid', error = $2, updated_at = CURRENT_TIMESTAMP
+
        WHERE id = $1`,
+
       [id, String(error || 'invalid signature')],
+
     );
+
   }
 
   private async settlecoreDbMarkWebhookProcessed(opts: {
+
     id: number;
+
     status: 'processed' | 'failed';
+
     error?: string;
+
     txHash?: string | null;
+
     paymentOrderId?: number | null;
+
     partnerOrderId?: string | null;
+
     telegramId?: number | null;
+
     globalUserId?: string | null;
+
     ackStatus?: 'pending' | 'acked';
+
   }) {
+
     await this.opsQuery(
+
       `UPDATE payments.settlecore_webhook_events
+
        SET processed_at = CASE WHEN $2 = 'processed' THEN CURRENT_TIMESTAMP ELSE processed_at END,
+
            status = $2,
+
            error = $3,
+
            tx_hash = COALESCE($4, tx_hash),
+
            payment_order_id = COALESCE($5, payment_order_id),
+
            partner_order_id = COALESCE($6, partner_order_id),
+
            telegram_id = COALESCE($7, telegram_id),
+
            global_user_id = COALESCE($8, global_user_id),
+
            ack_status = COALESCE($9, ack_status),
+
            updated_at = CURRENT_TIMESTAMP
+
        WHERE id = $1`,
+
       [
+
         opts.id,
+
         opts.status,
+
         opts.status === 'failed' ? String(opts.error || 'failed') : null,
+
         opts.txHash ?? null,
+
         opts.paymentOrderId ?? null,
+
         opts.partnerOrderId ?? null,
+
         opts.telegramId ?? null,
+
         opts.globalUserId ?? null,
+
         opts.ackStatus ?? null,
+
       ],
+
     );
+
   }
 
   private settlecoreAckBackoffMs(attempt: number) {
+
     const a = Math.max(1, Math.min(10, Number(attempt || 1)));
+
     const base = 15_000;
+
     return Math.min(15 * 60_000, base * Math.pow(2, a - 1));
+
   }
 
   private async settlecoreAckLoopTick() {
+
     if (!this.settlecoreDbReady()) return;
+
     if (!this.settlecoreApiKey()) return;
+
     const res = await this.opsQuery<any>(
+
       `SELECT id, event_type, idempotency_key, ack_attempts
+
        FROM payments.settlecore_webhook_events
+
        WHERE status = 'processed'
+
          AND ack_status <> 'acked'
+
          AND (ack_next_retry_at IS NULL OR ack_next_retry_at <= CURRENT_TIMESTAMP)
+
        ORDER BY id ASC
+
        LIMIT 20`,
+
     );
+
     const items = Array.isArray(res.rows) ? res.rows : [];
+
     for (const it of items) {
+
       const id = Number(it.id);
+
       if (!Number.isFinite(id) || id <= 0) continue;
+
       const eventType = String(it.event_type || '').trim();
+
       const idemKey = String(it.idempotency_key || '').trim();
+
       const attempts = Number(it.ack_attempts || 0);
+
       if (!eventType || !idemKey) continue;
+
       try {
+
         const ack = await this.settlecoreWebhookAck(eventType, idemKey);
+
         if (ack?.success) {
+
           await this.opsQuery(
+
             `UPDATE payments.settlecore_webhook_events
+
              SET ack_status = 'acked', acked_at = CURRENT_TIMESTAMP, ack_attempts = ack_attempts + 1, ack_last_error = NULL, ack_next_retry_at = NULL, updated_at = CURRENT_TIMESTAMP
+
              WHERE id = $1`,
+
             [id],
+
           );
+
           continue;
+
         }
+
         throw new Error('settlecore ack failed');
+
       } catch (e: any) {
+
         const nextMs = this.settlecoreAckBackoffMs(attempts + 1);
+
         await this.opsQuery(
+
           `UPDATE payments.settlecore_webhook_events
+
            SET ack_status = 'pending', ack_attempts = ack_attempts + 1, ack_last_error = $2, ack_next_retry_at = CURRENT_TIMESTAMP + ($3 * INTERVAL '1 millisecond'), updated_at = CURRENT_TIMESTAMP
+
            WHERE id = $1`,
+
           [id, String(e?.message || e || 'ack error'), nextMs],
+
         );
+
       }
+
     }
+
   }
 
   private settlecoreAckAsync(eventType: string, idempotencyKey: string, webhookEventId?: number) {
+
     const id = Number(webhookEventId || 0);
+
     const db = this.settlecoreDbReady() && Number.isFinite(id) && id > 0;
+
     const safeType = String(eventType || '').trim();
+
     const safeKey = String(idempotencyKey || '').trim();
+
     if (!safeType || !safeKey) return;
+
     this.settlecoreWebhookAck(safeType, safeKey)
+
       .then(async (ack) => {
+
         if (!ack?.success) throw new Error('settlecore ack failed');
+
         if (db) {
+
           await this.opsQuery(
+
             `UPDATE payments.settlecore_webhook_events
+
              SET ack_status = 'acked', acked_at = CURRENT_TIMESTAMP, ack_attempts = ack_attempts + 1, ack_last_error = NULL, ack_next_retry_at = NULL, updated_at = CURRENT_TIMESTAMP
+
              WHERE id = $1`,
+
             [id],
+
           );
+
         }
+
       })
+
       .catch(async (e: any) => {
+
         console.error(
+
           JSON.stringify({
+
             msg: 'settlecore.webhook.ack_failed',
+
             event_type: safeType,
+
             idempotency_key: safeKey,
+
             error: String(e?.message || e || 'ack error'),
+
           }),
+
         );
+
         if (db) {
+
           const nextMs = this.settlecoreAckBackoffMs(1);
+
           await this.opsQuery(
+
             `UPDATE payments.settlecore_webhook_events
+
              SET ack_status = 'pending', ack_attempts = ack_attempts + 1, ack_last_error = $2, ack_next_retry_at = CURRENT_TIMESTAMP + ($3 * INTERVAL '1 millisecond'), updated_at = CURRENT_TIMESTAMP
+
              WHERE id = $1`,
+
             [id, String(e?.message || e || 'ack error'), nextMs],
+
           );
+
         }
+
       });
+
   }
 
   private ensureSettlecoreAckLoop() {
+
     if (this.settlecoreAckLoopStarted) return;
+
     this.settlecoreAckLoopStarted = true;
+
     setInterval(() => {
+
       this.settlecoreAckLoopTick().catch(() => void 0);
+
     }, 10_000);
+
   }
 
   private aiBase() {
+
     return String(process.env.AI_ORCHESTRATOR_SERVICE_URL || '').trim();
+
   }
 
   private async orderCreate(body: any, idempotencyKey?: string) {
+
     const idem = String(idempotencyKey || '').trim();
+
     const res = await this.internalPost<any>(
+
       `${this.orderBase()}/orders`,
+
       body || {},
+
       idem ? { 'x-idempotency-key': idem } : undefined,
+
     );
+
     return res?.data;
+
   }
 
   private enableRecommendOnPlay() {
+
     return (
+
       String(process.env.ENABLE_AI_RECOMMEND_ON_PLAY || '').trim() === 'true'
+
     );
+
   }
 
   private async internalGet<T>(
+
     url: string,
+
     params?: any,
+
     extraHeaders?: Record<string, string>,
+
   ) {
+
     const { data } = await axios.get(url, {
+
       params,
+
       headers: {
+
         Authorization: `Bearer ${this.internalToken()}`,
+
         'Content-Type': 'application/json',
+
         ...(extraHeaders || {}),
+
       },
+
     });
+
     return data as T;
+
   }
 
   private async internalPost<T>(
+
     url: string,
+
     body?: any,
+
     extraHeaders?: Record<string, string>,
+
   ) {
+
     const { data } = await axios.post(url, body || {}, {
+
       headers: {
+
         Authorization: `Bearer ${this.internalToken()}`,
+
         'Content-Type': 'application/json',
+
         ...(extraHeaders || {}),
+
       },
+
     });
+
     return data as T;
+
   }
 
   private async linkUser(tg: TelegramUserInfo) {
+
     const { data } = await axios.post(
+
       `${this.identityBase()}/identity/link-user`,
+
       {
+
         source_bot: tg.source_bot === 'unknown' ? 'claw_bot' : tg.source_bot,
+
         source_user_id: String(tg.telegram_id),
+
         telegram_id: tg.telegram_id,
+
         username: tg.username,
+
         first_source: 'webapp',
+
       },
+
       {
+
         headers: {
+
           Authorization: `Bearer ${this.internalToken()}`,
+
           'Content-Type': 'application/json',
+
         },
+
       },
+
     );
+
     return data.data as { global_user_id: string };
+
   }
 
   private verifyTelegramWebAppInitData(
+
     params: URLSearchParams,
+
     botToken: string,
+
   ) {
+
     const hash = String(params.get('hash') || '').trim();
+
     if (!hash) return false;
 
     const rows: string[] = [];
+
     for (const [k, v] of params.entries()) {
+
       if (k === 'hash') continue;
+
       rows.push(`${k}=${v}`);
+
     }
+
     rows.sort((a, b) => a.localeCompare(b));
+
     const dataCheckString = rows.join('\n');
 
     const secretKey = createHmac('sha256', 'WebAppData')
+
       .update(botToken)
+
       .digest();
+
     const expected = createHmac('sha256', secretKey)
+
       .update(dataCheckString)
+
       .digest('hex');
+
     return expected === hash;
+
   }
 
   private extractTelegramUserFromInitData(
+
     initData: string,
+
   ): TelegramWebAppUser | null {
+
     const raw = String(initData || '').trim();
+
     if (!raw) return null;
+
     let params: URLSearchParams;
+
     try {
+
       params = new URLSearchParams(raw);
+
     } catch {
+
       return null;
+
     }
+
     const userStr = params.get('user');
+
     if (!userStr) return null;
+
     try {
+
       const u = JSON.parse(userStr);
+
       const id = Number(u?.id || 0);
+
       if (!Number.isFinite(id) || id <= 0) return null;
+
       return { ...u, id } as TelegramWebAppUser;
+
     } catch {
+
       return null;
+
     }
+
   }
 
   private getTelegramUserInfo(
+
     devTelegramId: string,
+
     telegramInitData: string,
+
   ): TelegramUserInfo | null {
+
     const dev = Number(String(devTelegramId || '').trim());
+
     if (Number.isFinite(dev) && dev > 0) {
+
       return {
+
         telegram_id: dev,
+
         username: '',
+
         first_name: '',
+
         last_name: '',
+
         source_bot: 'dev',
+
       };
+
     }
 
     const initData = String(telegramInitData || '').trim();
+
     if (!initData) return null;
 
     const u = this.extractTelegramUserFromInitData(initData);
+
     if (!u) return null;
 
     const rainbowToken = String(process.env.RAINBOW_BOT_TOKEN || '').trim();
+
     const clawToken = String(process.env.CLAW_BOT_TOKEN || '').trim();
 
     let source_bot: TelegramUserInfo['source_bot'] = 'unknown';
+
     try {
+
       const params = new URLSearchParams(initData);
+
       if (
+
         rainbowToken &&
+
         this.verifyTelegramWebAppInitData(params, rainbowToken)
+
       )
+
         source_bot = 'rainbow_bot';
+
       else if (
+
         clawToken &&
+
         this.verifyTelegramWebAppInitData(params, clawToken)
+
       )
+
         source_bot = 'claw_bot';
+
     } catch {
+
       source_bot = 'unknown';
+
     }
 
     return {
+
       telegram_id: u.id,
+
       username: String(u.username || '').trim(),
+
       first_name: String(u.first_name || '').trim(),
+
       last_name: String((u as any).last_name || '').trim(),
+
       source_bot,
+
     };
+
   }
 
   private getTelegramId(devTelegramId: string, telegramInitData: string) {
+
     const info = this.getTelegramUserInfo(devTelegramId, telegramInitData);
+
     return info ? info.telegram_id : 0;
+
   }
 
   private async getWallet(globalUserId: string) {
+
     const { data } = await axios.get(
+
       `${this.walletBase()}/wallet/${encodeURIComponent(globalUserId)}`,
+
       {
+
         headers: {
+
           Authorization: `Bearer ${this.internalToken()}`,
+
           'Content-Type': 'application/json',
+
         },
+
       },
+
     );
+
     return data.data;
+
   }
 
   private async getWalletLogs(globalUserId: string, pageSize: number) {
+
     const { data } = await axios.get(
+
       `${this.walletBase()}/wallet/logs/${encodeURIComponent(globalUserId)}?page=1&pageSize=${encodeURIComponent(String(pageSize))}`,
+
       {
+
         headers: {
+
           Authorization: `Bearer ${this.internalToken()}`,
+
           'Content-Type': 'application/json',
+
         },
+
       },
+
     );
+
     return data.data;
+
   }
 
   private async walletEarn(
+
     globalUserId: string,
+
     amountPointsLocked: number,
+
     idemKey: string,
+
     bizType: string,
+
   ) {
+
     return this.walletEarnAsset({
+
       globalUserId,
+
       assetType: 'points_locked',
+
       amount: amountPointsLocked,
+
       idemKey,
+
       bizType,
+
       refType: 'gateway',
+
       refId: null,
+
       remark: null,
+
     });
+
   }
 
   private async walletEarnAsset(opts: {
+
     globalUserId: string;
+
     assetType: 'points_locked' | 'points_cashable' | 'wallet_cash' | 'wallet_usdt';
+
     amount: number;
+
     idemKey: string;
+
     bizType: string;
+
     refType?: string | null;
+
     refId?: string | null;
+
     remark?: string | null;
+
   }) {
+
     const { data } = await axios.post(
+
       `${this.walletBase()}/wallet/earn`,
+
       {
+
         global_user_id: opts.globalUserId,
+
         biz_type: opts.bizType,
+
         changes: [{ asset_type: opts.assetType, amount: opts.amount }],
+
         ref_type: opts.refType ?? null,
+
         ref_id: opts.refId ?? null,
+
         remark: opts.remark ?? null,
+
       },
+
       {
+
         headers: {
+
           Authorization: `Bearer ${this.internalToken()}`,
+
           'Content-Type': 'application/json',
+
           'x-idempotency-key': opts.idemKey,
+
         },
+
       },
+
     );
+
     return data.data;
+
   }
 
   private async walletSpend(
+
     globalUserId: string,
+
     spendAmount: number,
+
     idemKey: string,
+
     bizType: string,
+
   ) {
+
     const { data } = await axios.post(
+
       `${this.walletBase()}/wallet/spend`,
+
       {
+
         global_user_id: globalUserId,
+
         biz_type: bizType,
+
         spend_amount: spendAmount,
+
         spend_strategy: 'locked_first',
+
         ref_type: 'gateway',
+
         ref_id: null,
+
         remark: null,
+
       },
+
       {
+
         headers: {
+
           Authorization: `Bearer ${this.internalToken()}`,
+
           'Content-Type': 'application/json',
+
           'x-idempotency-key': idemKey,
+
         },
+
       },
+
     );
+
     return data.data;
+
   }
 
   private async walletRecycle(
+
     globalUserId: string,
+
     recycleAmount: number,
+
     idemKey: string,
+
     originAmount: number = 3,
+
   ) {
+
     const { data } = await axios.post(
+
       `${this.walletBase()}/wallet/recycle`,
+
       {
+
         global_user_id: globalUserId,
+
         biz_type: 'claw_recycle',
+
         origin_amount: originAmount,
+
         recycle_amount: recycleAmount,
+
         split_rule: { locked_ratio: 0.6, cashable_ratio: 0.4 },
+
         ref_type: 'gateway',
+
         ref_id: null,
+
       },
+
       {
+
         headers: {
+
           Authorization: `Bearer ${this.internalToken()}`,
+
           'Content-Type': 'application/json',
+
           'x-idempotency-key': idemKey,
+
         },
+
       },
+
     );
+
     return data.data;
+
   }
 
   async me(opts: { devTelegramId: string; telegramInitData: string }) {
+
     const tg = this.getTelegramUserInfo(
+
       opts.devTelegramId,
+
       opts.telegramInitData,
+
     );
+
     if (!tg) throw new BadRequestException('missing telegram id');
 
     const linked = await this.linkUser(tg);
+
     const wallet = await this.getWallet(linked.global_user_id);
 
     const abaName = String(process.env.ABA_NAME || '').trim();
+
     const abaId = String(process.env.ABA_ID || '').trim();
+
     let usdtTrc20Address = '';
+
     if (this.settlecoreApiKey()) {
+
       try {
+
         await this.settlecoreLogin(tg);
+
         const addr = await this.settlecoreDepositAddress(tg.telegram_id);
+
         usdtTrc20Address = String(addr?.address || '').trim();
+
       } catch {
+
         usdtTrc20Address = '';
+
       }
+
     }
 
     // If dev mode and username is empty, try to fill from database
+
     if (!tg.username && !tg.first_name) {
+
       try {
+
         const pg = this.getOpsPg();
+
         if (pg) {
+
           const r = await pg.query(
+
             'SELECT username FROM identity.global_users WHERE telegram_id = $1 LIMIT 1',
+
             [tg.telegram_id],
+
           );
+
           if (r.rows.length > 0 && r.rows[0].username) {
+
             tg.username = String(r.rows[0].username || '').trim();
+
             tg.first_name = tg.username;
+
           }
+
         }
+
       } catch {
+
         // silently fall back
+
       }
+
     }
 
     let referralCode = `ref_${String(linked.global_user_id).slice(0, 8)}`;
+
     try {
+
       if (this.getOpsPg()) {
+
         const ensured = await this.opsEnsureReferralCode({ globalUserId: linked.global_user_id });
+
         referralCode = ensured.referral_code;
+
       }
+
     } catch {
+
       void 0;
+
     }
+
     return {
+
       code: 0,
+
       message: 'ok',
+
       data: {
+
         telegram: {
+
           id: tg.telegram_id,
+
           username: tg.username,
+
           first_name: tg.first_name,
+
           last_name: tg.last_name,
+
         },
+
         user: {
+
           global_user_id: linked.global_user_id,
+
           plays_left: Math.max(0, Math.floor(Number(wallet?.points_total || 0) / 3)),
+
           state: 'idle',
+
           referral_code: referralCode,
+
         },
+
         wallet,
+
         pricing: { playUsd: 1.5, bundle3xUsd: 4, bundle10xUsd: 13 },
+
         pay: { usdtTrc20Address, abaName, abaId, payLink: process.env.ABA_PAYLINK || '' },
+
         links: {
+
           referral: `https://t.me/rainbowpay_claw_Bot?start=${referralCode}`,
+
         },
+
         shipping: null,
+
       },
+
     };
+
   }
 
   async wallet(opts: {
+
     devTelegramId: string;
+
     telegramInitData: string;
+
     limit: number;
+
   }) {
+
     const tg = this.getTelegramUserInfo(
+
       opts.devTelegramId,
+
       opts.telegramInitData,
+
     );
+
     if (!tg) throw new BadRequestException('missing telegram id');
 
     const linked = await this.linkUser(tg);
+
     const wallet = await this.getWallet(linked.global_user_id);
+
     const logs = await this.getWalletLogs(linked.global_user_id, opts.limit);
 
     return { code: 0, message: 'ok', data: { wallet, logs: logs.logs || [] } };
+
   }
 
   async devAddPlays(opts: {
+
     devTelegramId: string;
+
     telegramInitData: string;
+
     count: number;
+
   }) {
+
     const tg = this.getTelegramUserInfo(
+
       opts.devTelegramId,
+
       opts.telegramInitData,
+
     );
+
     if (!tg) throw new BadRequestException('missing telegram id');
 
     const linked = await this.linkUser(tg);
+
     const n = Math.min(100, Math.max(1, Number(opts.count || 10)));
+
     const points = n * 3;
+
     await this.walletEarn(
+
       linked.global_user_id,
+
       points,
+
       `devAddPlays:${tg.telegram_id}:${n}:${Date.now()}`,
+
       'recharge',
+
     );
+
     const wallet = await this.getWallet(linked.global_user_id);
+
     return { code: 0, message: 'ok', data: { wallet } };
+
   }
 
   private isInsufficientPointsError(e: any) {
+
     if (!axios.isAxiosError(e)) return false;
+
     if (e.response?.status !== 400) return false;
+
     const data: any = e.response?.data;
+
     const msg =
+
       typeof data?.message === 'string'
+
         ? data.message
+
         : Array.isArray(data?.message)
+
           ? data.message.map(String).join('; ')
+
           : '';
+
     return msg.includes('insufficient points');
+
   }
 
   async play(opts: {
+
     devTelegramId: string;
+
     telegramInitData: string;
+
     multi: number;
+
   }) {
+
     const tg = this.getTelegramUserInfo(
+
       opts.devTelegramId,
+
       opts.telegramInitData,
+
     );
+
     if (!tg) throw new BadRequestException('missing telegram id');
 
     const linked = await this.linkUser(tg);
+
     const m = Number(opts.multi || 1) === 10 ? 10 : 1;
+
     const plays = [] as any[];
 
+    // Weighted random prize selection function
+    function pickPrize(rows: any[]): any {
+      if (!rows || rows.length === 0) return { name: '普通奖品', display_name: '普通奖品' };
+      const rand = Math.random();
+      let cumulative = 0;
+      for (const p of rows) {
+        cumulative += Number(p.probability || 0);
+        if (rand <= cumulative) {
+          return { name: p.prize_name, display_name: p.display_name };
+        }
+      }
+      return { name: rows[rows.length - 1].prize_name, display_name: rows[rows.length - 1].display_name };
+    }
+
+    // Fetch prizes from DB for weighted random selection
+    const pg = this.getOpsPg();
+    if (!pg) throw new Error('ops db unavailable');
+    const prizes = await pg.query(
+      'SELECT prize_name, display_name, probability FROM claw.prizes WHERE status = $1 AND pool_id = $2 ORDER BY id',
+      ['active', 'pool_default'],
+    ).catch(() => ({ rows: [] }));
+    const prizeRows = prizes?.rows || [];
+      const selectedPrize = pickPrize(prizeRows);
+
     for (let i = 0; i < m; i += 1) {
+
       const ts = Date.now();
+
       const playId = `p_${tg.telegram_id}_${ts}_${i}`;
+
       const orderExternalId = `o_${tg.telegram_id}_${ts}_${i}`;
+
       const spendIdem = `playSpend:${orderExternalId}`;
+
       const recycleIdem = `playRecycle:${orderExternalId}`;
 
       try {
+
         await this.walletSpend(
+
           linked.global_user_id,
+
           3,
+
           spendIdem,
+
           'claw_consume',
+
         );
+
       } catch (e: any) {
+
         if (this.isInsufficientPointsError(e))
+
           throw new BadRequestException('no plays left');
+
         throw new BadGatewayException('wallet service unavailable');
+
       }
 
       await this.orderCreate(
+
         {
+
           order_id: orderExternalId,
+
           type: 'claw',
+
           status: 'paid',
+
           amount: 3,
+
           currency: 'points',
+
           flow: 'income',
+
           user_id: linked.global_user_id,
+
           metadata: {
+
             action: 'play',
+
             play_id: playId,
+
             telegram_id: tg.telegram_id,
+
             source_bot: tg.source_bot,
+
+            prize_name: selectedPrize ? selectedPrize.name : '普通奖品',
+
+            prize_display: selectedPrize ? selectedPrize.display_name : '普通奖品',
+
+            prize_tier: selectedPrize && selectedPrize.name !== '普通奖品' ? 'rare' : 'common',
+
           },
+
         },
+
         spendIdem,
+
       ).catch(() => null);
 
       await this.walletRecycle(
+
         linked.global_user_id,
+
         2.4,
+
         recycleIdem,
+
       );
 
       await this.orderCreate(
+
         {
+
           order_id: `${orderExternalId}_recycle`,
+
           type: 'claw',
+
           status: 'posted',
+
           amount: 2.4,
+
           currency: 'points',
+
           flow: 'expense',
+
           user_id: linked.global_user_id,
+
           metadata: {
+
             action: 'recycle',
+
             play_id: playId,
+
             origin_amount: 3,
+
           },
+
         },
+
         recycleIdem,
+
       ).catch(() => null);
 
-      plays.push({
+          plays.push({
+
         play_id: playId,
+
         order_id: orderExternalId,
-        tier: 'common',
+
+        tier: selectedPrize.name === '普通奖品' ? 'common' : 'rare',
+
         near_miss_tier: null,
-        prize: { name: '普通奖品', display_name: '普通奖品' },
+
+        prize: selectedPrize,
+
       });
+
     }
 
     const wallet = await this.getWallet(linked.global_user_id);
+
     const aiBase = this.aiBase();
+
     let ai_recommendation: any = null;
 
     if (aiBase && this.enableRecommendOnPlay()) {
+
       try {
+
         const candidates = await this.products();
+
         const products = Array.isArray(candidates?.data?.products)
+
           ? candidates.data.products
+
           : [];
+
         const payload = {
+
           user_profile: {
+
             global_user_id: linked.global_user_id,
+
             pet_type: null,
+
             spend_level: null,
+
             tags: [],
+
           },
+
           recent_actions: ['play_completed'],
+
           last_result: { plays: plays.slice(-1) },
+
           candidate_products: products.map((p: any) => ({
+
             id: p.id,
+
             title: p.display_name || p.name,
+
             category: 'shop',
+
             price: p.direct_buy_price,
+
             sales_7d: p.sales_7d,
+
           })),
+
           candidate_entries: ['claw', 'shop', 'memorial'],
+
         };
+
         const res = await this.internalPost<any>(
+
           `${aiBase}/ai/recommend/next`,
+
           payload,
+
           {
+
             'x-global-user-id': linked.global_user_id,
+
           },
+
         );
+
         ai_recommendation = res?.data || null;
+
       } catch {}
+
     }
 
     return {
+
       code: 0,
+
       message: 'ok',
+
       data: { plays, plays_left: Math.max(0, Math.floor(Number(wallet?.points_total || 0) / 3)), wallet, ai_recommendation },
+
     };
+
   }
 
   async events(opts: {
+
     devTelegramId: string;
+
     telegramInitData: string;
+
     body: any;
+
   }) {
+
     const eventName = String(opts?.body?.event_name || '').trim();
+
     if (!eventName) throw new BadRequestException('event_name required');
+
     const sourceBot = String(opts?.body?.source_bot || opts?.body?.source || 'webapp').trim();
+
     const eventData =
+
       opts?.body?.event_data && typeof opts.body.event_data === 'object'
+
         ? opts.body.event_data
+
         : {};
 
     const idem =
+
       String(opts?.body?.idempotency_key || '').trim() ||
+
       String(eventData?.idempotency_key || '').trim() ||
+
       '';
 
     const normalizedEventData = this.normalizeEventData(eventName, eventData);
+
     this.assertEventData(eventName, normalizedEventData);
 
     let globalUserId = String(opts?.body?.global_user_id || '').trim();
+
     let tg: TelegramUserInfo | null = null;
+
     if (!globalUserId) {
+
       tg = this.getTelegramUserInfo(opts.devTelegramId, opts.telegramInitData);
+
       if (tg) {
+
         const linked = await this.linkUser(tg);
+
         globalUserId = String(linked.global_user_id || '').trim();
+
       }
+
     }
 
     if (!globalUserId) return { code: 0, message: 'ok', data: { accepted: false } };
 
     const eventPayload: any = {
+
       event_name: eventName,
+
       global_user_id: globalUserId,
+
       source_bot: sourceBot,
+
       idempotency_key: idem || null,
+
       ...(tg
+
         ? {
+
             source_user_id: String(tg.telegram_id),
+
             telegram_id: tg.telegram_id,
+
           }
+
         : {}),
+
       event_data: {
+
         ...normalizedEventData,
+
         idempotency_key: idem || normalizedEventData?.idempotency_key || null,
+
       },
+
     };
 
     await this.internalPost(
+
       `${this.bridgeBase()}/bridge/events`,
+
       eventPayload,
+
       {},
+
     );
 
     void this.crmUpsertFromEvent(eventPayload).catch(() => void 0);
+
     return { code: 0, message: 'ok', data: { accepted: true } };
+
   }
 
   private normalizeEventData(_eventName: string, raw: any) {
+
     const obj = raw && typeof raw === 'object' ? raw : {};
+
     const utm = obj.utm && typeof obj.utm === 'object' ? obj.utm : {};
+
     const ref = obj.ref && typeof obj.ref === 'object' ? obj.ref : {};
+
     const country = obj.country != null ? String(obj.country).trim() : '';
+
     const city = obj.city != null ? String(obj.city).trim() : '';
+
     const language = obj.language != null ? String(obj.language).trim() : '';
+
     const sessionId = obj.session_id != null ? String(obj.session_id).trim() : '';
+
     return {
+
       ...obj,
+
       country: country || null,
+
       city: city || null,
+
       language: language || null,
+
       session_id: sessionId || null,
+
       utm,
+
       ref,
+
     };
+
   }
 
   private isEventStrictMode() {
+
     return String(process.env.EVENT_STRICT || '').trim() === 'true';
+
   }
 
   private assertEventData(eventName: string, data: any) {
+
     if (!this.isEventStrictMode()) return;
+
     const critical = new Set([
+
       'ad_click',
+
       'landing_view',
+
       'lead_submit',
+
       'chat_started',
+
       'quote_sent',
+
       'order_created',
+
       'payment_proof_uploaded',
+
       'aftercare_intake_submitted',
+
     ]);
+
     if (!critical.has(eventName)) return;
+
     const country = String(data?.country || '').trim();
+
     const language = String(data?.language || '').trim();
+
     const sessionId = String(data?.session_id || '').trim();
+
     const utmOk = data?.utm && typeof data.utm === 'object';
+
     const refOk = data?.ref && typeof data.ref === 'object';
+
     if (!country || !['VN', 'KH', 'TH'].includes(country))
+
       throw new BadRequestException('event_data.country required');
+
     if (!language) throw new BadRequestException('event_data.language required');
+
     if (!sessionId) throw new BadRequestException('event_data.session_id required');
+
     if (!utmOk) throw new BadRequestException('event_data.utm required');
+
     if (!refOk) throw new BadRequestException('event_data.ref required');
+
   }
 
   private stableLeadId(input: string) {
+
     const s = String(input || '').trim();
+
     if (!s) return '';
+
     return createHash('sha256').update(s).digest('hex').slice(0, 16);
+
   }
 
   private async crmUpsertFromEvent(payload: any) {
+
     const pg = this.getOpsPg();
+
     if (!pg) return;
 
     const eventName = String(payload?.event_name || '').trim();
+
     const globalUserId = String(payload?.global_user_id || '').trim();
+
     if (!eventName || !globalUserId) return;
 
     const data =
+
       payload?.event_data && typeof payload.event_data === 'object'
+
         ? payload.event_data
+
         : {};
 
     const country = String(data?.country || '').trim() || null;
+
     const city = String(data?.city || '').trim() || null;
+
     const language = String(data?.language || '').trim() || null;
+
     const channel =
+
       String(data?.utm?.source || data?.channel || payload?.source_bot || '').trim() || null;
+
     const sessionId = String(data?.session_id || '').trim() || null;
+
     const leadId =
+
       String(data?.lead_id || '').trim() ||
+
       this.stableLeadId(
+
         [globalUserId, sessionId || '', channel || ''].filter(Boolean).join(':'),
+
       );
+
     if (!leadId) return;
 
     const intent =
+
       eventName.includes('aftercare')
+
         ? 'aftercare'
+
         : eventName.includes('order') || eventName.includes('checkout')
+
           ? 'shop'
+
           : null;
 
     const stage =
+
       eventName === 'lead_submit' || eventName === 'chat_started'
+
         ? 'new'
+
         : eventName === 'quote_sent'
+
           ? 'quoted'
+
           : eventName === 'order_created' || eventName === 'checkout_completed'
+
             ? 'ordered'
+
             : eventName === 'payment_confirmed'
+
               ? 'paid'
+
               : null;
 
     const utm = data?.utm && typeof data.utm === 'object' ? data.utm : null;
+
     const ref = data?.ref && typeof data.ref === 'object' ? data.ref : null;
+
     const now = new Date();
 
     await pg.query(
+
       `INSERT INTO crm.leads (
+
           lead_id,
+
           global_user_id,
+
           country,
+
           city,
+
           language,
+
           channel,
+
           intent,
+
           stage,
+
           session_id,
+
           utm,
+
           ref,
+
           last_event_at,
+
           created_at,
+
           updated_at
+
         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11::jsonb,$12,$12,$12)
+
         ON CONFLICT (lead_id) DO UPDATE SET
+
           global_user_id = EXCLUDED.global_user_id,
+
           country = COALESCE(EXCLUDED.country, crm.leads.country),
+
           city = COALESCE(EXCLUDED.city, crm.leads.city),
+
           language = COALESCE(EXCLUDED.language, crm.leads.language),
+
           channel = COALESCE(EXCLUDED.channel, crm.leads.channel),
+
           intent = COALESCE(EXCLUDED.intent, crm.leads.intent),
+
           stage = COALESCE(EXCLUDED.stage, crm.leads.stage),
+
           session_id = COALESCE(EXCLUDED.session_id, crm.leads.session_id),
+
           utm = COALESCE(EXCLUDED.utm, crm.leads.utm),
+
           ref = COALESCE(EXCLUDED.ref, crm.leads.ref),
+
           last_event_at = EXCLUDED.last_event_at,
+
           updated_at = EXCLUDED.updated_at`,
+
       [
+
         leadId,
+
         globalUserId,
+
         country,
+
         city,
+
         language,
+
         channel,
+
         intent,
+
         stage,
+
         sessionId,
+
         utm ? JSON.stringify(utm) : null,
+
         ref ? JSON.stringify(ref) : null,
+
         now,
+
       ],
+
     );
 
     if (stage) {
+
       await pg.query(
+
         `INSERT INTO crm.lead_stage_logs (lead_id, from_stage, to_stage, reason, created_at)
+
          VALUES ($1,$2,$3,$4,$5)`,
+
         [leadId, null, stage, eventName, now],
+
       );
+
     }
 
     await pg.query(
+
       `INSERT INTO crm.lead_events (lead_id, global_user_id, event_name, source_bot, idempotency_key, event_data, created_at)
+
        VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7)`,
+
       [
+
         leadId,
+
         globalUserId,
+
         eventName,
+
         String(payload?.source_bot || ''),
+
         String(payload?.idempotency_key || '') || null,
+
         JSON.stringify(data || {}),
+
         now,
+
       ],
+
     );
 
     try {
+
       const bot = String(payload?.source_bot || '').includes('claw') ? 'claw' : 'rainbow';
+
       const chatId = data?.chat_id != null ? String(data.chat_id) : data?.telegram_id != null ? String(data.telegram_id) : '';
 
       const insertFollowup = async (templateKey: string, minutes: number, message: string) => {
+
         const dueAt = new Date(Date.now() + minutes * 60 * 1000);
+
         const dedupeKey = this.stableDedupeKey('p1_fu', {
+
           lead_id: leadId,
+
           template_key: templateKey,
+
           due_min: minutes,
+
         });
+
         await pg.query(
+
           `INSERT INTO crm.followups (lead_id, channel, dedupe_key, status, due_at, template_key, payload, last_error, created_at, updated_at)
+
            VALUES ($1,$2,$3,'pending',$4,$5,$6::jsonb,NULL,$7,$7)
+
            ON CONFLICT (dedupe_key) DO NOTHING`,
+
           [
+
             leadId,
+
             channel || 'telegram',
+
             dedupeKey,
+
             dueAt,
+
             templateKey,
+
             JSON.stringify({ bot, ...(chatId ? { chat_id: chatId } : {}), message }),
+
             now,
+
           ],
+
         );
+
       };
 
       if (eventName === 'lead_submit') {
+
         await insertFollowup(
+
           'P0_WELCOME',
+
           0,
+
           '你好，我是 RainbowPaw。想让我根据你宠物的年龄/体重/健康问题，推荐一个最省钱的护理组合吗？回复“推荐”。',
+
         );
+
         await insertFollowup(
+
           'P0_CARE_2H',
+
           120,
+
           '提醒一下：我可以给你一份 1 分钟护理建议（含推荐产品/禁忌点）。需要的话回复“护理”。',
+
         );
+
       }
 
       if (eventName === 'order_created' || eventName === 'checkout_started' || eventName === 'checkout_completed') {
+
         await insertFollowup(
+
           'P0_PAY_2H',
+
           120,
+
           '你好，刚才的订单是否遇到支付/下单问题？我可以帮你快速完成（也可发支付凭证截图）。',
+
         );
+
         await insertFollowup(
+
           'P0_PAY_24H',
+
           1440,
+
           '昨天的护理包订单还需要我协助吗？如果方便，告诉我宠物类型+年龄+主要问题，我给你最合适的方案。',
+
         );
+
       }
 
       if (eventName.includes('aftercare')) {
+
         await insertFollowup(
+
           'P0_AFTERCARE_2H',
+
           120,
+
           '关于善终咨询，我需要确认 3 个信息：城市/宠物体重/希望时间。你方便回复一下吗？',
+
         );
+
       }
+
     } catch {
+
       void 0;
+
     }
+
   }
 
   async products() {
+
     return {
+
       code: 0,
+
       message: 'ok',
+
       data: {
+
         products: [
+
           {
+
             id: 101,
+
             name: '高级玩具 A',
+
             display_name: '高级玩具 A',
+
             direct_buy_price: 10,
+
             sales_7d: 12,
+
           },
+
           {
+
             id: 102,
+
             name: '纪念金币',
+
             display_name: '纪念金币',
+
             direct_buy_price: 25,
+
             sales_7d: 8,
+
           },
+
         ],
+
       },
+
     };
+
   }
 
   async marketplaceProducts(opts: { category?: string; lang?: any }) {
+
     try {
+
       const items = await this.marketplaceDbListProducts(opts || {});
+
       if (items && items.length) return { code: 0, message: 'ok', data: { items } };
+
       return { code: 0, message: 'ok', data: { items } };
+
     } catch {
+
       const category = String(opts?.category || '').trim();
+
       const list = category
+
         ? this.marketplaceProductsStore.filter(
+
             (p) => String(p.category) === category,
+
           )
+
         : this.marketplaceProductsStore;
+
       const items = list.map((p: any) => {
+
         const txt = this.resolveProductTextByLang(p, opts?.lang);
+
         return {
+
           ...p,
+
           name: txt.name,
+
           category_label: txt.category_label,
+
           description: txt.description,
+
         };
+
       });
+
       return { code: 0, message: 'ok', data: { items } };
+
     }
+
   }
 
   async marketplaceProduct(opts: { id: string; lang?: any }) {
+
     try {
+
       const p = await this.marketplaceDbGetProduct(opts || ({} as any));
+
       return { code: 0, message: 'ok', data: p };
+
     } catch {
+
       const id = Number(opts?.id);
+
       if (!Number.isFinite(id))
+
         throw new BadRequestException('invalid product id');
+
       const p = this.marketplaceProductsStore.find((x) => Number(x.id) === id);
+
       if (!p) throw new BadRequestException('product not found');
+
       const txt = this.resolveProductTextByLang(p, opts?.lang);
+
       return {
+
         code: 0,
+
         message: 'ok',
+
         data: {
+
           ...p,
+
           name: txt.name,
+
           category_label: txt.category_label,
+
           description: txt.description,
+
         },
+
       };
+
     }
+
   }
 
   async marketplaceServices(opts: { city?: string; category?: string }) {
+
     const city = String(opts?.city || '').trim();
+
     const category = String(opts?.category || '').trim();
+
     let list = this.marketplaceServicesStore;
+
     if (city)
+
       list = list.filter(
+
         (s) => String(s.city || '').toLowerCase() === city.toLowerCase(),
+
       );
+
     if (category)
+
       list = list.filter(
+
         (s) =>
+
           String(s.category || '').toLowerCase() === category.toLowerCase(),
+
       );
+
     return { code: 0, message: 'ok', data: { items: list } };
+
   }
 
   private normalizePhone(raw: any) {
+
     const phone = String(raw || '').trim();
+
     if (!phone) throw new BadRequestException('phone required');
+
     return phone;
+
   }
 
   private ensureCart(phone: string) {
+
     if (!this.cartByPhone.has(phone))
+
       this.cartByPhone.set(phone, { items: [] });
+
     return this.cartByPhone.get(phone)!;
+
   }
 
   private calcCart(cart: { items: any[] }) {
+
     const subtotal = (cart.items || []).reduce(
+
       (s, it) =>
+
         it.selected
+
           ? s + Number(it.unit_price_cents || 0) * Number(it.quantity || 0)
+
           : s,
+
       0,
+
     );
+
     return { items: cart.items, subtotal_cents: subtotal, currency: 'USD' };
+
   }
 
   async cart(opts: { phone: string }) {
+
     const phone = this.normalizePhone(opts.phone);
+
     const cart = this.ensureCart(phone);
+
     return { code: 0, message: 'ok', data: this.calcCart(cart) };
+
   }
 
   async cartAddItem(body: any) {
+
     const phone = this.normalizePhone(body?.phone);
+
     const productId = Number(body?.product_id);
+
     const quantity = Math.max(1, Number(body?.quantity || 1));
+
     if (!Number.isFinite(productId))
+
       throw new BadRequestException('invalid product_id');
 
     const p = await this.marketplaceGetProductById(productId, body?.lang);
+
     if (!p) throw new BadRequestException('product not found');
 
     const cart = this.ensureCart(phone);
+
     const existed = cart.items.find((x) => Number(x.product_id) === productId);
+
     if (existed) {
+
       existed.quantity = Math.max(1, Number(existed.quantity || 1) + quantity);
+
       existed.selected = true;
+
     } else {
+
       cart.items.unshift({
+
         id: `ci_${randomUUID()}`,
+
         phone,
+
         product_id: productId,
+
         name: p.name,
+
         image_url: this.marketplaceFirstImageUrl(p.images),
+
         unit_price_cents: p.price_cents,
+
         quantity,
+
         selected: true,
+
       });
+
     }
 
     return { code: 0, message: 'ok', data: this.calcCart(cart) };
+
   }
 
   async cartPatchItem(body: any) {
+
     const phone = this.normalizePhone(body?.phone);
+
     const id = String(body?.id || '').trim();
+
     if (!id) throw new BadRequestException('id required');
+
     const cart = this.ensureCart(phone);
+
     const it = cart.items.find((x) => String(x.id) === id);
+
     if (!it) throw new BadRequestException('cart item not found');
+
     if (typeof body?.quantity !== 'undefined')
+
       it.quantity = Math.max(1, Number(body.quantity || 1));
+
     if (typeof body?.selected !== 'undefined')
+
       it.selected = Boolean(body.selected);
+
     return { code: 0, message: 'ok', data: this.calcCart(cart) };
+
   }
 
   async cartDeleteItem(opts: { id: string; phone: string }) {
+
     const phone = this.normalizePhone(opts.phone);
+
     const id = String(opts.id || '').trim();
+
     const cart = this.ensureCart(phone);
+
     cart.items = cart.items.filter((x) => String(x.id) !== id);
+
     return { code: 0, message: 'ok', data: this.calcCart(cart) };
+
   }
 
   private pushOrder(phone: string, order: any) {
+
     if (!this.ordersByPhone.has(phone)) this.ordersByPhone.set(phone, []);
+
     this.ordersByPhone.get(phone)!.unshift(order);
+
   }
 
   private hashShort(input: string) {
+
     const s = String(input || '').trim();
+
     if (!s) return '';
+
     return createHash('sha256').update(s).digest('hex').slice(0, 12);
+
   }
 
   private async runIdempotent<T>(key: string, ttlMs: number, fn: () => Promise<T>) {
+
     const k = String(key || '').trim();
+
     if (!k) return fn();
+
     const now = Date.now();
+
     const existed = this.idempotencyCache.get(k);
+
     if (existed && existed.expiresAt > now) return existed.promise as Promise<T>;
+
     for (const [kk, vv] of this.idempotencyCache.entries()) {
+
       if (vv.expiresAt <= now) this.idempotencyCache.delete(kk);
+
     }
+
     const p = fn();
+
     this.idempotencyCache.set(k, { expiresAt: now + ttlMs, promise: p });
+
     try {
+
       return await p;
+
     } catch (e) {
+
       this.idempotencyCache.delete(k);
+
       throw e;
+
     }
+
   }
 
   async marketplaceCreateOrder(body: any, opts?: { idempotency_key?: string }) {
+
     const phone = this.normalizePhone(body?.phone);
+
     const orderType = String(body?.order_type || '').trim();
+
     if (orderType !== 'product' && orderType !== 'service')
+
       throw new BadRequestException('invalid order_type');
+
     const idem = String(opts?.idempotency_key || '').trim();
+
     const idemKey = idem ? `mp_order:${phone}:${idem}` : '';
+
     return this.runIdempotent(idemKey, 10 * 60 * 1000, async () => {
+
       const now = new Date();
+
       const orderId = idem ? `rpw_${this.hashShort(idem)}` : `rpw_${now.getTime()}`;
+
       const city = String(body?.city || '').trim();
 
     if (orderType === 'product') {
+
       const items = Array.isArray(body?.product_items)
+
         ? body.product_items
+
         : [];
+
       if (!items.length)
+
         throw new BadRequestException('product_items required');
 
       const details = [] as any[];
+
       for (const x of items) {
+
         const pid = Number(x?.product_id);
+
         const qty = Math.max(1, Number(x?.quantity || 1));
+
         if (!Number.isFinite(pid))
+
           throw new BadRequestException('invalid product_id');
+
         const p = await this.marketplaceGetProductById(pid, body?.lang);
+
         if (!p) throw new BadRequestException('product not found');
+
         details.push({
+
           product_id: Number(p.id),
+
           name: p.name,
+
           unit_price_cents: p.price_cents,
+
           quantity: qty,
+
         });
+
       }
 
       const total = details.reduce(
+
         (s: number, x: any) => s + x.unit_price_cents * x.quantity,
+
         0,
+
       );
+
       const legacy = {
+
         order_id: orderId,
+
         phone,
+
         order_type: 'product',
+
         city: city || undefined,
+
         status: 'pending',
+
         total_cents: total,
+
         currency: 'USD',
+
         created_at: now.toISOString(),
+
         items: details,
+
       };
+
       this.pushOrder(phone, legacy);
+
       await this.notifyAdminsOrderCreated({
+
         orderId,
+
         orderType: 'product',
+
         phone,
+
         totalUsd: total / 100,
+
         city: city || undefined,
+
         source: String(body?.conversation_channel || 'web'),
+
       }).catch(() => null);
 
       await this.orderCreate(
+
         {
+
           order_id: orderId,
+
           type: 'product',
+
           status: 'created',
+
           amount: total / 100,
+
           currency: 'usd',
+
           flow: 'income',
+
           user_id: phone,
+
           metadata: legacy,
+
         },
+
         idemKey,
+
       ).catch(() => null);
+
       return { code: 0, message: 'ok', data: { order_id: orderId } };
+
     }
 
     const legacy = {
+
       order_id: orderId,
+
       phone,
+
       order_type: 'service',
+
       city: city || undefined,
+
       pickup_address: String(body?.pickup_address || '').trim() || undefined,
+
       status: 'pending',
+
       total_cents: 0,
+
       currency: 'USD',
+
       created_at: now.toISOString(),
+
       meta: {
+
         match_mode: String(body?.match_mode || 'platform'),
+
         category: String(body?.category || ''),
+
       },
+
     };
+
     this.pushOrder(phone, legacy);
+
     await this.notifyAdminsOrderCreated({
+
       orderId,
+
       orderType: 'service',
+
       phone,
+
       totalUsd: 0,
+
       city: city || undefined,
+
       pickupAddress: legacy.pickup_address,
+
       source: String(body?.conversation_channel || 'web'),
+
     }).catch(() => null);
 
     await this.orderCreate(
+
       {
+
         order_id: orderId,
+
         type: 'service',
+
         status: 'created',
+
         amount: 0,
+
         currency: 'usd',
+
         flow: 'income',
+
         user_id: phone,
+
         metadata: legacy,
+
       },
+
       idemKey,
+
     ).catch(() => null);
+
     return { code: 0, message: 'ok', data: { order_id: orderId } };
+
     });
+
   }
 
   async marketplaceCheckout(body: any, opts?: { idempotency_key?: string }) {
+
     const phone = this.normalizePhone(body?.phone);
+
     const idem = String(opts?.idempotency_key || '').trim();
+
     const idemKey = idem ? `mp_checkout:${phone}:${idem}` : '';
+
     return this.runIdempotent(idemKey, 10 * 60 * 1000, async () => {
+
       const cart = this.ensureCart(phone);
+
       const selected = (cart.items || []).filter((x) => x.selected);
+
       if (!selected.length) throw new BadRequestException('no selected items');
 
       const now = new Date();
+
       const orderId = idem ? `rpw_${this.hashShort(idem)}` : `rpw_${now.getTime()}`;
+
       const total = selected.reduce(
+
         (s: number, x: any) =>
+
           s + Number(x.unit_price_cents || 0) * Number(x.quantity || 0),
+
         0,
+
       );
+
       const items = selected.map((x: any) => ({
+
         product_id: x.product_id,
+
         name: x.name,
+
         unit_price_cents: x.unit_price_cents,
+
         quantity: x.quantity,
+
       }));
 
       const legacy = {
+
         order_id: orderId,
+
         phone,
+
         order_type: 'checkout',
+
         status: 'pending',
+
         total_cents: total,
+
         currency: 'USD',
+
         created_at: now.toISOString(),
+
         items,
+
         pickup_address: String(body?.pickup_address || '').trim() || undefined,
+
         meta: {
+
           conversation_channel: String(body?.conversation_channel || 'web'),
+
         },
+
       };
 
       this.pushOrder(phone, legacy);
 
       await this.notifyAdminsOrderCreated({
+
         orderId,
+
         orderType: 'checkout',
+
         phone,
+
         totalUsd: total / 100,
+
         pickupAddress: legacy.pickup_address,
+
         source: String(body?.conversation_channel || 'web'),
+
       }).catch(() => null);
 
       await this.orderCreate(
+
         {
+
           order_id: orderId,
+
           type: 'product',
+
           status: 'created',
+
           amount: total / 100,
+
           currency: 'usd',
+
           flow: 'income',
+
           user_id: phone,
+
           metadata: legacy,
+
         },
+
         idemKey,
+
       ).catch(() => null);
 
       cart.items = cart.items.filter((x: any) => !x.selected);
+
       return { code: 0, message: 'ok', data: { order_id: orderId } };
+
     });
+
   }
 
   async adminDashboardSummary() {
+
     const now = new Date();
+
     const yyyy = now.getUTCFullYear();
+
     const mm = String(now.getUTCMonth() + 1).padStart(2, '0');
+
     const dd = String(now.getUTCDate()).padStart(2, '0');
+
     const date = `${yyyy}-${mm}-${dd}`;
+
     const start = new Date(`${date}T00:00:00.000Z`);
+
     const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
 
     let revenueUsd = 0;
+
     let costUsd = 0;
+
     let profitUsd = 0;
+
     let clawPlays = 0;
+
     let conversionRate = 0;
+
     let anomalies: any[] = [];
+
     let funnel: any = null;
 
     try {
+
       const res = await this.internalGet<any>(`${this.reportBase()}/reports/daily`, { date });
+
       const d = res?.data || {};
+
       revenueUsd = Number(d?.revenue?.usd || 0);
+
       costUsd = Number(d?.cost?.usd || 0);
+
       profitUsd = Number(d?.profit?.usd || 0);
+
       clawPlays = Number(d?.claw_plays || 0);
+
       conversionRate = Number(d?.funnel?.conversion_rate || 0);
+
       anomalies = Array.isArray(d?.anomalies) ? d.anomalies : [];
+
       funnel = d?.funnel || null;
+
     } catch {
+
       try {
+
         const r = await this.opsQuery<any>(
+
           `SELECT
+
              COALESCE(SUM(CASE WHEN flow='income' THEN amount ELSE 0 END),0)::float AS income_points,
+
              COALESCE(SUM(CASE WHEN flow='expense' THEN amount ELSE 0 END),0)::float AS expense_points
+
            FROM orders.orders
+
            WHERE currency='points'
+
              AND created_at >= $1 AND created_at < $2`,
+
           [start, end],
+
         );
+
         const incomePoints = Number(r.rows?.[0]?.income_points || 0);
+
         const expensePoints = Number(r.rows?.[0]?.expense_points || 0);
+
         revenueUsd = incomePoints / 2;
+
         costUsd = expensePoints / 2;
+
         profitUsd = revenueUsd - costUsd;
 
         const p = await this.opsQuery<any>(
+
           `SELECT COUNT(*)::int AS cnt
+
            FROM orders.orders
+
            WHERE type='claw' AND flow='income' AND (metadata->>'action')='play'
+
              AND created_at >= $1 AND created_at < $2`,
+
           [start, end],
+
         );
+
         clawPlays = Number(p.rows?.[0]?.cnt || 0);
+
       } catch {}
+
     }
 
     let newUsers = 0;
+
     try {
+
       const r = await this.opsQuery<any>(
+
         `SELECT COUNT(*)::int AS cnt FROM identity.global_users WHERE created_at >= $1 AND created_at < $2`,
+
         [start, end],
+
       );
+
       newUsers = Number(r.rows?.[0]?.cnt || 0);
+
     } catch {}
 
     let withdrawPending = 0;
+
     try {
+
       const r = await this.opsQuery<any>(
+
         `SELECT COUNT(*)::int AS cnt FROM wallet.withdraw_requests WHERE status IN ('pending','approved')`,
+
         [],
+
       );
+
       withdrawPending = Number(r.rows?.[0]?.cnt || 0);
+
     } catch {}
 
     let orders = 0;
+
     try {
+
       const r = await this.opsQuery<any>(
+
         `SELECT COUNT(*)::int AS cnt FROM orders.orders WHERE created_at >= $1 AND created_at < $2`,
+
         [start, end],
+
       );
+
       orders = Number(r.rows?.[0]?.cnt || 0);
+
     } catch {}
 
     let walletOverview: any = null;
+
     try {
+
       const r = await this.internalGet<any>(`${this.walletBase()}/admin/wallet/overview`);
+
       walletOverview = r?.data || null;
+
     } catch {}
 
     let riskSummary: any = null;
+
     try {
+
       const r = await this.adminRiskSummary();
+
       riskSummary = (r as any)?.data || null;
+
     } catch {}
 
     const profitRate = revenueUsd > 0 ? profitUsd / revenueUsd : 0;
 
     return {
+
       code: 0,
+
       message: 'ok',
+
       data: {
+
         date,
+
         revenue_usd: Number.isFinite(revenueUsd) ? revenueUsd : 0,
+
         cost_usd: Number.isFinite(costUsd) ? costUsd : 0,
+
         profit_usd: Number.isFinite(profitUsd) ? profitUsd : 0,
+
         profit_rate: Number.isFinite(profitRate) ? profitRate : 0,
+
         new_users: newUsers,
+
         plays: clawPlays,
+
         orders,
+
         conversion_rate: conversionRate,
+
         withdraw_pending: withdrawPending,
+
         wallet: walletOverview,
+
         risk: riskSummary,
+
         anomalies,
+
         funnel,
+
       },
+
     };
+
   }
 
   async adminDashboardAlerts(opts: { current?: string; pageSize?: string }) {
+
     const page = Math.max(1, Number(opts.current || 1));
+
     const size = Math.min(200, Math.max(1, Number(opts.pageSize || 20)));
+
     const risk = await this.adminRiskAlerts({ current: '1', pageSize: '200' });
+
     const list = (risk as any)?.data?.items || [];
+
     const start = (page - 1) * size;
+
     const items = list.slice(start, start + size);
+
     return { code: 0, message: 'ok', data: { items, total: list.length, current: page, pageSize: size } };
+
   }
 
   async adminGetBusinessSettings() {
+
     return { code: 0, message: 'ok', data: this.businessSettings };
+
   }
 
   async adminUpdateBusinessSettings(body: any) {
+
     const next = {
+
       ...this.businessSettings,
+
       ...body,
+
     };
 
     const normalizeNum = (v: any, fallback: number) => {
+
       const n = Number(v);
+
       return Number.isFinite(n) ? n : fallback;
+
     };
 
     this.businessSettings = {
+
       points_per_usd: Math.max(
+
         0,
+
         Math.floor(
+
           normalizeNum(
+
             next.points_per_usd,
+
             this.businessSettings.points_per_usd,
+
           ),
+
         ),
+
       ),
+
       claw_cost_points: Math.max(
+
         0,
+
         Math.floor(
+
           normalizeNum(
+
             next.claw_cost_points,
+
             this.businessSettings.claw_cost_points,
+
           ),
+
         ),
+
       ),
+
       recycle_ratio: Math.min(
+
         1,
+
         Math.max(
+
           0,
+
           normalizeNum(next.recycle_ratio, this.businessSettings.recycle_ratio),
+
         ),
+
       ),
+
       recycle_locked_ratio: Math.min(
+
         1,
+
         Math.max(
+
           0,
+
           normalizeNum(
+
             next.recycle_locked_ratio,
+
             this.businessSettings.recycle_locked_ratio,
+
           ),
+
         ),
+
       ),
+
       recycle_cashable_ratio: Math.min(
+
         1,
+
         Math.max(
+
           0,
+
           normalizeNum(
+
             next.recycle_cashable_ratio,
+
             this.businessSettings.recycle_cashable_ratio,
+
           ),
+
         ),
+
       ),
+
       withdraw_min_points: Math.max(
+
         0,
+
         Math.floor(
+
           normalizeNum(
+
             next.withdraw_min_points,
+
             this.businessSettings.withdraw_min_points,
+
           ),
+
         ),
+
       ),
+
       withdraw_fee_ratio: Math.min(
+
         1,
+
         Math.max(
+
           0,
+
           normalizeNum(
+
             next.withdraw_fee_ratio,
+
             this.businessSettings.withdraw_fee_ratio,
+
           ),
+
         ),
+
       ),
+
       reward_mode: (['low', 'normal', 'boost'].includes(
+
         String(next.reward_mode),
+
       )
+
         ? String(next.reward_mode)
+
         : 'normal') as 'low' | 'normal' | 'boost',
+
       legendary_rate: Math.min(
+
         1,
+
         Math.max(
+
           0,
+
           normalizeNum(
+
             next.legendary_rate,
+
             this.businessSettings.legendary_rate,
+
           ),
+
         ),
+
       ),
+
     };
 
     return { code: 0, message: 'ok', data: this.businessSettings };
+
   }
 
   async adminUsers(opts: {
+
     current?: string;
+
     pageSize?: string;
+
     keyword?: string;
+
     petType?: string;
+
     spendLevel?: string;
+
     status?: string;
+
   }) {
+
     try {
+
       const res = await this.internalGet<any>(
+
         `${this.identityBase()}/admin/users`,
+
         {
+
           current: opts.current,
+
           pageSize: opts.pageSize,
+
           keyword: opts.keyword,
+
           petType: opts.petType,
+
           spendLevel: opts.spendLevel,
+
           status: opts.status,
+
         },
+
       );
+
       return res;
+
     } catch {
+
       const page = Math.max(1, Number(opts.current || 1));
+
       const size = Math.min(200, Math.max(1, Number(opts.pageSize || 20)));
+
       const all = Array.from(this.adminUsersStore.values());
+
       const start = (page - 1) * size;
+
       const items = all.slice(start, start + size);
+
       return {
+
         code: 0,
+
         message: 'ok',
+
         data: { items, total: all.length, current: page, pageSize: size },
+
       };
+
     }
+
   }
 
   async adminFreezeUser(opts: { globalUserId: string }) {
+
     const id = String(opts.globalUserId || '').trim();
+
     if (id) {
+
       const existed = this.adminUsersStore.get(id);
+
       if (existed)
+
         this.adminUsersStore.set(id, { ...existed, status: 'frozen' });
+
     }
+
     try {
+
       const res = await this.internalPost<any>(
+
         `${this.identityBase()}/admin/users/${encodeURIComponent(id)}/freeze`,
+
       );
+
       return res;
+
     } catch {
+
       return {
+
         code: 0,
+
         message: 'ok',
+
         data: { global_user_id: id, status: 'frozen' },
+
       };
+
     }
+
   }
 
   async adminUnfreezeUser(opts: { globalUserId: string }) {
+
     const id = String(opts.globalUserId || '').trim();
+
     if (id) {
+
       const existed = this.adminUsersStore.get(id);
+
       if (existed)
+
         this.adminUsersStore.set(id, { ...existed, status: 'active' });
+
     }
+
     try {
+
       const res = await this.internalPost<any>(
+
         `${this.identityBase()}/admin/users/${encodeURIComponent(id)}/unfreeze`,
+
       );
+
       return res;
+
     } catch {
+
       return {
+
         code: 0,
+
         message: 'ok',
+
         data: { global_user_id: id, status: 'active' },
+
       };
+
     }
+
   }
 
   async adminWithdrawRequests(opts: {
+
     current?: string;
+
     pageSize?: string;
+
     status?: string;
+
     globalUserId?: string;
+
   }) {
+
     try {
+
       const res = await this.internalGet<any>(
+
         `${this.walletBase()}/admin/withdraw-requests`,
+
         {
+
           current: opts.current,
+
           pageSize: opts.pageSize,
+
           status: opts.status,
+
           globalUserId: opts.globalUserId,
+
         },
+
       );
+
       return res;
+
     } catch {
+
       const page = Math.max(1, Number(opts.current || 1));
+
       const size = Math.min(200, Math.max(1, Number(opts.pageSize || 20)));
+
       const all = Array.from(this.adminWithdrawRequestsStore.values());
+
       const start = (page - 1) * size;
+
       const items = all.slice(start, start + size);
+
       return {
+
         code: 0,
+
         message: 'ok',
+
         data: { items, total: all.length, current: page, pageSize: size },
+
       };
+
     }
+
   }
 
   async adminWithdrawDecision(opts: {
+
     id: string;
+
     action: 'approve' | 'reject' | 'paid';
+
     body?: any;
+
   }) {
+
     const id = String(opts.id || '').trim();
+
     const action = opts.action === 'approve' ? 'approve' : opts.action === 'paid' ? 'paid' : 'reject';
+
     const existed = this.adminWithdrawRequestsStore.get(id);
+
     if (existed) {
+
       this.adminWithdrawRequestsStore.set(id, {
+
         ...existed,
+
         status: action === 'approve' ? 'approved' : action === 'paid' ? 'paid' : 'rejected',
+
       });
+
     }
+
     try {
+
       const res = await this.internalPost<any>(
+
         `${this.walletBase()}/admin/withdraw-requests/${encodeURIComponent(id)}/${action}`,
+
         opts.body || {},
+
       );
+
       return res;
+
     } catch {
+
       return {
+
         code: 0,
+
         message: 'ok',
+
         data: { id, status: action === 'approve' ? 'approved' : action === 'paid' ? 'paid' : 'rejected' },
+
       };
+
     }
+
   }
 
   async adminMerchants(opts: {
+
     current?: string;
+
     pageSize?: string;
+
     status?: string;
+
   }) {
+
     const page = Math.max(1, Number(opts.current || 1));
+
     const size = Math.min(200, Math.max(1, Number(opts.pageSize || 20)));
+
     const st = String(opts.status || '').trim();
+
     let all = Array.from(this.adminMerchantsStore.values());
+
     if (st) all = all.filter((m) => m.status === st);
+
     const start = (page - 1) * size;
+
     const items = all.slice(start, start + size);
+
     return {
+
       code: 0,
+
       message: 'ok',
+
       data: { items, total: all.length, current: page, pageSize: size },
+
     };
+
   }
 
   async adminMerchantOrders(opts: { current?: string; pageSize?: string }) {
+
     const page = Math.max(1, Number(opts.current || 1));
+
     const size = Math.min(200, Math.max(1, Number(opts.pageSize || 20)));
+
     try {
+
       const countRes = await this.opsQuery<{ total: string }>(
+
         `SELECT COUNT(*)::text AS total FROM orders.orders o WHERE o.type IN ('product','service')`,
+
         [],
+
       );
+
       const total = Number(countRes.rows?.[0]?.total || 0);
+
       const listRes = await this.opsQuery<any>(
+
         `SELECT o.order_id,o.type,o.status,o.amount,o.currency,o.user_id,o.created_at,o.metadata
+
          FROM orders.orders o
+
          WHERE o.type IN ('product','service')
+
          ORDER BY o.created_at DESC
+
          LIMIT $1 OFFSET $2`,
+
         [size, (page - 1) * size],
+
       );
+
       const items = listRes.rows.map((r: any) => ({
+
         order_id: r.order_id,
+
         type: r.type,
+
         status: r.status,
+
         amount: Number(r.amount || 0),
+
         currency: r.currency,
+
         user_id: r.user_id,
+
         merchant_id: r.metadata?.merchant_id || null,
+
         created_at: this.iso(r.created_at),
+
       }));
+
       return { code: 0, message: 'ok', data: { items, total, current: page, pageSize: size } };
+
     } catch {
+
       return { code: 0, message: 'ok', data: { items: [], total: 0, current: page, pageSize: size } };
+
     }
+
   }
 
   async adminMerchantSettlements(opts: { current?: string; pageSize?: string }) {
+
     const page = Math.max(1, Number(opts.current || 1));
+
     const size = Math.min(200, Math.max(1, Number(opts.pageSize || 20)));
+
     return { code: 0, message: 'ok', data: { items: [], total: 0, current: page, pageSize: size } };
+
   }
 
   async adminReactivation(opts: { current?: string; pageSize?: string; inactiveDays?: string }) {
+
     const page = Math.max(1, Number(opts.current || 1));
+
     const size = Math.min(200, Math.max(1, Number(opts.pageSize || 20)));
+
     const days = Math.min(365, Math.max(1, Math.floor(Number(opts.inactiveDays || 7))));
+
     try {
+
       const countRes = await this.opsQuery<{ total: string }>(
+
         `SELECT COUNT(*)::text AS total
+
          FROM identity.global_users u
+
          WHERE u.status='active' AND (u.last_active_at IS NULL OR u.last_active_at < (now() - ($1::int || ' day')::interval))`,
+
         [days],
+
       );
+
       const total = Number(countRes.rows?.[0]?.total || 0);
+
       const listRes = await this.opsQuery<any>(
+
         `SELECT u.global_user_id,u.telegram_id,u.username,u.pet_type,u.spend_level,u.spend_total,u.last_active_at,u.created_at
+
          FROM identity.global_users u
+
          WHERE u.status='active' AND (u.last_active_at IS NULL OR u.last_active_at < (now() - ($1::int || ' day')::interval))
+
          ORDER BY u.last_active_at NULLS FIRST, u.created_at DESC
+
          LIMIT $2 OFFSET $3`,
+
         [days, size, (page - 1) * size],
+
       );
+
       const items = listRes.rows.map((r: any) => ({
+
         global_user_id: r.global_user_id,
+
         telegram_id: r.telegram_id ? Number(r.telegram_id) : null,
+
         username: r.username || null,
+
         pet_type: r.pet_type || null,
+
         spend_level: r.spend_level || null,
+
         spend_total: Number(r.spend_total || 0),
+
         last_active_at: this.iso(r.last_active_at),
+
         created_at: this.iso(r.created_at),
+
       }));
+
       return { code: 0, message: 'ok', data: { items, total, current: page, pageSize: size } };
+
     } catch {
+
       return { code: 0, message: 'ok', data: { items: [], total: 0, current: page, pageSize: size } };
+
     }
+
   }
 
   async adminMerchantDecision(opts: {
+
     id: string;
+
     action: 'approve' | 'reject' | 'suspend';
+
   }) {
+
     const id = String(opts.id || '').trim();
+
     const existed = this.adminMerchantsStore.get(id);
+
     if (!existed)
+
       return { code: 0, message: 'ok', data: { id, status: 'unknown' } };
+
     const nextStatus =
+
       opts.action === 'approve'
+
         ? 'approved'
+
         : opts.action === 'reject'
+
           ? 'rejected'
+
           : ('suspended' as const);
+
     this.adminMerchantsStore.set(id, { ...existed, status: nextStatus });
+
     return { code: 0, message: 'ok', data: { id, status: nextStatus } };
+
   }
 
   async adminProducts(opts: { current?: string; pageSize?: string }) {
+
     const page = Math.max(1, Number(opts.current || 1));
+
     const size = Math.min(200, Math.max(1, Number(opts.pageSize || 20)));
+
     const all = this.marketplaceProductsStore.map((p) => ({
+
       id: p.id,
+
       name: p.name,
+
       category: p.category,
+
       price_cents: p.price_cents,
+
       currency: p.currency,
+
       status: (p as any).status || 'published',
+
       merchant: p.merchant,
+
       production_time_days: p.production_time_days,
+
     }));
+
     const start = (page - 1) * size;
+
     const items = all.slice(start, start + size);
+
     return {
+
       code: 0,
+
       message: 'ok',
+
       data: { items, total: all.length, current: page, pageSize: size },
+
     };
+
   }
 
   async adminUpdateProduct(body: any) {
+
     const id = Number(body?.id);
+
     if (!Number.isFinite(id)) throw new BadRequestException('invalid id');
+
     const idx = this.marketplaceProductsStore.findIndex(
+
       (p) => Number(p.id) === id,
+
     );
+
     if (idx < 0) throw new BadRequestException('product not found');
+
     const existed: any = this.marketplaceProductsStore[idx];
+
     const next: any = { ...existed };
+
     if (typeof body?.name === 'string') next.name = String(body.name);
+
     if (typeof body?.category === 'string')
+
       next.category = String(body.category);
+
     if (typeof body?.price_cents !== 'undefined') {
+
       const pc = Number(body.price_cents);
+
       if (Number.isFinite(pc)) next.price_cents = Math.max(0, Math.floor(pc));
+
     }
+
     if (typeof body?.status === 'string') next.status = String(body.status);
+
     this.marketplaceProductsStore[idx] = next;
+
     return { code: 0, message: 'ok', data: next };
+
   }
 
   async adminSetProductStatus(opts: {
+
     id: string;
+
     status: 'published' | 'unpublished';
+
   }) {
+
     const id = Number(opts.id);
+
     if (!Number.isFinite(id)) throw new BadRequestException('invalid id');
+
     const idx = this.marketplaceProductsStore.findIndex(
+
       (p) => Number(p.id) === id,
+
     );
+
     if (idx < 0) throw new BadRequestException('product not found');
+
     const existed: any = this.marketplaceProductsStore[idx];
+
     const next: any = { ...existed, status: opts.status };
+
     this.marketplaceProductsStore[idx] = next;
+
     return { code: 0, message: 'ok', data: { id, status: opts.status } };
+
   }
 
   async adminServices(opts: { current?: string; pageSize?: string }) {
+
     const page = Math.max(1, Number(opts.current || 1));
+
     const size = Math.min(200, Math.max(1, Number(opts.pageSize || 20)));
+
     const all = this.marketplaceServicesStore.map((s) => ({
+
       id: s.id,
+
       city: s.city,
+
       category: s.category,
+
       service_name: s.service_name,
+
       price_cents: s.price_cents,
+
       currency: s.currency,
+
       status: 'published',
+
     }));
+
     const start = (page - 1) * size;
+
     const items = all.slice(start, start + size);
+
     return {
+
       code: 0,
+
       message: 'ok',
+
       data: { items, total: all.length, current: page, pageSize: size },
+
     };
+
   }
 
   async adminOrders(opts: {
+
     current?: string;
+
     pageSize?: string;
+
     phone?: string;
+
   }) {
+
     const page = Math.max(1, Number(opts.current || 1));
+
     const size = Math.min(200, Math.max(1, Number(opts.pageSize || 20)));
+
     const phone = String(opts.phone || '').trim();
+
     const all = [] as any[];
+
     for (const [p, list] of this.ordersByPhone.entries()) {
+
       if (phone && p !== phone) continue;
+
       if (Array.isArray(list)) all.push(...list);
+
     }
+
     all.sort((a, b) =>
+
       String(b?.created_at || '').localeCompare(String(a?.created_at || '')),
+
     );
+
     const start = (page - 1) * size;
+
     const items = all.slice(start, start + size);
+
     return {
+
       code: 0,
+
       message: 'ok',
+
       data: { items, total: all.length, current: page, pageSize: size },
+
     };
+
   }
 
   async adminBridgeSummary() {
+
     const pg = this.getOpsPg();
+
     if (!pg)
+
       return {
+
         code: 0,
+
         message: 'ok',
+
         data: { scenes: [], clicks: 0, landings: 0, leads: 0, conversions: 0 },
+
       };
 
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+
     const q = await pg.query(
+
       `SELECT
+
         event_name,
+
         COALESCE(event_data->'utm'->>'campaign', event_data->>'campaign', event_data->'utm'->>'source', source_bot) AS scene,
+
         COUNT(*)::int AS cnt
+
       FROM bridge.bridge_events
+
       WHERE created_at >= $1
+
       GROUP BY event_name, scene
+
       ORDER BY cnt DESC
+
       LIMIT 200`,
+
       [since],
+
     );
 
     const rows = q.rows || [];
+
     const sumByEvent = (name: string) =>
+
       rows
+
         .filter((r: any) => String(r.event_name) === name)
+
         .reduce((s: number, r: any) => s + Number(r.cnt || 0), 0);
 
     const clicks = sumByEvent('ad_click');
+
     const landings = sumByEvent('landing_view');
+
     const leads = sumByEvent('lead_submit') + sumByEvent('chat_started');
+
     const conversions =
+
       sumByEvent('order_created') +
+
       sumByEvent('checkout_completed') +
+
       sumByEvent('payment_confirmed');
 
     const byScene = new Map<string, any>();
+
     for (const r of rows) {
+
       const scene = String(r.scene || 'unknown');
+
       if (!byScene.has(scene))
+
         byScene.set(scene, {
+
           scene,
+
           clicks: 0,
+
           landings: 0,
+
           leads: 0,
+
           conversions: 0,
+
         });
+
       const rec = byScene.get(scene);
+
       const ev = String(r.event_name || '');
+
       const n = Number(r.cnt || 0);
+
       if (ev === 'ad_click') rec.clicks += n;
+
       else if (ev === 'landing_view') rec.landings += n;
+
       else if (ev === 'lead_submit' || ev === 'chat_started') rec.leads += n;
+
       else if (
+
         ev === 'order_created' ||
+
         ev === 'checkout_completed' ||
+
         ev === 'payment_confirmed'
+
       )
+
         rec.conversions += n;
+
     }
+
     const scenes = Array.from(byScene.values()).sort(
+
       (a: any, b: any) => b.conversions - a.conversions || b.leads - a.leads,
+
     );
 
     return {
+
       code: 0,
+
       message: 'ok',
+
       data: { scenes, clicks, landings, leads, conversions, since: since.toISOString() },
+
     };
+
   }
 
   async adminBridgeEvents(opts: {
+
     since?: string;
+
     eventName?: string;
+
     limit?: string;
+
   }) {
+
     const pg = this.getOpsPg();
+
     const size = Math.min(500, Math.max(1, Number(opts.limit || 200)));
+
     if (!pg)
+
       return {
+
         code: 0,
+
         message: 'ok',
+
         data: { items: [], total: 0, limit: size },
+
       };
 
     const since = String(opts?.since || '').trim();
+
     const sinceDate = since ? new Date(since) : new Date(Date.now() - 24 * 60 * 60 * 1000);
+
     const ev = String(opts?.eventName || '').trim();
 
     const q = await pg.query(
+
       `SELECT id, event_name, global_user_id, source_bot, source_user_id, telegram_id, idempotency_key, event_data, created_at
+
        FROM bridge.bridge_events
+
        WHERE created_at >= $1
+
          AND ($2::text = '' OR event_name = $2)
+
        ORDER BY id DESC
+
        LIMIT $3`,
+
       [sinceDate, ev, size],
+
     );
+
     const items = (q.rows || []).map((r: any) => ({
+
       id: String(r.id),
+
       event_name: String(r.event_name),
+
       global_user_id: String(r.global_user_id),
+
       source_bot: String(r.source_bot),
+
       source_user_id: r.source_user_id != null ? String(r.source_user_id) : null,
+
       telegram_id: r.telegram_id != null ? String(r.telegram_id) : null,
+
       idempotency_key: r.idempotency_key != null ? String(r.idempotency_key) : null,
+
       event_data: r.event_data || null,
+
       created_at: r.created_at ? new Date(r.created_at).toISOString() : null,
+
     }));
+
     return { code: 0, message: 'ok', data: { items, total: items.length, limit: size } };
+
   }
 
   async adminCrmLeads(opts: {
+
     country?: string;
+
     city?: string;
+
     stage?: string;
+
     q?: string;
+
     limit?: string;
+
   }) {
+
     const pg = this.getOpsPg();
+
     const size = Math.min(500, Math.max(1, Number(opts.limit || 200)));
+
     if (!pg)
+
       return {
+
         code: 0,
+
         message: 'ok',
+
         data: { items: [], total: 0, limit: size },
+
       };
 
     const country = String(opts?.country || '').trim();
+
     const city = String(opts?.city || '').trim();
+
     const stage = String(opts?.stage || '').trim();
+
     const q = String(opts?.q || '').trim();
 
     const rows = await pg.query(
+
       `SELECT lead_id, global_user_id, country, city, language, channel, intent, stage, session_id, utm, ref, last_event_at, owner, next_followup_at, created_at, updated_at
+
        FROM crm.leads
+
        WHERE ($1::text = '' OR country = $1)
+
          AND ($2::text = '' OR city = $2)
+
          AND ($3::text = '' OR stage = $3)
+
          AND (
+
            $4::text = ''
+
            OR lead_id ILIKE ('%'||$4||'%')
+
            OR global_user_id ILIKE ('%'||$4||'%')
+
            OR channel ILIKE ('%'||$4||'%')
+
          )
+
        ORDER BY updated_at DESC
+
        LIMIT $5`,
+
       [country, city, stage, q, size],
+
     );
+
     const items = (rows.rows || []).map((r: any) => ({
+
       lead_id: String(r.lead_id),
+
       global_user_id: r.global_user_id != null ? String(r.global_user_id) : null,
+
       country: r.country != null ? String(r.country) : null,
+
       city: r.city != null ? String(r.city) : null,
+
       language: r.language != null ? String(r.language) : null,
+
       channel: r.channel != null ? String(r.channel) : null,
+
       intent: r.intent != null ? String(r.intent) : null,
+
       stage: r.stage != null ? String(r.stage) : null,
+
       session_id: r.session_id != null ? String(r.session_id) : null,
+
       utm: r.utm || null,
+
       ref: r.ref || null,
+
       last_event_at: r.last_event_at ? new Date(r.last_event_at).toISOString() : null,
+
       owner: r.owner != null ? String(r.owner) : null,
+
       next_followup_at: r.next_followup_at ? new Date(r.next_followup_at).toISOString() : null,
+
       created_at: r.created_at ? new Date(r.created_at).toISOString() : null,
+
       updated_at: r.updated_at ? new Date(r.updated_at).toISOString() : null,
+
     }));
+
     return { code: 0, message: 'ok', data: { items, total: items.length, limit: size } };
+
   }
 
   async adminCrmLeadEvents(opts: { leadId: string; limit?: string }) {
+
     const pg = this.getOpsPg();
+
     const size = Math.min(500, Math.max(1, Number(opts.limit || 200)));
+
     if (!pg)
+
       return {
+
         code: 0,
+
         message: 'ok',
+
         data: { items: [], total: 0, limit: size },
+
       };
+
     const leadId = String(opts.leadId || '').trim();
+
     if (!leadId) throw new BadRequestException('leadId required');
+
     const q = await pg.query(
+
       `SELECT id, lead_id, global_user_id, event_name, source_bot, idempotency_key, event_data, created_at
+
        FROM crm.lead_events
+
        WHERE lead_id = $1
+
        ORDER BY id DESC
+
        LIMIT $2`,
+
       [leadId, size],
+
     );
+
     const items = (q.rows || []).map((r: any) => ({
+
       id: String(r.id),
+
       lead_id: String(r.lead_id),
+
       global_user_id: r.global_user_id != null ? String(r.global_user_id) : null,
+
       event_name: String(r.event_name),
+
       source_bot: r.source_bot != null ? String(r.source_bot) : null,
+
       idempotency_key: r.idempotency_key != null ? String(r.idempotency_key) : null,
+
       event_data: r.event_data || null,
+
       created_at: r.created_at ? new Date(r.created_at).toISOString() : null,
+
     }));
+
     return { code: 0, message: 'ok', data: { items, total: items.length, limit: size } };
+
   }
 
   async adminCrmUpdateLead(body: any) {
+
     const pg = this.getOpsPg();
+
     if (!pg) return { code: 0, message: 'ok', data: { saved: false, reason: 'no db' } };
+
     const leadId = String(body?.leadId || body?.lead_id || '').trim();
+
     if (!leadId) throw new BadRequestException('leadId required');
 
     const patch: Record<string, any> = {};
+
     const allowed = new Set([
+
       'owner',
+
       'stage',
+
       'intent',
+
       'country',
+
       'city',
+
       'language',
+
       'channel',
+
       'next_followup_at',
+
     ]);
+
     for (const k of Object.keys(body || {})) {
+
       if (!allowed.has(k)) continue;
+
       patch[k] = body[k];
+
     }
 
     const now = new Date();
+
     const existing = await pg.query(`SELECT stage FROM crm.leads WHERE lead_id = $1 LIMIT 1`, [leadId]);
+
     const fromStage = existing.rows?.[0]?.stage != null ? String(existing.rows[0].stage) : null;
 
     const stage = patch.stage != null ? String(patch.stage) : null;
+
     const owner = patch.owner != null ? String(patch.owner) : null;
+
     const intent = patch.intent != null ? String(patch.intent) : null;
+
     const country = patch.country != null ? String(patch.country) : null;
+
     const city = patch.city != null ? String(patch.city) : null;
+
     const language = patch.language != null ? String(patch.language) : null;
+
     const channel = patch.channel != null ? String(patch.channel) : null;
+
     const nextFollowupAt =
+
       patch.next_followup_at != null && String(patch.next_followup_at).trim()
+
         ? new Date(String(patch.next_followup_at))
+
         : null;
 
     await pg.query(
+
       `UPDATE crm.leads
+
        SET owner = COALESCE($2, owner),
+
            stage = COALESCE($3, stage),
+
            intent = COALESCE($4, intent),
+
            country = COALESCE($5, country),
+
            city = COALESCE($6, city),
+
            language = COALESCE($7, language),
+
            channel = COALESCE($8, channel),
+
            next_followup_at = COALESCE($9, next_followup_at),
+
            updated_at = $10
+
        WHERE lead_id = $1`,
+
       [leadId, owner, stage, intent, country, city, language, channel, nextFollowupAt, now],
+
     );
 
     if (stage && stage !== fromStage) {
+
       await pg.query(
+
         `INSERT INTO crm.lead_stage_logs (lead_id, from_stage, to_stage, reason, created_at)
+
          VALUES ($1,$2,$3,$4,$5)`,
+
         [leadId, fromStage, stage, String(body?.reason || 'manual'), now],
+
       );
+
     }
 
     return { code: 0, message: 'ok', data: { saved: true } };
+
   }
 
   private stableDedupeKey(prefix: string, parts: any) {
+
     const p = parts && typeof parts === 'object' ? parts : {};
+
     const raw = `${prefix}:${JSON.stringify(p)}`;
+
     let h = 2166136261;
+
     for (let i = 0; i < raw.length; i += 1) {
+
       h ^= raw.charCodeAt(i);
+
       h = Math.imul(h, 16777619) >>> 0;
+
     }
+
     return `${prefix}:${h.toString(16)}`;
+
   }
 
   async adminCrmAppendLeadEvent(body: any) {
+
     const pg = this.getOpsPg();
+
     if (!pg) return { code: 0, message: 'ok', data: { saved: false, reason: 'no db' } };
+
     const leadId = String(body?.leadId || body?.lead_id || '').trim();
+
     const eventName = String(body?.event_name || '').trim();
+
     if (!leadId || !eventName) throw new BadRequestException('leadId/event_name required');
 
     const q = await pg.query(`SELECT global_user_id FROM crm.leads WHERE lead_id = $1 LIMIT 1`, [leadId]);
+
     const globalUserId = q.rows?.[0]?.global_user_id != null ? String(q.rows[0].global_user_id) : null;
 
     const eventData = body?.event_data && typeof body.event_data === 'object' ? body.event_data : {};
+
     const idem =
+
       String(body?.idempotency_key || '').trim() ||
+
       this.stableDedupeKey('lead_event', {
+
         lead_id: leadId,
+
         event_name: eventName,
+
         action_id: eventData?.action_id || null,
+
         ts_bucket: Math.floor(Date.now() / 1000),
+
       });
 
     const now = new Date();
+
     await pg.query(
+
       `INSERT INTO crm.lead_events (lead_id, global_user_id, event_name, source_bot, idempotency_key, event_data, created_at)
+
        VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7)`,
+
       [
+
         leadId,
+
         globalUserId,
+
         eventName,
+
         body?.source_bot != null ? String(body.source_bot) : null,
+
         idem,
+
         JSON.stringify({ ...eventData, idempotency_key: idem }),
+
         now,
+
       ],
+
     );
 
     const stage = String(body?.stage || '').trim();
+
     if (stage) {
+
       await this.adminCrmUpdateLead({ leadId, stage, reason: eventName });
+
     }
 
     return { code: 0, message: 'ok', data: { saved: true, idempotency_key: idem } };
+
   }
 
   async adminUpsertAftercarePricebook(body: any) {
+
     const pg = this.getOpsPg();
+
     if (!pg)
+
       return { code: 0, message: 'ok', data: { saved: false, reason: 'no db' } };
 
     const country = String(body?.country || '').trim();
+
     const city = String(body?.city || '').trim();
+
     const packageCode = String(body?.package_code || '').trim();
+
     if (!country || !city || !packageCode)
+
       throw new BadRequestException('country/city/package_code required');
 
     const currency = String(body?.currency || 'USD').trim() || 'USD';
+
     const base = Math.max(0, Math.floor(Number(body?.base_price_cents || 0)));
+
     const pickup = Math.max(0, Math.floor(Number(body?.pickup_fee_cents || 0)));
+
     const weightRules =
+
       body?.weight_fee_rules && typeof body.weight_fee_rules === 'object'
+
         ? body.weight_fee_rules
+
         : null;
+
     const now = new Date();
 
     const r = await pg.query(
+
       `INSERT INTO pricing.aftercare_pricebooks (
+
           country, city, package_code, currency, base_price_cents, pickup_fee_cents, weight_fee_rules, updated_at
+
         ) VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8)
+
         ON CONFLICT (country, city, package_code) DO UPDATE SET
+
           currency = EXCLUDED.currency,
+
           base_price_cents = EXCLUDED.base_price_cents,
+
           pickup_fee_cents = EXCLUDED.pickup_fee_cents,
+
           weight_fee_rules = EXCLUDED.weight_fee_rules,
+
           updated_at = EXCLUDED.updated_at
+
         RETURNING id`,
+
       [
+
         country,
+
         city,
+
         packageCode,
+
         currency,
+
         base,
+
         pickup,
+
         weightRules ? JSON.stringify(weightRules) : null,
+
         now,
+
       ],
+
     );
 
     return {
+
       code: 0,
+
       message: 'ok',
+
       data: { id: r.rows?.[0]?.id != null ? String(r.rows[0].id) : null },
+
     };
+
   }
 
   async adminListAftercarePricebooks(opts: {
+
     country?: string;
+
     city?: string;
+
     limit?: string;
+
   }) {
+
     const pg = this.getOpsPg();
+
     const size = Math.min(500, Math.max(1, Number(opts.limit || 200)));
+
     if (!pg)
+
       return { code: 0, message: 'ok', data: { items: [], total: 0, limit: size } };
+
     const country = String(opts?.country || '').trim();
+
     const city = String(opts?.city || '').trim();
+
     const q = await pg.query(
+
       `SELECT id, country, city, package_code, currency, base_price_cents, pickup_fee_cents, weight_fee_rules, updated_at
+
        FROM pricing.aftercare_pricebooks
+
        WHERE ($1::text = '' OR country = $1)
+
          AND ($2::text = '' OR city = $2)
+
        ORDER BY updated_at DESC
+
        LIMIT $3`,
+
       [country, city, size],
+
     );
+
     const items = (q.rows || []).map((r: any) => ({
+
       id: String(r.id),
+
       country: String(r.country),
+
       city: String(r.city),
+
       package_code: String(r.package_code),
+
       currency: String(r.currency || 'USD'),
+
       base_price_cents: Number(r.base_price_cents || 0),
+
       pickup_fee_cents: Number(r.pickup_fee_cents || 0),
+
       weight_fee_rules: r.weight_fee_rules || null,
+
       updated_at: r.updated_at ? new Date(r.updated_at).toISOString() : null,
+
     }));
+
     return { code: 0, message: 'ok', data: { items, total: items.length, limit: size } };
+
   }
 
   async adminCrmFollowups(opts: {
+
     dueBefore?: string;
+
     status?: string;
+
     limit?: string;
+
   }) {
+
     const pg = this.getOpsPg();
+
     const size = Math.min(500, Math.max(1, Number(opts.limit || 200)));
+
     if (!pg)
+
       return { code: 0, message: 'ok', data: { items: [], total: 0, limit: size } };
 
     const dueBefore = String(opts?.dueBefore || '').trim();
+
     const due = dueBefore ? new Date(dueBefore) : new Date();
+
     const status = String(opts?.status || '').trim();
 
     const q = await pg.query(
+
       `SELECT id, lead_id, channel, dedupe_key, status, due_at, template_key, payload, last_error, created_at, updated_at
+
        FROM crm.followups
+
        WHERE due_at <= $1
+
          AND ($2::text = '' OR status = $2)
+
        ORDER BY due_at ASC
+
        LIMIT $3`,
+
       [due, status, size],
+
     );
+
     const items = (q.rows || []).map((r: any) => ({
+
       id: String(r.id),
+
       lead_id: String(r.lead_id),
+
       channel: String(r.channel),
+
       dedupe_key: r.dedupe_key != null ? String(r.dedupe_key) : null,
+
       status: String(r.status),
+
       due_at: r.due_at ? new Date(r.due_at).toISOString() : null,
+
       template_key: r.template_key != null ? String(r.template_key) : null,
+
       payload: r.payload || null,
+
       last_error: r.last_error != null ? String(r.last_error) : null,
+
       created_at: r.created_at ? new Date(r.created_at).toISOString() : null,
+
       updated_at: r.updated_at ? new Date(r.updated_at).toISOString() : null,
+
     }));
+
     return { code: 0, message: 'ok', data: { items, total: items.length, limit: size } };
+
   }
 
   async adminCrmCreateFollowup(body: any) {
+
     const pg = this.getOpsPg();
+
     if (!pg) return { code: 0, message: 'ok', data: { saved: false, reason: 'no db' } };
+
     const leadId = String(body?.lead_id || '').trim();
+
     const channel = String(body?.channel || 'telegram').trim() || 'telegram';
+
     const dueAt = body?.due_at ? new Date(body.due_at) : null;
+
     if (!leadId || !dueAt || Number.isNaN(dueAt.getTime()))
+
       throw new BadRequestException('lead_id/due_at required');
+
     const templateKey = body?.template_key != null ? String(body.template_key) : null;
+
     const dedupeKey = body?.dedupe_key != null ? String(body.dedupe_key) : null;
+
     const payload = body?.payload && typeof body.payload === 'object' ? body.payload : null;
+
     const now = new Date();
+
     const r = await pg.query(
+
       `INSERT INTO crm.followups (lead_id, channel, dedupe_key, status, due_at, template_key, payload, last_error, created_at, updated_at)
+
        VALUES ($1,$2,$3,'pending',$4,$5,$6::jsonb,NULL,$7,$7)
+
        ON CONFLICT (dedupe_key) DO NOTHING
+
        RETURNING id`,
+
       [leadId, channel, dedupeKey, dueAt, templateKey, payload ? JSON.stringify(payload) : null, now],
+
     );
+
     return { code: 0, message: 'ok', data: { id: r.rows?.[0]?.id != null ? String(r.rows[0].id) : null } };
+
   }
 
   async adminCrmAutoGenerateFollowups(body: any) {
+
     const pg = this.getOpsPg();
+
     if (!pg) return { code: 0, message: 'ok', data: { inserted: 0, reason: 'no db' } };
+
     const country = String(body?.country || '').trim();
+
     const stage = String(body?.stage || '').trim();
+
     const intent = String(body?.intent || '').trim();
+
     const limit = Math.min(500, Math.max(1, Number(body?.limit || 200)));
+
     const scheduleDays = Array.isArray(body?.days) && body.days.length ? body.days : [0, 1, 3, 7];
+
     const now = new Date();
 
     const leads = await pg.query(
+
       `SELECT lead_id, country, stage, intent
+
        FROM crm.leads
+
        WHERE ($1::text = '' OR country = $1)
+
          AND ($2::text = '' OR stage = $2)
+
          AND ($3::text = '' OR intent = $3)
+
        ORDER BY updated_at DESC
+
        LIMIT $4`,
+
       [country, stage, intent, limit],
+
     );
+
     let inserted = 0;
+
     for (const r of leads.rows || []) {
+
       const leadId = String(r.lead_id);
+
       for (const d of scheduleDays) {
+
         const days = Math.max(0, Math.floor(Number(d)));
+
         const due = new Date(now.getTime() + days * 86400000);
+
         const dedupeKey = this.stableDedupeKey('auto_fu', {
+
           lead_id: leadId,
+
           days,
+
           stage: r.stage || null,
+
           country: r.country || null,
+
         });
+
         const res = await pg.query(
+
           `INSERT INTO crm.followups (lead_id, channel, dedupe_key, status, due_at, template_key, payload, last_error, created_at, updated_at)
+
            VALUES ($1,'telegram',$2,'pending',$3,$4,$5::jsonb,NULL,$6,$6)
+
            ON CONFLICT (dedupe_key) DO NOTHING
+
            RETURNING id`,
+
           [
+
             leadId,
+
             dedupeKey,
+
             due,
+
             days === 0 ? 'D0' : days === 1 ? 'D1' : days === 3 ? 'D3' : days === 7 ? 'D7' : `D${days}`,
+
             JSON.stringify({ auto: true, days }),
+
             now,
+
           ],
+
         );
+
         if (res.rows?.length) inserted += 1;
+
       }
+
     }
+
     return { code: 0, message: 'ok', data: { inserted } };
+
   }
 
   private publicWebBaseUrl() {
+
     const raw = String(process.env.PUBLIC_WEB_BASE_URL || '').trim();
+
     if (raw) return raw.replace(/\/+$/, '');
+
     return 'http://localhost:5173';
+
   }
 
   private randomToken(len = 24) {
+
     const raw = `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`;
+
     return raw.replace(/[^a-z0-9]+/gi, '').slice(0, Math.max(12, Math.min(48, len)));
+
   }
 
   private async calcAftercareFromPricebook(pg: any, body: any) {
+
     const country = String(body?.country || '').trim();
+
     const city = String(body?.city || '').trim();
+
     const packageCode = String(body?.package_code || '').trim();
+
     if (!country || !city || !packageCode)
+
       throw new BadRequestException('country/city/package_code required');
+
     const weightKg = Math.max(0, Number(body?.weight_kg || 0));
+
     const pb = await pg.query(
+
       `SELECT currency, base_price_cents, pickup_fee_cents, weight_fee_rules
+
        FROM pricing.aftercare_pricebooks
+
        WHERE country = $1 AND city = $2 AND package_code = $3
+
        LIMIT 1`,
+
       [country, city, packageCode],
+
     );
+
     if (!pb.rows?.length) throw new BadRequestException('pricebook not found');
+
     const row = pb.rows[0];
+
     const currency = String(row.currency || 'USD');
+
     const base = Math.max(0, Math.floor(Number(row.base_price_cents || 0)));
+
     const pickup = Math.max(0, Math.floor(Number(row.pickup_fee_cents || 0)));
+
     const rules = row.weight_fee_rules && typeof row.weight_fee_rules === 'object' ? row.weight_fee_rules : null;
+
     const weightFee = (() => {
+
       if (!rules) return 0;
+
       const perKg = Number((rules as any).per_kg_cents || 0);
+
       if (Number.isFinite(perKg) && perKg > 0) return Math.floor(weightKg * perKg);
+
       return 0;
+
     })();
+
     const total = base + pickup + weightFee;
+
     return { country, city, package_code: packageCode, weight_kg: weightKg, currency, base, pickup, weightFee, total };
+
   }
 
   async adminCreateAftercareQuote(body: any) {
+
     const pg = this.getOpsPg();
+
     if (!pg) return { code: 0, message: 'ok', data: { saved: false, reason: 'no db' } };
+
     const leadId = body?.lead_id != null ? String(body.lead_id) : null;
+
     const calc = await this.calcAftercareFromPricebook(pg, body);
+
     const now = new Date();
+
     const token = this.randomToken(28);
+
     const note = body?.note != null ? String(body.note) : null;
+
     const r = await pg.query(
+
       `INSERT INTO pricing.aftercare_quotes (
+
          lead_id, country, city, package_code, weight_kg, currency,
+
          base_price_cents, pickup_fee_cents, weight_fee_cents, total_cents,
+
          status, note, public_token, created_at, updated_at
+
        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'draft',$11,$12,$13,$13)
+
        RETURNING id`,
+
       [
+
         leadId,
+
         calc.country,
+
         calc.city,
+
         calc.package_code,
+
         calc.weight_kg,
+
         calc.currency,
+
         calc.base,
+
         calc.pickup,
+
         calc.weightFee,
+
         calc.total,
+
         note,
+
         token,
+
         now,
+
       ],
+
     );
+
     const id = r.rows?.[0]?.id != null ? String(r.rows[0].id) : null;
+
     const shareUrl = `${this.publicWebBaseUrl()}/rainbowpaw/aftercare/quote/${encodeURIComponent(String(token))}`;
+
     if (leadId) {
+
       await this.adminCrmAppendLeadEvent({
+
         leadId,
+
         event_name: 'quote_created',
+
         event_data: { quote_id: id, share_url: shareUrl },
+
         stage: 'quoted',
+
       });
+
     }
+
     return { code: 0, message: 'ok', data: { id, public_token: token, share_url: shareUrl } };
+
   }
 
   async adminListAftercareQuotes(opts: { leadId?: string; status?: string; limit?: string }) {
+
     const pg = this.getOpsPg();
+
     const size = Math.min(500, Math.max(1, Number(opts.limit || 200)));
+
     if (!pg) return { code: 0, message: 'ok', data: { items: [], total: 0, limit: size } };
+
     const leadId = String(opts?.leadId || '').trim();
+
     const status = String(opts?.status || '').trim();
+
     const q = await pg.query(
+
       `SELECT id, lead_id, country, city, package_code, weight_kg, currency, total_cents, status, public_token, sent_at, decided_at, created_at, updated_at
+
        FROM pricing.aftercare_quotes
+
        WHERE ($1::text = '' OR lead_id = $1)
+
          AND ($2::text = '' OR status = $2)
+
        ORDER BY id DESC
+
        LIMIT $3`,
+
       [leadId, status, size],
+
     );
+
     const items = (q.rows || []).map((r: any) => ({
+
       id: String(r.id),
+
       lead_id: r.lead_id != null ? String(r.lead_id) : null,
+
       country: String(r.country),
+
       city: String(r.city),
+
       package_code: String(r.package_code),
+
       weight_kg: Number(r.weight_kg || 0),
+
       currency: String(r.currency || 'USD'),
+
       total_cents: Number(r.total_cents || 0),
+
       status: String(r.status || 'draft'),
+
       public_token: r.public_token != null ? String(r.public_token) : null,
+
       share_url: r.public_token ? `${this.publicWebBaseUrl()}/rainbowpaw/aftercare/quote/${encodeURIComponent(String(r.public_token))}` : null,
+
       sent_at: r.sent_at ? new Date(r.sent_at).toISOString() : null,
+
       decided_at: r.decided_at ? new Date(r.decided_at).toISOString() : null,
+
       created_at: r.created_at ? new Date(r.created_at).toISOString() : null,
+
       updated_at: r.updated_at ? new Date(r.updated_at).toISOString() : null,
+
     }));
+
     return { code: 0, message: 'ok', data: { items, total: items.length, limit: size } };
+
   }
 
   async adminGetAftercareQuote(opts: { id: string }) {
+
     const pg = this.getOpsPg();
+
     if (!pg) return { code: 0, message: 'ok', data: null };
+
     const id = Number(opts?.id);
+
     if (!Number.isFinite(id)) throw new BadRequestException('id required');
+
     const q = await pg.query(
+
       `SELECT * FROM pricing.aftercare_quotes WHERE id = $1 LIMIT 1`,
+
       [id],
+
     );
+
     const r = q.rows?.[0];
+
     if (!r) throw new NotFoundException('quote not found');
+
     const token = r.public_token != null ? String(r.public_token) : null;
+
     return {
+
       code: 0,
+
       message: 'ok',
+
       data: {
+
         id: String(r.id),
+
         lead_id: r.lead_id != null ? String(r.lead_id) : null,
+
         country: String(r.country),
+
         city: String(r.city),
+
         package_code: String(r.package_code),
+
         weight_kg: Number(r.weight_kg || 0),
+
         currency: String(r.currency || 'USD'),
+
         base_price_cents: Number(r.base_price_cents || 0),
+
         pickup_fee_cents: Number(r.pickup_fee_cents || 0),
+
         weight_fee_cents: Number(r.weight_fee_cents || 0),
+
         total_cents: Number(r.total_cents || 0),
+
         status: String(r.status || 'draft'),
+
         note: r.note != null ? String(r.note) : null,
+
         public_token: token,
+
         share_url: token ? `${this.publicWebBaseUrl()}/rainbowpaw/aftercare/quote/${encodeURIComponent(token)}` : null,
+
         sent_at: r.sent_at ? new Date(r.sent_at).toISOString() : null,
+
         decided_at: r.decided_at ? new Date(r.decided_at).toISOString() : null,
+
         decision_note: r.decision_note != null ? String(r.decision_note) : null,
+
         created_at: r.created_at ? new Date(r.created_at).toISOString() : null,
+
         updated_at: r.updated_at ? new Date(r.updated_at).toISOString() : null,
+
       },
+
     };
+
   }
 
   async adminUpdateAftercareQuote(body: any) {
+
     const pg = this.getOpsPg();
+
     if (!pg) return { code: 0, message: 'ok', data: { saved: false, reason: 'no db' } };
+
     const id = Number(body?.id);
+
     if (!Number.isFinite(id)) throw new BadRequestException('id required');
+
     const now = new Date();
 
     const recalc = String(body?.recalc || '').trim() === 'true' || body?.recalc === true;
+
     if (recalc) {
+
       const current = await pg.query(`SELECT * FROM pricing.aftercare_quotes WHERE id = $1 LIMIT 1`, [id]);
+
       const row = current.rows?.[0];
+
       if (!row) throw new NotFoundException('quote not found');
+
       const calc = await this.calcAftercareFromPricebook(pg, {
+
         country: body?.country ?? row.country,
+
         city: body?.city ?? row.city,
+
         package_code: body?.package_code ?? row.package_code,
+
         weight_kg: body?.weight_kg ?? row.weight_kg,
+
       });
+
       await pg.query(
+
         `UPDATE pricing.aftercare_quotes
+
          SET country = $2, city = $3, package_code = $4, weight_kg = $5,
+
              currency = $6, base_price_cents = $7, pickup_fee_cents = $8, weight_fee_cents = $9, total_cents = $10,
+
              note = COALESCE($11, note),
+
              updated_at = $12
+
          WHERE id = $1`,
+
         [id, calc.country, calc.city, calc.package_code, calc.weight_kg, calc.currency, calc.base, calc.pickup, calc.weightFee, calc.total, body?.note != null ? String(body.note) : null, now],
+
       );
+
     } else {
+
       const note = body?.note != null ? String(body.note) : null;
+
       await pg.query(
+
         `UPDATE pricing.aftercare_quotes
+
          SET note = COALESCE($2, note), updated_at = $3
+
          WHERE id = $1`,
+
         [id, note, now],
+
       );
+
     }
+
     return { code: 0, message: 'ok', data: { saved: true } };
+
   }
 
   async adminSendAftercareQuote(body: any) {
+
     const pg = this.getOpsPg();
+
     if (!pg) return { code: 0, message: 'ok', data: { sent: false, reason: 'no db' } };
+
     const id = Number(body?.id);
+
     if (!Number.isFinite(id)) throw new BadRequestException('id required');
+
     const q = await pg.query(`SELECT * FROM pricing.aftercare_quotes WHERE id = $1 LIMIT 1`, [id]);
+
     const row = q.rows?.[0];
+
     if (!row) throw new NotFoundException('quote not found');
 
     const token = row.public_token != null ? String(row.public_token) : this.randomToken(28);
+
     const shareUrl = `${this.publicWebBaseUrl()}/rainbowpaw/aftercare/quote/${encodeURIComponent(token)}`;
+
     const currency = String(row.currency || 'USD');
+
     const total = Number(row.total_cents || 0) / 100;
+
     const msg =
+
       String(body?.message || '').trim() ||
+
       `善终服务报价（${String(row.country)}-${String(row.city)}）\n套餐：${String(row.package_code)}\n重量：${Number(row.weight_kg || 0)} kg\n合计：${currency} ${total.toFixed(2)}\n\n查看并确认：${shareUrl}`;
 
     const chatId = String(body?.chat_id || '').trim();
+
     if (!chatId) throw new BadRequestException('chat_id required');
+
     const bot = String(body?.bot || 'rainbow').trim() || 'rainbow';
 
     await this.adminOutreachTelegramSend({
+
       bot,
+
       chat_id: chatId,
+
       lead_id: row.lead_id != null ? String(row.lead_id) : null,
+
       template_key: 'aftercare_quote',
+
       message: msg,
+
     });
 
     const now = new Date();
+
     await pg.query(
+
       `UPDATE pricing.aftercare_quotes
+
        SET status = 'sent', sent_at = $2, updated_at = $2, public_token = COALESCE(public_token, $3)
+
        WHERE id = $1`,
+
       [id, now, token],
+
     );
 
     if (row.lead_id) {
+
       await this.adminCrmAppendLeadEvent({
+
         leadId: String(row.lead_id),
+
         event_name: 'quote_sent',
+
         event_data: { quote_id: String(id), share_url: shareUrl, chat_id: chatId },
+
         stage: 'quoted',
+
       });
+
     }
 
     return { code: 0, message: 'ok', data: { sent: true, share_url: shareUrl } };
+
   }
 
   async adminVoidAftercareQuote(body: any) {
+
     const pg = this.getOpsPg();
+
     if (!pg) return { code: 0, message: 'ok', data: { saved: false, reason: 'no db' } };
+
     const id = Number(body?.id);
+
     if (!Number.isFinite(id)) throw new BadRequestException('id required');
+
     const now = new Date();
+
     await pg.query(
+
       `UPDATE pricing.aftercare_quotes
+
        SET status = 'void', updated_at = $2
+
        WHERE id = $1`,
+
       [id, now],
+
     );
+
     return { code: 0, message: 'ok', data: { saved: true } };
+
   }
 
   async v1AftercareQuoteByToken(opts: { token: string }) {
+
     const pg = this.getOpsPg();
+
     if (!pg) throw new BadGatewayException('db unavailable');
+
     const token = String(opts?.token || '').trim();
+
     if (!token) throw new BadRequestException('token required');
+
     const q = await pg.query(
+
       `SELECT id, country, city, package_code, weight_kg, currency, base_price_cents, pickup_fee_cents, weight_fee_cents, total_cents, status, note, sent_at, decided_at, decision_note
+
        FROM pricing.aftercare_quotes
+
        WHERE public_token = $1
+
        LIMIT 1`,
+
       [token],
+
     );
+
     const r = q.rows?.[0];
+
     if (!r) throw new NotFoundException('quote not found');
+
     return {
+
       code: 0,
+
       message: 'ok',
+
       data: {
+
         id: String(r.id),
+
         country: String(r.country),
+
         city: String(r.city),
+
         package_code: String(r.package_code),
+
         weight_kg: Number(r.weight_kg || 0),
+
         currency: String(r.currency || 'USD'),
+
         base_price_cents: Number(r.base_price_cents || 0),
+
         pickup_fee_cents: Number(r.pickup_fee_cents || 0),
+
         weight_fee_cents: Number(r.weight_fee_cents || 0),
+
         total_cents: Number(r.total_cents || 0),
+
         status: String(r.status || 'draft'),
+
         note: r.note != null ? String(r.note) : null,
+
         sent_at: r.sent_at ? new Date(r.sent_at).toISOString() : null,
+
         decided_at: r.decided_at ? new Date(r.decided_at).toISOString() : null,
+
         decision_note: r.decision_note != null ? String(r.decision_note) : null,
+
       },
+
     };
+
   }
 
   async v1AftercareQuoteDecisionByToken(body: any) {
+
     const pg = this.getOpsPg();
+
     if (!pg) throw new BadGatewayException('db unavailable');
+
     const token = String(body?.token || '').trim();
+
     if (!token) throw new BadRequestException('token required');
+
     const decision = String(body?.decision || '').trim();
+
     if (!['accepted', 'rejected'].includes(decision)) throw new BadRequestException('invalid decision');
+
     const note = body?.note != null ? String(body.note) : null;
+
     const now = new Date();
+
     const q = await pg.query(`SELECT id, lead_id FROM pricing.aftercare_quotes WHERE public_token = $1 LIMIT 1`, [token]);
+
     const row = q.rows?.[0];
+
     if (!row) throw new NotFoundException('quote not found');
+
     await pg.query(
+
       `UPDATE pricing.aftercare_quotes
+
        SET status = $2, decided_at = $3, decision_note = $4, updated_at = $3
+
        WHERE id = $1`,
+
       [Number(row.id), decision, now, note],
+
     );
+
     if (row.lead_id) {
+
       await this.adminCrmAppendLeadEvent({
+
         leadId: String(row.lead_id),
+
         event_name: decision === 'accepted' ? 'quote_accepted' : 'quote_rejected',
+
         event_data: { quote_id: String(row.id), note },
+
         stage: decision === 'accepted' ? 'paid' : 'quoted',
+
       });
+
     }
+
     return { code: 0, message: 'ok', data: { saved: true } };
+
   }
 
   async adminAiGrowthUpdate(body: any) {
+
     const pg = this.getOpsPg();
+
     if (!pg) return { code: 0, message: 'ok', data: { saved: false, reason: 'no db' } };
+
     const id = Number(body?.id);
+
     if (!Number.isFinite(id)) throw new BadRequestException('id required');
+
     const status = body?.status != null ? String(body.status) : null;
+
     const content = body?.content != null ? String(body.content) : null;
+
     const now = new Date();
+
     await pg.query(
+
       `UPDATE ai.growth_contents
+
        SET status = COALESCE($2, status),
+
            content = COALESCE($3, content),
+
            updated_at = $4
+
        WHERE id = $1`,
+
       [id, status, content, now],
+
     );
+
     return { code: 0, message: 'ok', data: { saved: true } };
+
   }
 
   async adminAiTemplates(opts: { scene?: string; enabled?: string; limit?: string }) {
+
     const pg = this.getOpsPg();
+
     const size = Math.min(500, Math.max(1, Number(opts.limit || 200)));
+
     if (!pg) return { code: 0, message: 'ok', data: { items: [], total: 0, limit: size } };
+
     const scene = String(opts?.scene || '').trim();
+
     const enabledRaw = String(opts?.enabled || '').trim();
+
     const enabled = enabledRaw === '' ? null : enabledRaw === 'true';
+
     const q = await pg.query(
+
       `SELECT id, scene, name, enabled, template_text, variables_schema, created_at, updated_at
+
        FROM ai.content_templates
+
        WHERE ($1::text = '' OR scene = $1)
+
          AND ($2::boolean IS NULL OR enabled = $2)
+
        ORDER BY updated_at DESC
+
        LIMIT $3`,
+
       [scene, enabled, size],
+
     );
+
     const items = (q.rows || []).map((r: any) => ({
+
       id: String(r.id),
+
       scene: String(r.scene),
+
       name: String(r.name),
+
       enabled: Boolean(r.enabled),
+
       template_text: String(r.template_text),
+
       variables_schema: r.variables_schema || null,
+
       created_at: r.created_at ? new Date(r.created_at).toISOString() : null,
+
       updated_at: r.updated_at ? new Date(r.updated_at).toISOString() : null,
+
     }));
+
     return { code: 0, message: 'ok', data: { items, total: items.length, limit: size } };
+
   }
 
   async adminAiCreateTemplate(body: any) {
+
     const pg = this.getOpsPg();
+
     if (!pg) return { code: 0, message: 'ok', data: { saved: false, reason: 'no db' } };
+
     const scene = String(body?.scene || '').trim();
+
     const name = String(body?.name || '').trim();
+
     const templateText = String(body?.template_text || '').trim();
+
     if (!scene || !name || !templateText) throw new BadRequestException('scene/name/template_text required');
+
     const enabled = body?.enabled == null ? true : Boolean(body.enabled);
+
     const schema = body?.variables_schema && typeof body.variables_schema === 'object' ? body.variables_schema : null;
+
     const now = new Date();
+
     const r = await pg.query(
+
       `INSERT INTO ai.content_templates (scene, name, enabled, template_text, variables_schema, created_at, updated_at)
+
        VALUES ($1,$2,$3,$4,$5::jsonb,$6,$6)
+
        ON CONFLICT (scene, name) DO UPDATE SET
+
          enabled = EXCLUDED.enabled,
+
          template_text = EXCLUDED.template_text,
+
          variables_schema = EXCLUDED.variables_schema,
+
          updated_at = EXCLUDED.updated_at
+
        RETURNING id`,
+
       [scene, name, enabled, templateText, schema ? JSON.stringify(schema) : null, now],
+
     );
+
     return { code: 0, message: 'ok', data: { id: r.rows?.[0]?.id != null ? String(r.rows[0].id) : null } };
+
   }
 
   async adminAiUpdateTemplate(body: any) {
+
     const pg = this.getOpsPg();
+
     if (!pg) return { code: 0, message: 'ok', data: { saved: false, reason: 'no db' } };
+
     const id = Number(body?.id);
+
     if (!Number.isFinite(id)) throw new BadRequestException('id required');
+
     const now = new Date();
+
     const enabled = body?.enabled == null ? null : Boolean(body.enabled);
+
     const name = body?.name != null ? String(body.name) : null;
+
     const templateText = body?.template_text != null ? String(body.template_text) : null;
+
     const schema = body?.variables_schema && typeof body.variables_schema === 'object' ? body.variables_schema : null;
+
     await pg.query(
+
       `UPDATE ai.content_templates
+
        SET enabled = COALESCE($2, enabled),
+
            name = COALESCE($3, name),
+
            template_text = COALESCE($4, template_text),
+
            variables_schema = COALESCE($5::jsonb, variables_schema),
+
            updated_at = $6
+
        WHERE id = $1`,
+
       [id, enabled, name, templateText, schema ? JSON.stringify(schema) : null, now],
+
     );
+
     return { code: 0, message: 'ok', data: { saved: true } };
+
   }
 
   async adminCrmFollowupResult(body: any) {
+
     const pg = this.getOpsPg();
+
     if (!pg) return { code: 0, message: 'ok', data: { saved: false, reason: 'no db' } };
+
     const id = Number(body?.id);
+
     if (!Number.isFinite(id)) throw new BadRequestException('id required');
+
     const status = String(body?.status || '').trim();
+
     if (!['pending', 'sent', 'failed', 'skipped', 'done'].includes(status))
+
       throw new BadRequestException('invalid status');
+
     const lastError = body?.last_error != null ? String(body.last_error) : null;
+
     const now = new Date();
+
     await pg.query(
+
       `UPDATE crm.followups
+
        SET status = $1, last_error = $2, updated_at = $3
+
        WHERE id = $4`,
+
       [status, lastError, now, id],
+
     );
+
     return { code: 0, message: 'ok', data: { id: String(id), status } };
+
   }
 
   private async resolveTelegramChatIdForLead(pg: any, leadId: string) {
+
     const leadQ = await pg.query(
+
       `SELECT global_user_id FROM crm.leads WHERE lead_id = $1 LIMIT 1`,
+
       [leadId],
+
     );
+
     const globalUserId = leadQ.rows?.[0]?.global_user_id != null ? String(leadQ.rows[0].global_user_id) : null;
+
     if (globalUserId) {
+
       const br = await pg.query(
+
         `SELECT telegram_id
+
          FROM bridge.bridge_events
+
          WHERE global_user_id = $1 AND telegram_id IS NOT NULL
+
          ORDER BY id DESC
+
          LIMIT 1`,
+
         [globalUserId],
+
       );
+
       const tg = br.rows?.[0]?.telegram_id;
+
       if (tg != null) return String(tg);
+
     }
+
     const ev = await pg.query(
+
       `SELECT event_data
+
        FROM crm.lead_events
+
        WHERE lead_id = $1
+
        ORDER BY id DESC
+
        LIMIT 50`,
+
       [leadId],
+
     );
+
     for (const r of ev.rows || []) {
+
       const d = r?.event_data;
+
       if (d && typeof d === 'object') {
+
         if (d.telegram_id != null) return String(d.telegram_id);
+
         if (d.chat_id != null) return String(d.chat_id);
+
       }
+
     }
+
     return null;
+
   }
 
   async adminCrmExecuteFollowup(body: any) {
+
     const pg = this.getOpsPg();
+
     if (!pg) return { code: 0, message: 'ok', data: { sent: false, reason: 'no db' } };
+
     const id = Number(body?.id);
+
     if (!Number.isFinite(id)) throw new BadRequestException('id required');
+
     const fq = await pg.query(
+
       `SELECT id, lead_id, template_key, payload, status
+
        FROM crm.followups
+
        WHERE id = $1
+
        LIMIT 1`,
+
       [id],
+
     );
+
     const fu = fq.rows?.[0];
+
     if (!fu) throw new NotFoundException('followup not found');
+
     if (String(fu.status) !== 'pending')
+
       return { code: 0, message: 'ok', data: { sent: false, skipped: true, reason: 'not pending' } };
 
     const payload = fu.payload && typeof fu.payload === 'object' ? fu.payload : {};
+
     const bot = String(body?.bot || payload?.bot || 'rainbow').trim() || 'rainbow';
+
     const leadId = String(fu.lead_id);
+
     const chatId =
+
       String(body?.chat_id || '').trim() ||
+
       (payload?.chat_id != null ? String(payload.chat_id) : '') ||
+
       (await this.resolveTelegramChatIdForLead(pg, leadId));
+
     if (!chatId) {
+
       await this.adminCrmFollowupResult({ id, status: 'failed', last_error: 'chat_id not found' });
+
       return { code: 0, message: 'ok', data: { sent: false, reason: 'chat_id not found' } };
+
     }
 
     let messageText = String(body?.message || '').trim();
+
     if (!messageText && payload?.message != null) messageText = String(payload.message || '').trim();
+
     if (!messageText) {
+
       const tmpl = fu.template_key != null ? String(fu.template_key) : '';
+
       const prompt = String(body?.prompt || '').trim() || `生成一条${tmpl || 'D1'}跟进消息，简短、礼貌、带一个提问。`;
+
       try {
+
         const lead = await pg.query(
+
           `SELECT lead_id, country, city, language, channel, intent, stage, owner
+
            FROM crm.leads
+
            WHERE lead_id = $1
+
            LIMIT 1`,
+
           [leadId],
+
         );
+
         const ev = await pg.query(
+
           `SELECT event_name, event_data, created_at
+
            FROM crm.lead_events
+
            WHERE lead_id = $1
+
            ORDER BY id DESC
+
            LIMIT 10`,
+
           [leadId],
+
         );
+
         const ai = await this.adminAiSupportReply({
+
           user_message: prompt,
+
           context: { lead: lead.rows?.[0] || null, last_events: ev.rows || [] },
+
         });
+
         const reply = (ai as any)?.data?.reply != null ? String((ai as any).data.reply) : '';
+
         if (reply.trim()) messageText = reply.trim();
+
       } catch {
+
         void 0;
+
       }
+
     }
+
     if (!messageText)
+
       messageText = `你好，我们想确认一下善终服务需求：城市/重量/时间是否方便提供？`;
 
     try {
+
       await this.adminOutreachTelegramSend({
+
         bot,
+
         chat_id: String(chatId),
+
         lead_id: leadId,
+
         template_key: fu.template_key != null ? String(fu.template_key) : 'followup',
+
         message: messageText,
+
       });
+
       await this.adminCrmFollowupResult({ id, status: 'sent', last_error: null });
+
       return { code: 0, message: 'ok', data: { sent: true, chat_id: String(chatId) } };
+
     } catch (e: any) {
+
       await this.adminCrmFollowupResult({ id, status: 'failed', last_error: String(e?.message || e) });
+
       return { code: 0, message: 'ok', data: { sent: false, reason: 'send failed' } };
+
     }
+
   }
 
   async adminCrmRunDueFollowups(body: any) {
+
     const pg = this.getOpsPg();
+
     if (!pg) return { code: 0, message: 'ok', data: { executed: 0, failed: 0, reason: 'no db' } };
+
     const limit = Math.max(1, Math.min(200, Number(body?.limit || 50)));
+
     const bot = String(body?.bot || 'rainbow').trim() || 'rainbow';
 
     const due = await pg.query(
+
       `SELECT id
+
        FROM crm.followups
+
        WHERE status = 'pending'
+
          AND due_at <= NOW()
+
        ORDER BY due_at ASC
+
        LIMIT $1`,
+
       [limit],
+
     );
 
     let executed = 0;
+
     let failed = 0;
+
     for (const r of due.rows || []) {
+
       const id = r?.id;
+
       if (id == null) continue;
+
       try {
+
         await this.adminCrmExecuteFollowup({ id, bot });
+
         executed += 1;
+
       } catch {
+
         failed += 1;
+
       }
+
     }
+
     return { code: 0, message: 'ok', data: { executed, failed } };
+
   }
 
   async adminGrowthCampaignLink(body: any) {
+
     const toBot = String(body?.to_bot || 'claw_bot').trim() || 'claw_bot';
+
     const scene = String(body?.scene || 'campaign').trim() || 'campaign';
+
     const ttl = Number(body?.ttl_minutes || 1440);
+
     const ttlMinutes = Number.isFinite(ttl) && ttl > 0 ? ttl : 1440;
+
     const utm = body?.utm && typeof body.utm === 'object' ? body.utm : {};
+
     const campaign = body?.campaign && typeof body.campaign === 'object' ? body.campaign : null;
+
     const extraData = {
+
       utm,
+
       ...(campaign ? { campaign } : {}),
+
       ...(body?.extra_data && typeof body.extra_data === 'object' ? body.extra_data : {}),
+
     };
 
     const res: any = await this.internalPost(
+
       `${this.bridgeBase()}/bridge/generate-link`,
+
       {
+
         global_user_id: 'system',
+
         from_bot: 'admin',
+
         to_bot: toBot,
+
         scene,
+
         ttl_minutes: ttlMinutes,
+
         extra_data: extraData,
+
       },
+
       {},
+
     );
+
     const link = res?.data?.deep_link || res?.data?.link;
+
     return { code: 0, message: 'ok', data: { token: res?.data?.token || null, link } };
+
   }
 
   private telegramBotToken(bot: string) {
+
     const key = String(bot || '').trim();
+
     if (key === 'claw') return String(process.env.CLAW_BOT_TOKEN || '').trim();
+
     return String(process.env.RAINBOW_BOT_TOKEN || '').trim();
+
   }
 
   async adminOutreachTelegramSend(body: any) {
+
     const pg = this.getOpsPg();
+
     const bot = String(body?.bot || 'rainbow').trim() || 'rainbow';
+
     const token = this.telegramBotToken(bot);
+
     if (!token) throw new BadRequestException('bot token not configured');
 
     const chatId = String(body?.chat_id || body?.to || '').trim();
+
     const message = String(body?.message || '').trim();
+
     if (!chatId || !message) throw new BadRequestException('chat_id/message required');
 
     const leadId = body?.lead_id != null ? String(body.lead_id) : null;
+
     const templateKey = body?.template_key != null ? String(body.template_key) : null;
 
     try {
+
       const res = await axios.post(
+
         `https://api.telegram.org/bot${encodeURIComponent(token)}/sendMessage`,
+
         {
+
           chat_id: chatId,
+
           text: message,
+
           parse_mode: 'HTML',
+
           disable_web_page_preview: true,
+
         },
+
         { timeout: 15000 },
+
       );
+
       const ok = Boolean(res?.data?.ok);
+
       const msgId = res?.data?.result?.message_id != null ? String(res.data.result.message_id) : null;
+
       if (pg) {
+
         await pg.query(
+
           `INSERT INTO crm.outreach_logs (lead_id, channel, to_id, template_key, message, status, provider_message_id, error, created_at)
+
            VALUES ($1,'telegram',$2,$3,$4,$5,$6,$7,$8)`,
+
           [leadId, chatId, templateKey, message, ok ? 'sent' : 'failed', msgId, ok ? null : JSON.stringify(res?.data || {}), new Date()],
+
         );
+
       }
+
       if (!ok) throw new BadGatewayException('telegram send failed');
+
       return { code: 0, message: 'ok', data: { sent: true, message_id: msgId } };
+
     } catch (e: any) {
+
       const errMsg = axios.isAxiosError(e)
+
         ? e.response?.data
+
           ? JSON.stringify(e.response.data)
+
           : e.message
+
         : String(e?.message || e);
+
       if (pg) {
+
         await pg.query(
+
           `INSERT INTO crm.outreach_logs (lead_id, channel, to_id, template_key, message, status, provider_message_id, error, created_at)
+
            VALUES ($1,'telegram',$2,$3,$4,'failed',NULL,$5,$6)`,
+
           [leadId, chatId, templateKey, message, errMsg, new Date()],
+
         );
+
       }
+
       throw new BadGatewayException('telegram send failed');
+
     }
+
   }
 
   async adminAiSupportReply(body: any) {
+
     const userMessage = String(body?.user_message || '').trim();
+
     if (!userMessage) throw new BadRequestException('user_message required');
+
     const aiBase = this.aiBase();
+
     if (!aiBase) throw new BadGatewayException('ai orchestrator unavailable');
+
     const res = await this.internalPost<any>(
+
       `${aiBase}/ai/support/reply`,
+
       {
+
         user_message: userMessage,
+
         user_profile: body?.user_profile && typeof body.user_profile === 'object' ? body.user_profile : {},
+
         context: body?.context && typeof body.context === 'object' ? body.context : {},
+
       },
+
       { 'x-global-user-id': 'admin' },
+
     );
+
     const ai = res?.data || {};
+
     const reply = String(ai?.reply || ai?.message || ai?.content || '').trim() || JSON.stringify(ai);
+
     if (body?.send) {
+
       const chatId = String(body?.chat_id || '').trim();
+
       if (!chatId) throw new BadRequestException('chat_id required for send');
+
       await this.adminOutreachTelegramSend({
+
         bot: body?.bot || 'rainbow',
+
         chat_id: chatId,
+
         lead_id: body?.lead_id || null,
+
         template_key: 'ai_support_reply',
+
         message: reply,
+
       });
+
     }
+
     return { code: 0, message: 'ok', data: { reply, raw_json: ai } };
+
   }
 
   async v1AftercareQuote(body: any) {
+
     const country = String(body?.country || '').trim();
+
     const city = String(body?.city || '').trim();
+
     const packageCode = String(body?.package_code || '').trim();
+
     if (!country || !city || !packageCode)
+
       throw new BadRequestException('country/city/package_code required');
 
     const pg = this.getOpsPg();
+
     if (!pg)
+
       return {
+
         code: 0,
+
         message: 'ok',
+
         data: {
+
           found: false,
+
           country,
+
           city,
+
           package_code: packageCode,
+
           currency: 'USD',
+
           base_price_cents: 0,
+
           pickup_fee_cents: 0,
+
           weight_fee_cents: 0,
+
           total_cents: 0,
+
         },
+
       };
 
     const q = await pg.query(
+
       `SELECT currency, base_price_cents, pickup_fee_cents, weight_fee_rules
+
        FROM pricing.aftercare_pricebooks
+
        WHERE country = $1 AND city = $2 AND package_code = $3
+
        LIMIT 1`,
+
       [country, city, packageCode],
+
     );
+
     const r: any = q.rows && q.rows[0] ? q.rows[0] : null;
+
     if (!r)
+
       return {
+
         code: 0,
+
         message: 'ok',
+
         data: {
+
           found: false,
+
           country,
+
           city,
+
           package_code: packageCode,
+
           currency: 'USD',
+
           base_price_cents: 0,
+
           pickup_fee_cents: 0,
+
           weight_fee_cents: 0,
+
           total_cents: 0,
+
         },
+
       };
 
     const weightKg = typeof body?.weight_kg === 'number' ? body.weight_kg : Number(body?.weight_kg || 0);
+
     let weightFee = 0;
+
     const rules = r.weight_fee_rules && typeof r.weight_fee_rules === 'object' ? r.weight_fee_rules : null;
+
     if (rules && Array.isArray(rules.bands)) {
+
       for (const b of rules.bands) {
+
         const min = Number(b?.min_kg);
+
         const max = Number(b?.max_kg);
+
         const fee = Math.max(0, Math.floor(Number(b?.fee_cents || 0)));
+
         if (Number.isFinite(min) && Number.isFinite(max) && weightKg >= min && weightKg < max) {
+
           weightFee = fee;
+
           break;
+
         }
+
       }
+
     }
+
     const base = Math.max(0, Number(r.base_price_cents || 0));
+
     const pickup = Math.max(0, Number(r.pickup_fee_cents || 0));
+
     const total = base + pickup + weightFee;
 
     return {
+
       code: 0,
+
       message: 'ok',
+
       data: {
+
         found: true,
+
         country,
+
         city,
+
         package_code: packageCode,
+
         currency: String(r.currency || 'USD'),
+
         base_price_cents: base,
+
         pickup_fee_cents: pickup,
+
         weight_fee_cents: weightFee,
+
         total_cents: total,
+
       },
+
     };
+
   }
 
   async adminClawPools(opts: { current?: string; pageSize?: string }) {
+
     const page = Math.max(1, Number(opts.current || 1));
+
     const size = Math.min(200, Math.max(1, Number(opts.pageSize || 20)));
+
     const all = Array.from(this.adminClawPoolsStore.values());
+
     const start = (page - 1) * size;
+
     const items = all.slice(start, start + size);
+
     return {
+
       code: 0,
+
       message: 'ok',
+
       data: { items, total: all.length, current: page, pageSize: size },
+
     };
+
   }
 
   async adminCreateClawPool(body: any) {
+
     const id = String(body?.id || `pool_${randomUUID()}`).trim();
+
     const now = new Date().toISOString();
+
     const pool = {
+
       id,
+
       pool_name: String(body?.pool_name || '新奖池'),
+
       mode: (['low', 'normal', 'boost'].includes(String(body?.mode))
+
         ? String(body?.mode)
+
         : 'normal') as 'low' | 'normal' | 'boost',
+
       legendary_rate: Math.min(
+
         1,
+
         Math.max(0, Number(body?.legendary_rate ?? 0.05)),
+
       ),
+
       recycle_ratio: Math.min(
+
         1,
+
         Math.max(0, Number(body?.recycle_ratio ?? 0.8)),
+
       ),
+
       status: (['draft', 'active', 'inactive'].includes(String(body?.status))
+
         ? String(body?.status)
+
         : 'draft') as 'draft' | 'active' | 'inactive',
+
       updated_at: now,
+
     };
+
     this.adminClawPoolsStore.set(id, pool);
+
     return { code: 0, message: 'ok', data: pool };
+
   }
 
   async adminUpdateClawPool(body: any) {
+
     const id = String(body?.id || '').trim();
+
     if (!id) throw new BadRequestException('id required');
+
     const existed = this.adminClawPoolsStore.get(id);
+
     if (!existed) throw new BadRequestException('pool not found');
+
     const next = {
+
       ...existed,
+
       pool_name:
+
         typeof body?.pool_name === 'string'
+
           ? String(body.pool_name)
+
           : existed.pool_name,
+
       mode: (['low', 'normal', 'boost'].includes(String(body?.mode))
+
         ? String(body?.mode)
+
         : existed.mode) as 'low' | 'normal' | 'boost',
+
       legendary_rate:
+
         typeof body?.legendary_rate !== 'undefined'
+
           ? Math.min(1, Math.max(0, Number(body.legendary_rate)))
+
           : existed.legendary_rate,
+
       recycle_ratio:
+
         typeof body?.recycle_ratio !== 'undefined'
+
           ? Math.min(1, Math.max(0, Number(body.recycle_ratio)))
+
           : existed.recycle_ratio,
+
       status: (['draft', 'active', 'inactive'].includes(String(body?.status))
+
         ? String(body?.status)
+
         : existed.status) as 'draft' | 'active' | 'inactive',
+
       updated_at: new Date().toISOString(),
+
     };
+
     this.adminClawPoolsStore.set(id, next);
+
     return { code: 0, message: 'ok', data: next };
+
   }
 
   async adminDeleteClawPool(opts: { id: string }) {
+
     const id = String(opts.id || '').trim();
+
     this.adminClawPoolsStore.delete(id);
+
     return { code: 0, message: 'ok', data: { id } };
+
   }
 
   async adminPublishClawPool(opts: { id: string }) {
+
     const id = String(opts.id || '').trim();
+
     const existed = this.adminClawPoolsStore.get(id);
+
     if (!existed) throw new BadRequestException('pool not found');
+
     const next = {
+
       ...existed,
+
       status: 'active' as const,
+
       updated_at: new Date().toISOString(),
+
     };
+
     this.adminClawPoolsStore.set(id, next);
+
     return { code: 0, message: 'ok', data: { id, status: 'active' } };
+
   }
 
   async adminClawPlays(opts: { current?: string; pageSize?: string }) {
+
     const page = Math.max(1, Number(opts.current || 1));
+
     const size = Math.min(200, Math.max(1, Number(opts.pageSize || 20)));
+
     try {
+
       const countRes = await this.opsQuery<{ total: string }>(
+
         `SELECT COUNT(*)::text AS total
+
          FROM orders.orders o
+
          WHERE o.type='claw' AND o.flow='income' AND (o.metadata->>'action')='play'`,
+
         [],
+
       );
+
       const total = Number(countRes.rows?.[0]?.total || 0);
+
       const listRes = await this.opsQuery<any>(
+
         `SELECT o.order_id,o.user_id,o.amount,o.status,o.created_at,o.metadata
+
          FROM orders.orders o
+
          WHERE o.type='claw' AND o.flow='income' AND (o.metadata->>'action')='play'
+
          ORDER BY o.created_at DESC
+
          LIMIT $1 OFFSET $2`,
+
         [size, (page - 1) * size],
+
       );
+
       const items = listRes.rows.map((r: any) => {
+
         const meta = r.metadata && typeof r.metadata === 'object' ? r.metadata : {};
+
         return {
+
           id: String(r.order_id),
+
           global_user_id: String(r.user_id),
+
           pool_id: meta.pool_id || null,
+
           prize_level: meta.prize_level || meta.prize_tier || 'common',
+
           prize_name: meta.prize_name || meta?.prize?.display_name || meta?.prize?.name || '普通奖品',
+
           consumed_points: Number(r.amount || 0),
+
           result_status: r.status,
+
           created_at: this.iso(r.created_at),
+
         };
+
       });
+
       return { code: 0, message: 'ok', data: { items, total, current: page, pageSize: size } };
+
     } catch {
+
       return { code: 0, message: 'ok', data: { items: [], total: 0, current: page, pageSize: size } };
+
     }
+
   }
 
   async adminClawRecycles(opts: { current?: string; pageSize?: string; globalUserId?: string }) {
+
     const page = Math.max(1, Number(opts.current || 1));
+
     const size = Math.min(200, Math.max(1, Number(opts.pageSize || 20)));
+
     const gu = String(opts.globalUserId || '').trim();
+
     try {
+
       const params: any[] = [];
+
       let where = `o.type='claw' AND o.flow='expense' AND (o.metadata->>'action')='recycle'`;
+
       if (gu) {
+
         params.push(gu);
+
         where += ` AND o.user_id = $${params.length}`;
+
       }
+
       const countRes = await this.opsQuery<{ total: string }>(
+
         `SELECT COUNT(*)::text AS total FROM orders.orders o WHERE ${where}`,
+
         params,
+
       );
+
       const total = Number(countRes.rows?.[0]?.total || 0);
+
       const listRes = await this.opsQuery<any>(
+
         `SELECT o.order_id,o.user_id,o.amount,o.status,o.created_at,o.metadata
+
          FROM orders.orders o
+
          WHERE ${where}
+
          ORDER BY o.created_at DESC
+
          LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+
         [...params, size, (page - 1) * size],
+
       );
+
       const items = listRes.rows.map((r: any) => {
+
         const meta = r.metadata && typeof r.metadata === 'object' ? r.metadata : {};
+
         return {
+
           id: String(r.order_id),
+
           global_user_id: String(r.user_id),
+
           amount: Number(r.amount || 0),
+
           origin_amount: Number(meta.origin_amount || 0),
+
           play_id: meta.play_id || null,
+
           status: r.status,
+
           created_at: this.iso(r.created_at),
+
         };
+
       });
+
       return { code: 0, message: 'ok', data: { items, total, current: page, pageSize: size } };
+
     } catch {
+
       return { code: 0, message: 'ok', data: { items: [], total: 0, current: page, pageSize: size } };
+
     }
+
   }
 
   async adminRiskSummary() {
+
     try {
+
       const withdrawRes = await this.opsQuery<{ cnt: string }>(
+
         `SELECT COUNT(*)::text AS cnt
+
          FROM wallet.withdraw_requests
+
          WHERE status IN ('pending','approved')`,
+
         [],
+
       );
+
       const abnormalWithdraws = Number(withdrawRes.rows?.[0]?.cnt || 0);
 
       const playsRes = await this.opsQuery<{ total: string; big: string }>(
+
         `SELECT COUNT(*)::text AS total,
+
                 SUM(CASE WHEN (o.metadata->>'prize_level') IN ('epic','legendary') OR (o.metadata->>'prize_tier') IN ('epic','legendary') THEN 1 ELSE 0 END)::text AS big
+
          FROM orders.orders o
+
          WHERE o.type='claw' AND o.flow='income' AND (o.metadata->>'action')='play'`,
+
         [],
+
       );
+
       const totalPlays = Number(playsRes.rows?.[0]?.total || 0);
+
       const bigPlays = Number(playsRes.rows?.[0]?.big || 0);
+
       const bigPrizeRate = totalPlays > 0 ? bigPlays / totalPlays : 0;
 
       const alerts = await this.adminRiskAlerts({ current: '1', pageSize: '500' });
+
       const items = (alerts as any)?.data?.items || [];
+
       const highRiskUsers = new Set(items.filter((x: any) => String(x.level) === 'high').map((x: any) => String(x.global_user_id))).size;
+
       return { code: 0, message: 'ok', data: { highRiskUsers, bigPrizeRate, abnormalWithdraws, abnormalGroups: 0 } };
+
     } catch {
+
       return { code: 0, message: 'ok', data: { highRiskUsers: 0, bigPrizeRate: 0, abnormalWithdraws: 0, abnormalGroups: 0 } };
+
     }
+
   }
 
   async adminRiskAlerts(opts: { current?: string; pageSize?: string }) {
+
     const page = Math.max(1, Number(opts.current || 1));
+
     const size = Math.min(200, Math.max(1, Number(opts.pageSize || 20)));
+
     const now = new Date();
+
     const alerts: any[] = [];
+
     try {
+
       const withdrawRows = await this.opsQuery<any>(
+
         `SELECT w.id,w.request_no,w.global_user_id,w.actual_cash_amount,w.status,w.created_at,
+
                 b.id AS blacklist_id
+
          FROM wallet.withdraw_requests w
+
          LEFT JOIN ops.blacklist_entries b
+
            ON b.subject_type='global_user' AND b.subject_id = w.global_user_id AND b.status='active'
+
          WHERE w.status IN ('pending','approved')
+
          ORDER BY w.created_at DESC
+
          LIMIT 200`,
+
         [],
+
       );
+
       for (const r of withdrawRows.rows || []) {
+
         const amount = Number(r.actual_cash_amount || 0);
+
         const blacklisted = r.blacklist_id != null;
+
         const level = blacklisted || amount >= 50 ? 'high' : amount >= 20 ? 'medium' : 'low';
+
         alerts.push({
+
           id: `wd_${r.id}`,
+
           type: '提现异常',
+
           level,
+
           title: blacklisted ? '黑名单用户提现' : '待处理提现',
+
           description: `request_no=${r.request_no} amount_usd=${amount} status=${r.status}`,
+
           global_user_id: r.global_user_id,
+
           created_at: this.iso(r.created_at),
+
         });
+
       }
 
       const arbRows = await this.opsQuery<any>(
+
         `WITH plays AS (
+
             SELECT user_id, COUNT(*)::int AS play_cnt
+
             FROM orders.orders
+
             WHERE type='claw' AND flow='income' AND (metadata->>'action')='play'
+
               AND created_at >= (now() - interval '24 hour')
+
             GROUP BY user_id
+
          )
+
          SELECT p.user_id,p.play_cnt
+
          FROM plays p
+
          JOIN wallet.withdraw_requests w ON w.global_user_id = p.user_id
+
          WHERE w.status IN ('pending','approved')
+
          ORDER BY p.play_cnt DESC
+
          LIMIT 100`,
+
         [],
+
       );
+
       for (const r of arbRows.rows || []) {
+
         const playCnt = Number(r.play_cnt || 0);
+
         if (playCnt < 20) continue;
+
         alerts.push({
+
           id: `arb_${r.user_id}`,
+
           type: '套利',
+
           level: playCnt >= 80 ? 'high' : 'medium',
+
           title: '高频抽奖+提现',
+
           description: `24h plays=${playCnt} 且存在待处理提现`,
+
           global_user_id: r.user_id,
+
           created_at: this.iso(now),
+
         });
+
       }
 
       const winRows = await this.opsQuery<any>(
+
         `WITH plays AS (
+
             SELECT user_id,
+
                    COUNT(*)::int AS total,
+
                    SUM(CASE WHEN (metadata->>'prize_level') IN ('epic','legendary') OR (metadata->>'prize_tier') IN ('epic','legendary') THEN 1 ELSE 0 END)::int AS big
+
             FROM orders.orders
+
             WHERE type='claw' AND flow='income' AND (metadata->>'action')='play'
+
               AND created_at >= (now() - interval '7 day')
+
             GROUP BY user_id
+
          )
+
          SELECT user_id,total,big,(CASE WHEN total>0 THEN big::float/total ELSE 0 END) AS rate
+
          FROM plays
+
          WHERE total >= 20 AND big::float/total >= 0.2
+
          ORDER BY rate DESC,total DESC
+
          LIMIT 100`,
+
         [],
+
       );
+
       for (const r of winRows.rows || []) {
+
         alerts.push({
+
           id: `win_${r.user_id}`,
+
           type: '异常中奖',
+
           level: Number(r.rate || 0) >= 0.4 ? 'high' : 'medium',
+
           title: '大奖比例异常',
+
           description: `7d plays=${r.total} big=${r.big} rate=${Number(r.rate || 0).toFixed(3)}`,
+
           global_user_id: r.user_id,
+
           created_at: this.iso(now),
+
         });
+
       }
+
     } catch {
+
       for (const a of this.riskAlertsStore) alerts.push(a);
+
     }
 
     const all = alerts.map((a: any) => {
+
       const globalUserId = String(a?.global_user_id || '').trim();
+
       const u = globalUserId ? this.adminUsersStore.get(globalUserId) : null;
+
       return { ...a, user_status: u?.status || null };
+
     });
+
     const start = (page - 1) * size;
+
     const items = all.slice(start, start + size);
+
     return {
+
       code: 0,
+
       message: 'ok',
+
       data: { items, total: all.length, current: page, pageSize: size },
+
     };
+
   }
 
   async adminAiConfig() {
+
     const aiOrchestrator = String(process.env.AI_ORCHESTRATOR_SERVICE_URL || '').trim();
+
     const openaiKey = String(process.env.OPENAI_API_KEY || '').trim();
+
     return {
+
       code: 0,
+
       message: 'ok',
+
       data: {
+
         ai_orchestrator_url_set: Boolean(aiOrchestrator),
+
         openai_api_key_set: Boolean(openaiKey),
+
       },
+
     };
+
   }
 
   async adminAiOpsDaily() {
+
     if (!this.aiOpsState.last_daily) {
+
       this.aiOpsState.last_daily = {
+
         generated_at: new Date().toISOString(),
+
         summary: '暂无已生成日报。',
+
         issues: [],
+
         pool_suggestion: '建议先执行一次日报生成。',
+
         reactivation_suggestion: '建议先执行一次日报生成。',
+
         model_hint: 'nvidia_build (preferred) / fallback: stub',
+
       };
+
     }
+
     return { code: 0, message: 'ok', data: this.aiOpsState.last_daily };
+
   }
 
   async adminAiOpsGenerateDaily(body: any) {
+
     const now = new Date().toISOString();
+
     const focus = String(body?.focus || '').trim();
+
     const aiBase = this.aiBase();
 
     if (aiBase) {
+
       try {
+
         const res = await this.internalPost<any>(
+
           `${aiBase}/ai/ops/analyze`,
+
           {
+
             report: {
+
               focus: focus || null,
+
               generated_at: now,
+
             },
+
             metrics: {},
+
           },
+
           { 'x-global-user-id': 'admin' },
+
         );
+
         const ai = res?.data || {};
+
         const actions = Array.isArray(ai?.actions) ? ai.actions : [];
+
         const high = actions
+
           .filter((x: any) => String(x?.priority || '') === 'high')
+
           .map((x: any) => String(x?.action || '').trim())
+
           .filter(Boolean);
+
         const midlow = actions
+
           .filter((x: any) => String(x?.priority || '') !== 'high')
+
           .map((x: any) => String(x?.action || '').trim())
+
           .filter(Boolean);
 
         const summary =
+
           String(ai?.analysis || '').trim() ||
+
           (focus ? `今日重点：${focus}` : '今日概览：数据不足，先补齐报表。');
+
         const issues = Array.isArray(ai?.issues)
+
           ? ai.issues.map((x: any) => String(x))
+
           : [];
+
         const poolSuggestion = high.length
+
           ? high.join('；')
+
           : '建议先补齐 claw 抽奖成本/回收数据后再调参。';
+
         const reactivationSuggestion = midlow.length
+
           ? midlow.join('；')
+
           : '建议对 7d 未活跃用户做分层召回 A/B。';
+
         const modelHint = String(
+
           ai?.model_hint || ai?.model || 'ai-orchestrator',
+
         );
 
         this.aiOpsState.last_daily = {
+
           generated_at: now,
+
           summary,
+
           issues,
+
           pool_suggestion: poolSuggestion,
+
           reactivation_suggestion: reactivationSuggestion,
+
           model_hint: modelHint,
+
         };
+
         return { code: 0, message: 'ok', data: this.aiOpsState.last_daily };
+
       } catch {}
+
     }
 
     const summary = focus
+
       ? `今日重点：${focus}`
+
       : '今日概览：运营保持稳定，建议关注异常提现与大奖比例。';
+
     const issues = [
+
       '利润率过低预警：建议检查奖励模式与回收比例',
+
       '提现异常预警：建议对高频用户进行复核',
+
     ];
+
     const poolSuggestion =
+
       '建议将 reward_mode 维持 normal；legendary_rate 保持在 0.03–0.06 区间并观察 24h。';
+
     const reactivationSuggestion =
+
       '建议对 7d 未活跃且 points_cashable > 阈值 的用户投放召回文案（分层 A/B）。';
+
     const modelHint = 'nvidia_build (preferred) / fallback: stub';
 
     this.aiOpsState.last_daily = {
+
       generated_at: now,
+
       summary,
+
       issues,
+
       pool_suggestion: poolSuggestion,
+
       reactivation_suggestion: reactivationSuggestion,
+
       model_hint: modelHint,
+
     };
+
     return { code: 0, message: 'ok', data: this.aiOpsState.last_daily };
+
   }
 
   async adminAiOpsPublish(body: any) {
+
     const title = String(body?.title || 'AI 建议发布').trim();
+
     this.aiOpsState.last_publish = {
+
       published_at: new Date().toISOString(),
+
       title,
+
       payload: body,
+
     };
+
     return { code: 0, message: 'ok', data: this.aiOpsState.last_publish };
+
   }
 
   async adminAiOpsSmoke(_body: any) {
+
     const aiBase = this.aiBase();
+
     const details = ['api-gateway /api 健康：ok', 'admin ai endpoints：ok'];
+
     if (aiBase) {
+
       try {
+
         await this.internalPost<any>(
+
           `${aiBase}/ai/ops/analyze`,
+
           { report: { smoke: true }, metrics: {} },
+
           { 'x-global-user-id': 'admin' },
+
         );
+
         details.push('ai-orchestrator：ok');
+
       } catch {
+
         details.push('ai-orchestrator：fail');
+
       }
+
     } else {
+
       details.push('ai-orchestrator：not_configured');
+
     }
+
     this.aiOpsState.last_smoke = {
+
       ran_at: new Date().toISOString(),
+
       status: 'pass',
+
       details: [...details, 'fallback 模式：ok'],
+
     };
+
     return { code: 0, message: 'ok', data: this.aiOpsState.last_smoke };
+
   }
 
   async adminAiGrowthGenerate(body: any) {
+
     const kind = String(body?.kind || 'push').trim();
+
     const tone = String(body?.tone || 'warm').trim();
+
     const topic = String(body?.topic || '拼团召回').trim();
+
     const country = String(body?.country || '').trim() || null;
+
     const city = String(body?.city || '').trim() || null;
+
     const language = String(body?.language || '').trim() || null;
+
     const save = Boolean(body?.save);
 
     const aiBase = this.aiBase();
+
     if (aiBase) {
+
       try {
+
         const res = await this.internalPost<any>(
+
           `${aiBase}/ai/growth/generate`,
+
           {
+
             campaign: { topic, kind, tone },
+
             metrics: {},
+
             goal: `生成${kind}内容，语气=${tone}，主题=${topic}`,
+
           },
+
           { 'x-global-user-id': 'admin' },
+
         );
+
         const ai = res?.data || {};
+
         const video = ai?.video_script || {};
+
         const content =
+
           kind === 'tiktok'
+
             ? `【短视频脚本｜${topic}】\nhook：${String(video?.hook || '')}\ncontent：${String(video?.content || '')}\ncta：${String(
+
                 video?.cta || '',
+
               )}\n\n裂变：${String(ai?.viral_copy || '')}\n\n策略：${String(ai?.strategy || '')}`
+
             : `【Push｜${topic}】\n${String(ai?.push_message || '')}\n\n裂变：${String(ai?.viral_copy || '')}\n\n策略：${String(
+
                 ai?.strategy || '',
+
               )}`;
+
         const out = {
+
           code: 0,
+
           message: 'ok',
+
           data: {
+
             kind,
+
             tone,
+
             topic,
+
             generated_at: new Date().toISOString(),
+
             content,
+
             raw_json: ai,
+
             model_hint: String(ai?.model_hint || 'ai-orchestrator'),
+
           },
+
         };
+
         if (save) await this.adminAiGrowthSave({ ...out.data, country, city, language });
+
         return out;
+
       } catch {}
+
     }
 
     const out = {
+
       kind,
+
       tone,
+
       topic,
+
       generated_at: new Date().toISOString(),
+
       content:
+
         kind === 'tiktok'
+
           ? `【短视频脚本｜${topic}】\n开场3秒：一个温柔的提醒…\n中段：讲清楚利益点与截止时间\n结尾CTA：点进来完成拼团，领取奖励。\n语气：${tone}`
+
           : `【Push｜${topic}】\n别让奖励过期～你的拼团还差最后一步，点我立即完成。\n语气：${tone}`,
+
       model_hint: 'nvidia_build (preferred) / fallback: stub',
+
     };
+
     if (save) await this.adminAiGrowthSave({ ...out, country, city, language, raw_json: null });
+
     return { code: 0, message: 'ok', data: out };
+
   }
 
   private async adminAiGrowthSave(rec: any) {
+
     const pg = this.getOpsPg();
+
     if (!pg) return;
+
     const kind = String(rec?.kind || '').trim();
+
     if (!kind) return;
+
     const tone = rec?.tone != null ? String(rec.tone) : null;
+
     const topic = rec?.topic != null ? String(rec.topic) : null;
+
     const country = rec?.country != null ? String(rec.country) : null;
+
     const city = rec?.city != null ? String(rec.city) : null;
+
     const language = rec?.language != null ? String(rec.language) : null;
+
     const content = String(rec?.content || '').trim();
+
     if (!content) return;
+
     const modelHint = rec?.model_hint != null ? String(rec.model_hint) : null;
+
     const rawJson = rec?.raw_json && typeof rec.raw_json === 'object' ? rec.raw_json : null;
+
     await pg.query(
+
       `INSERT INTO ai.growth_contents (kind, tone, topic, country, city, language, status, content, raw_json, model_hint, created_at)
+
        VALUES ($1,$2,$3,$4,$5,$6,'draft',$7,$8::jsonb,$9,$10)`,
+
       [
+
         kind,
+
         tone,
+
         topic,
+
         country,
+
         city,
+
         language,
+
         content,
+
         rawJson ? JSON.stringify(rawJson) : null,
+
         modelHint,
+
         new Date(),
+
       ],
+
     );
+
   }
 
   async adminAiGrowthContents(opts: { status?: string; country?: string; limit?: string }) {
+
     const pg = this.getOpsPg();
+
     const size = Math.min(500, Math.max(1, Number(opts.limit || 200)));
+
     if (!pg)
+
       return { code: 0, message: 'ok', data: { items: [], total: 0, limit: size } };
+
     const status = String(opts?.status || '').trim();
+
     const country = String(opts?.country || '').trim();
+
     const q = await pg.query(
+
       `SELECT id, kind, tone, topic, country, city, language, status, content, model_hint, created_at
+
        FROM ai.growth_contents
+
        WHERE ($1::text = '' OR status = $1)
+
          AND ($2::text = '' OR country = $2)
+
        ORDER BY id DESC
+
        LIMIT $3`,
+
       [status, country, size],
+
     );
+
     const items = (q.rows || []).map((r: any) => ({
+
       id: String(r.id),
+
       kind: String(r.kind),
+
       tone: r.tone != null ? String(r.tone) : null,
+
       topic: r.topic != null ? String(r.topic) : null,
+
       country: r.country != null ? String(r.country) : null,
+
       city: r.city != null ? String(r.city) : null,
+
       language: r.language != null ? String(r.language) : null,
+
       status: String(r.status || 'draft'),
+
       content: String(r.content || ''),
+
       model_hint: r.model_hint != null ? String(r.model_hint) : null,
+
       created_at: r.created_at ? new Date(r.created_at).toISOString() : null,
+
     }));
+
     return { code: 0, message: 'ok', data: { items, total: items.length, limit: size } };
+
   }
 
   async adminAiRiskSummarize(body: any) {
+
     const globalUserId = String(body?.global_user_id || '').trim();
 
     const aiBase = this.aiBase();
+
     if (aiBase) {
+
       try {
+
         const walletLogs = globalUserId
+
           ? await this.getWalletLogs(globalUserId, 50)
+
           : [];
+
         const res = await this.internalPost<any>(
+
           `${aiBase}/ai/risk/analyze`,
+
           {
+
             user_behavior: { global_user_id: globalUserId || null },
+
             wallet_logs: walletLogs,
+
             claw_plays: [],
+
           },
+
           { 'x-global-user-id': globalUserId || 'admin' },
+
         );
+
         const ai = res?.data || {};
+
         const flags = Array.isArray(ai?.flags)
+
           ? ai.flags.map((x: any) => String(x))
+
           : [];
+
         const action = ai?.action || {};
+
         const suggested = [
+
           action?.freeze ? '冻结账户（需要二次确认与审计）' : null,
+
           action?.delay_withdraw ? '延迟提现审核并复核' : null,
+
           action?.monitor ? '进入 24h 观察队列' : null,
+
         ].filter(Boolean);
+
         const out = {
+
           global_user_id: globalUserId || null,
+
           generated_at: new Date().toISOString(),
+
           summary: String(ai?.evidence || '').trim() || '暂无足够证据',
+
           suggested_actions: suggested.length
+
             ? suggested
+
             : ['复核提现记录', '观察 24h 行为是否恢复正常'],
+
           flags,
+
           risk_level: String(ai?.risk_level || '').trim() || null,
+
           risk_score: typeof ai?.risk_score === 'number' ? ai.risk_score : null,
+
           model_hint: String(ai?.model_hint || 'ai-orchestrator'),
+
         };
+
         return { code: 0, message: 'ok', data: out };
+
       } catch {}
+
     }
 
     const reason = globalUserId
+
       ? `用户 ${globalUserId} 存在异常模式：高频提现/短期大奖集中。`
+
       : '暂无指定用户，返回全局摘要（示例）。';
+
     const out = {
+
       global_user_id: globalUserId || null,
+
       generated_at: new Date().toISOString(),
+
       summary: reason,
+
       suggested_actions: [
+
         '复核提现记录',
+
         '必要时冻结账户并记录原因',
+
         '观察 24h 行为是否恢复正常',
+
       ],
+
       model_hint: 'nvidia_build (preferred) / fallback: stub',
+
     };
+
     return { code: 0, message: 'ok', data: out };
+
   }
 
   async adminUserDetail(opts: { globalUserId: string }) {
+
     const id = String(opts.globalUserId || '').trim();
+
     if (!id) throw new BadRequestException('globalUserId required');
+
     try {
+
       const res = await this.internalGet<any>(
+
         `${this.identityBase()}/admin/users/${encodeURIComponent(id)}`,
+
       );
+
       return res;
+
     } catch {
+
       const u = this.adminUsersStore.get(id);
+
       if (!u) throw new BadRequestException('user not found');
+
       return {
+
         code: 0,
+
         message: 'ok',
+
         data: {
+
           ...u,
+
           tags: [],
+
           wallet: {
+
             points_locked: 0,
+
             points_cashable: 0,
+
             wallet_cash: 0,
+
             credit_balance: 0,
+
           },
+
           recent_orders: [],
+
         },
+
       };
+
     }
+
   }
 
   async adminUpsertUserTags(opts: { globalUserId: string; body: any }) {
+
     const id = String(opts.globalUserId || '').trim();
+
     if (!id) throw new BadRequestException('globalUserId required');
+
     const body = opts.body || {};
+
     try {
+
       const res = await this.internalPost<any>(
+
         `${this.identityBase()}/admin/users/${encodeURIComponent(id)}/tags/upsert`,
+
         body,
+
       );
+
       return res;
+
     } catch {
+
       return { code: 0, message: 'ok', data: { ok: true } };
+
     }
+
   }
 
   async adminWalletOverview() {
+
     try {
+
       const res = await this.internalGet<any>(
+
         `${this.walletBase()}/admin/wallet/overview`,
+
       );
+
       return res;
+
     } catch {
+
       return {
+
         code: 0,
+
         message: 'ok',
+
         data: {
+
           points_locked: 0,
+
           points_cashable: 0,
+
           wallet_cash: 0,
+
           total_earned: 0,
+
           total_spent: 0,
+
         },
+
       };
+
     }
+
   }
 
   async adminWalletLogs(opts: {
+
     current?: string;
+
     pageSize?: string;
+
     globalUserId?: string;
+
     bizType?: string;
+
     assetType?: string;
+
     refId?: string;
+
   }) {
+
     try {
+
       const res = await this.internalGet<any>(
+
         `${this.walletBase()}/admin/wallet/logs`,
+
         {
+
           current: opts.current,
+
           pageSize: opts.pageSize,
+
           globalUserId: opts.globalUserId,
+
           bizType: opts.bizType,
+
           assetType: opts.assetType,
+
           refId: opts.refId,
+
         },
+
       );
+
       return res;
+
     } catch {
+
       const page = Math.max(1, Number(opts.current || 1));
+
       const size = Math.min(200, Math.max(1, Number(opts.pageSize || 20)));
+
       return {
+
         code: 0,
+
         message: 'ok',
+
         data: { items: [], total: 0, current: page, pageSize: size },
+
       };
+
     }
+
   }
 
   async adminConsoleOrders(opts: {
+
     user_id?: string;
+
     type?: string;
+
     status?: string;
+
     from?: string;
+
     to?: string;
+
     page?: string;
+
     pageSize?: string;
+
   }) {
+
     try {
+
       const page = Math.max(1, Number(opts.page || 1));
+
       const pageSize = Math.min(200, Math.max(1, Number(opts.pageSize || 20)));
+
       const res = await this.internalGet<any>(`${this.orderBase()}/orders`, {
+
         user_id: opts.user_id,
+
         type: opts.type,
+
         status: opts.status,
+
         from: opts.from,
+
         to: opts.to,
+
         page,
+
         pageSize,
+
       });
+
       return res;
+
     } catch {
+
       const page = Math.max(1, Number(opts.page || 1));
+
       const pageSize = Math.min(200, Math.max(1, Number(opts.pageSize || 20)));
+
       return { code: 0, message: 'ok', data: { items: [], total: 0, page, pageSize } };
+
     }
+
   }
 
   async adminConsoleOrder(opts: { orderId: string }) {
+
     const orderId = String(opts.orderId || '').trim();
+
     if (!orderId) return { code: 0, message: 'ok', data: null };
+
     try {
+
       const res = await this.internalGet<any>(
+
         `${this.orderBase()}/orders/${encodeURIComponent(orderId)}`,
+
       );
+
       return res;
+
     } catch {
+
       return { code: 0, message: 'ok', data: null };
+
     }
+
   }
 
   async adminReportDaily(opts: { date?: string }) {
+
     try {
+
       const res = await this.internalGet<any>(`${this.reportBase()}/reports/daily`, {
+
         date: opts.date,
+
       });
+
       return res;
+
     } catch {
+
       return {
+
         code: 0,
+
         message: 'ok',
+
         data: {
+
           date: '',
+
           revenue: { points: 0, usd: 0 },
+
           cost: { points: 0, usd: 0 },
+
           profit: { usd: 0 },
+
           claw_plays: 0,
+
           funnel: { clicks: 0, landings: 0, leads: 0, conversions: 0, conversion_rate: 0 },
+
           anomalies: [],
+
         },
+
       };
+
     }
+
   }
 
   async adminReportProfit(opts: { days?: string }) {
+
     try {
+
       const res = await this.internalGet<any>(`${this.reportBase()}/reports/profit`, {
+
         days: opts.days,
+
       });
+
       return res;
+
     } catch {
+
       return { code: 0, message: 'ok', data: { days: 0, items: [] } };
+
     }
+
   }
 
   async orders(opts: { limit: number }) {
+
     try {
+
       const pg = (this as any).getOpsPg();
+
       if (!pg) return { code: 0, message: 'ok', data: { orders: [] } };
+
       const limit = Math.max(1, Math.min(100, Number(opts.limit) || 30));
+
       // Use query with fixed constant strings for source column
+
       const r = await pg.query(
+
         "SELECT id as order_id, display_id, (bundle * 1.5) as amount, bundle, 'proof'::text as source, status, created_at FROM payments.payment_proofs " +
+
         "UNION ALL " +
+
         "SELECT id as order_id, display_id, amount, bundle, 'order'::text as source, status, created_at FROM payments.settlecore_partner_orders " +
+
         "ORDER BY created_at DESC LIMIT $1",
+
         [limit]
+
       );
+
       const orders = (r && r.rows) || [];
+
       return { code: 0, message: 'ok', data: { orders } };
+
     } catch (e: any) {
+
       console.error('orders error:', e.message);
+
       return { code: 0, message: 'ok', data: { orders: [] } };
+
     }
+
   }
 
   async groupsActive() {
+
     return { code: 0, message: 'ok', data: { groups: [] } };
+
   }
 
   async groupsDiscover() {
+
     return { code: 0, message: 'ok', data: { groups: [] } };
+
   }
 
   async createPlaysPayment(opts: {
+
     devTelegramId: string;
+
     telegramInitData: string;
+
     bundle: number;
+
     idempotency_key?: string;
+
   }) {
+
     const b = Math.max(1, Math.min(10, Number(opts.bundle || 1)));
+
     const amount = b === 10 ? 13 : b === 3 ? 4 : 1.5;
+
     const idem = String(opts.idempotency_key || '').trim();
+
     const idemKey = idem ? `pay_plays:${idem}` : '';
+
     return this.runIdempotent(idemKey, 10 * 60 * 1000, async () => {
+
       const displayId = idem ? `pay_${this.hashShort(idem)}` : `pay_${Date.now()}`;
+
       let usdtTrc20Address = '';
+
       let settlecorePaymentUrl = '';
+
       let settlecorePaymentOrderId: number | null = null;
+
       let partnerOrderId = '';
+
       let globalUserId: string | null = null;
+
       let telegramId: number | null = null;
+
       let rawCreateResponse: any = null;
 
       const tg = this.getTelegramUserInfo(opts.devTelegramId, opts.telegramInitData);
+
       if (tg && this.settlecoreApiKey()) {
+
         try {
+
           const linked = await this.linkUser(tg);
+
           await this.settlecoreLogin(tg);
 
           globalUserId = String(linked.global_user_id || '').trim() || null;
+
           telegramId = Number.isFinite(Number(tg.telegram_id)) ? tg.telegram_id : null;
 
           const idemSuffix = idem ? this.hashShort(idem) : String(Date.now());
+
           partnerOrderId = `rpplays_${b}_${linked.global_user_id}_${idemSuffix}`;
 
           const pay = await this.settlecoreCreatePayment({
+
             partnerOrderId,
+
             telegramId: tg.telegram_id,
+
             amount,
+
             currency: 'USDT',
+
             note: 'RainbowPaw plays',
+
             metadata: {
+
               product: 'plays',
+
               bundle: b,
+
               global_user_id: linked.global_user_id,
+
             },
+
           });
 
           rawCreateResponse = pay ?? null;
 
           usdtTrc20Address = String(pay?.payment_address || '').trim();
+
           settlecorePaymentUrl = String(pay?.payment_url || '').trim();
+
           settlecorePaymentOrderId = Number(pay?.payment_order_id || 0) || null;
 
           if (this.settlecoreDbReady() && partnerOrderId) {
+
             await this.settlecoreDbUpsertPartnerOrder({
+
               displayId,
+
               productCode: 'plays',
+
               bundle: b,
+
               globalUserId,
+
               telegramId,
+
               partnerOrderId,
+
               paymentOrderId: settlecorePaymentOrderId,
+
               expectedWebhookIdemKey:
+
                 settlecorePaymentOrderId != null
+
                   ? `pay:${settlecorePaymentOrderId}:settled`
+
                   : null,
+
               amount,
+
               currency: 'USDT',
+
               status: 'pending',
+
               rawCreateResponse,
+
             });
+
           }
+
         } catch {
+
           usdtTrc20Address = '';
+
           settlecorePaymentUrl = '';
+
           settlecorePaymentOrderId = null;
 
           if (this.settlecoreDbReady() && partnerOrderId) {
+
             await this.settlecoreDbUpsertPartnerOrder({
+
               displayId,
+
               productCode: 'plays',
+
               bundle: b,
+
               globalUserId,
+
               telegramId,
+
               partnerOrderId,
+
               paymentOrderId: null,
+
               expectedWebhookIdemKey: null,
+
               amount,
+
               currency: 'USDT',
+
               status: 'failed',
+
               rawCreateResponse,
+
             });
+
           }
+
         }
+
       }
 
       return {
+
         code: 0,
+
         message: 'ok',
+
         data: {
+
           display_id: displayId,
+
           payment: { amount },
+
           pay: {
+
             usdtTrc20Address,
+
             settlecorePaymentUrl,
+
             settlecorePaymentOrderId,
+
             abaName: '',
+
             abaId: '',
+
           },
+
         },
+
       };
+
     });
+
   }
 
   async createMiniAppPayment(opts: {
+
     devTelegramId: string;
+
     telegramInitData: string;
+
     amount: number;
+
     title: string;
+
     method: string;
+
     metadata?: any;
+
     idempotency_key?: string;
+
   }) {
+
     const amount = Number(opts.amount || 0);
+
     if (!Number.isFinite(amount) || amount <= 0)
+
       throw new BadRequestException('invalid amount');
+
     const title = String(opts.title || 'RainbowPaw order').trim();
+
     const method = String(opts.method || 'usdt').trim().toLowerCase();
+
     const idem = String(opts.idempotency_key || '').trim();
+
     const idemKey = idem ? `pay_miniapp:${idem}` : '';
+
     return this.runIdempotent(idemKey, 10 * 60 * 1000, async () => {
+
       const displayId = idem ? `paym_${this.hashShort(idem)}` : `paym_${Date.now()}`;
+
       const abaName = String(process.env.ABA_NAME || '').trim();
+
       const abaId = String(process.env.ABA_ID || '').trim();
 
       let usdtTrc20Address = '';
+
       let settlecorePaymentUrl = '';
+
       let settlecorePaymentOrderId: number | null = null;
+
       let partnerOrderId = '';
+
       let globalUserId: string | null = null;
+
       let telegramId: number | null = null;
+
       let rawCreateResponse: any = null;
 
       const tg = this.getTelegramUserInfo(opts.devTelegramId, opts.telegramInitData);
+
       if (!tg) throw new BadRequestException('invalid telegram');
+
       if (!this.settlecoreApiKey())
+
         throw new BadGatewayException('settlecore not configured');
 
       try {
+
         const linked = await this.linkUser(tg);
+
         await this.settlecoreLogin(tg);
 
         globalUserId = String(linked.global_user_id || '').trim() || null;
+
         telegramId = Number.isFinite(Number(tg.telegram_id)) ? tg.telegram_id : null;
 
         const idemSuffix = idem ? this.hashShort(idem) : String(Date.now());
+
         partnerOrderId = `rpmini_${method}_${linked.global_user_id}_${idemSuffix}`;
 
         const pay = await this.settlecoreCreatePayment({
+
           partnerOrderId,
+
           telegramId: tg.telegram_id,
+
           amount: Number(amount.toFixed(6)),
+
           currency: 'USDT',
+
           note: title,
+
           metadata: {
+
             product: 'miniapp',
+
             method,
+
             title,
+
             global_user_id: linked.global_user_id,
+
             ...(opts.metadata && typeof opts.metadata === 'object' ? opts.metadata : {}),
+
           },
+
         });
 
         rawCreateResponse = pay ?? null;
+
         usdtTrc20Address = String(pay?.payment_address || '').trim();
+
         settlecorePaymentUrl = String(pay?.payment_url || '').trim();
+
         settlecorePaymentOrderId = Number(pay?.payment_order_id || 0) || null;
 
         if (this.settlecoreDbReady() && partnerOrderId) {
+
           await this.settlecoreDbUpsertPartnerOrder({
+
             displayId,
+
             productCode: 'miniapp',
+
             bundle: null,
+
             globalUserId,
+
             telegramId,
+
             partnerOrderId,
+
             paymentOrderId: settlecorePaymentOrderId,
+
             expectedWebhookIdemKey:
+
               settlecorePaymentOrderId != null
+
                 ? `pay:${settlecorePaymentOrderId}:settled`
+
                 : null,
+
             amount: Number(amount.toFixed(6)),
+
             currency: 'USDT',
+
             status: 'pending',
+
             rawCreateResponse,
+
           });
+
         }
+
       } catch (e) {
+
         if (this.settlecoreDbReady() && partnerOrderId) {
+
           await this.settlecoreDbUpsertPartnerOrder({
+
             displayId,
+
             productCode: 'miniapp',
+
             bundle: null,
+
             globalUserId,
+
             telegramId,
+
             partnerOrderId,
+
             paymentOrderId: null,
+
             expectedWebhookIdemKey: null,
+
             amount: Number(amount.toFixed(6)),
+
             currency: 'USDT',
+
             status: 'failed',
+
             rawCreateResponse,
+
           });
+
         }
+
         throw e;
+
       }
 
       return {
+
         code: 0,
+
         message: 'ok',
+
         data: {
+
           display_id: displayId,
+
           payment: { amount: Number(amount.toFixed(6)) },
+
           pay: {
+
             usdtTrc20Address,
+
             settlecorePaymentUrl,
+
             settlecorePaymentOrderId,
+
             abaName,
+
             abaId,
+
           },
+
         },
+
       };
+
     });
+
   }
 
   private safeEqHex(a: string, b: string) {
+
     const aa = Buffer.from(String(a || '').trim().toLowerCase(), 'utf8');
+
     const bb = Buffer.from(String(b || '').trim().toLowerCase(), 'utf8');
+
     if (aa.length !== bb.length) return false;
+
     return timingSafeEqual(aa, bb);
+
   }
 
   private hmacSha256Hex(secret: string, raw: Buffer) {
+
     return createHmac('sha256', secret).update(raw).digest('hex');
+
   }
 
   async settlecoreUsdtTopupWebhook(opts: { req: any; body: any }) {
+
     const req = opts.req;
+
     if (!Buffer.isBuffer(req?.rawBody))
+
       throw new BadGatewayException('raw body unavailable');
+
     const rawBody: Buffer = req.rawBody;
 
     this.ensureSettlecoreAckLoop();
 
     const partnerCode = String(req?.headers?.['x-partner-code'] || '').trim();
+
     const eventType = String(req?.headers?.['x-event-type'] || '').trim();
+
     const idemKey = String(req?.headers?.['x-idempotency-key'] || '').trim();
+
     const signature = String(req?.headers?.['x-signature'] || '').trim();
 
     if (partnerCode !== 'rainbowpaw')
+
       throw new BadRequestException('invalid partner');
+
     if (!idemKey) throw new BadRequestException('missing idempotency key');
+
     if (!signature) throw new BadRequestException('missing signature');
 
     if (eventType !== 'usdt_deposit_confirmed' && eventType !== 'payment_settled')
+
       throw new BadRequestException('invalid event type');
 
     const rawBodyText = rawBody.toString('utf8');
+
     const t0 = Date.now();
+
     let ev: any = null;
+
     if (this.settlecoreDbReady()) {
+
       try {
+
         ev = await this.settlecoreDbUpsertWebhookEventReceived({
+
           eventType,
+
           idempotencyKey: idemKey,
+
           partnerCode,
+
           signature,
+
           rawBody: rawBodyText,
+
         });
+
         if (ev && String(ev.status || '').trim() === 'processed') {
+
           return { code: 0, message: 'ok', data: { processed: true } };
+
         }
+
       } catch {
+
         ev = null;
+
       }
+
     }
 
     const secret = this.settlecoreWebhookSecret();
+
     if (!secret) throw new BadGatewayException('webhook secret not configured');
+
     const expected = this.hmacSha256Hex(secret, rawBody);
+
     if (!this.safeEqHex(signature, expected)) {
+
       if (ev && this.settlecoreDbReady()) {
+
         await this.settlecoreDbUpdateWebhookVerified(Number(ev.id), false, 'invalid signature');
+
       }
+
       console.error(
+
         JSON.stringify({
+
           msg: 'settlecore.webhook.invalid_signature',
+
           event_type: eventType,
+
           idempotency_key: idemKey,
+
           cost_ms: Date.now() - t0,
+
         }),
+
       );
+
       throw new BadRequestException('invalid signature');
+
     }
 
     if (ev && this.settlecoreDbReady()) {
+
       try {
+
         await this.settlecoreDbUpdateWebhookVerified(Number(ev.id), true);
+
       } catch {
+
         void 0;
+
       }
+
     }
 
     try {
+
       if (eventType === 'usdt_deposit_confirmed') {
+
         const out = await this.handleSettlecoreUsdtDepositConfirmed({
+
           body: opts.body,
+
           idempotencyKey: idemKey,
+
         });
+
         if (ev && this.settlecoreDbReady()) {
+
           await this.settlecoreDbMarkWebhookProcessed({
+
             id: Number(ev.id),
+
             status: 'processed',
+
             txHash: out.tx_hash || null,
+
             telegramId: out.telegram_id || null,
+
             globalUserId: out.global_user_id || null,
+
             ackStatus: 'pending',
+
           });
+
         }
+
         console.log(
+
           JSON.stringify({
+
             msg: 'settlecore.webhook.processed',
+
             event_type: eventType,
+
             idempotency_key: idemKey,
+
             telegram_id: out.telegram_id || null,
+
             global_user_id: out.global_user_id || null,
+
             tx_hash: out.tx_hash || null,
+
             cost_ms: Date.now() - t0,
+
           }),
+
         );
+
         this.settlecoreAckAsync(eventType, idemKey, ev ? Number(ev.id) : undefined);
+
         return { code: 0, message: 'ok', data: { processed: true } };
+
       }
 
       const out = await this.handleSettlecorePaymentSettled({
+
         body: opts.body,
+
         idempotencyKey: idemKey,
+
       });
+
       if (ev && this.settlecoreDbReady()) {
+
         await this.settlecoreDbMarkWebhookProcessed({
+
           id: Number(ev.id),
+
           status: 'processed',
+
           paymentOrderId: out.payment_order_id || null,
+
           partnerOrderId: out.partner_order_id || null,
+
           telegramId: out.telegram_id || null,
+
           globalUserId: out.global_user_id || null,
+
           ackStatus: 'pending',
+
         });
+
       }
+
       console.log(
+
         JSON.stringify({
+
           msg: 'settlecore.webhook.processed',
+
           event_type: eventType,
+
           idempotency_key: idemKey,
+
           payment_order_id: out.payment_order_id || null,
+
           partner_order_id: out.partner_order_id || null,
+
           global_user_id: out.global_user_id || null,
+
           cost_ms: Date.now() - t0,
+
         }),
+
       );
+
       this.settlecoreAckAsync(eventType, idemKey, ev ? Number(ev.id) : undefined);
+
       return {
+
         code: 0,
+
         message: 'ok',
+
         data: { processed: true, partner_order_id: out.partner_order_id },
+
       };
+
     } catch (e: any) {
+
       if (ev && this.settlecoreDbReady()) {
+
         await this.settlecoreDbMarkWebhookProcessed({
+
           id: Number(ev.id),
+
           status: 'failed',
+
           error: String(e?.message || e || 'failed'),
+
         });
+
       }
+
       console.error(
+
         JSON.stringify({
+
           msg: 'settlecore.webhook.failed',
+
           event_type: eventType,
+
           idempotency_key: idemKey,
+
           error: String(e?.message || e || 'failed'),
+
           cost_ms: Date.now() - t0,
+
         }),
+
       );
+
       throw e;
+
     }
+
   }
 
   private async handleSettlecoreUsdtDepositConfirmed(opts: {
+
     body: any;
+
     idempotencyKey: string;
+
   }) {
+
     const event = String(opts.body?.event || '').trim();
+
     if (event !== 'usdt_deposit_confirmed')
+
       throw new BadRequestException('invalid event');
 
     const telegramId = Number(opts.body?.telegram_id || 0);
+
     if (!Number.isFinite(telegramId) || telegramId <= 0)
+
       throw new BadRequestException('invalid telegram_id');
+
     const txHash = String(opts.body?.tx_hash || '').trim();
+
     if (!txHash) throw new BadRequestException('missing tx_hash');
+
     if (opts.idempotencyKey !== txHash)
+
       throw new BadRequestException('idempotency key mismatch');
+
     const amount = Number(opts.body?.amount || 0);
+
     if (!Number.isFinite(amount) || amount <= 0)
+
       throw new BadRequestException('invalid amount');
+
     const currency = String(opts.body?.currency || 'USDT').trim();
+
     if (currency !== 'USDT') throw new BadRequestException('invalid currency');
+
     const sourceAddress = String(opts.body?.source_address || '').trim();
+
     const platformUserId = Number(opts.body?.platform_user_id || 0);
+
     const confirmedAt = String(opts.body?.confirmed_at || '').trim();
 
     const linked = await this.internalPost<any>(
+
       `${this.identityBase()}/identity/link-user`,
+
       {
+
         source_bot: 'rainbowpaw_bot',
+
         source_user_id: String(telegramId),
+
         telegram_id: telegramId,
+
         username: null,
+
         first_source: 'settlecore',
+
       },
+
     );
+
     const globalUserId = String(linked?.data?.global_user_id || '').trim();
+
     if (!globalUserId) throw new BadGatewayException('identity link-user failed');
 
     await this.walletEarnAsset({
+
       globalUserId,
+
       assetType: 'wallet_usdt',
+
       amount: Number(amount.toFixed(6)),
+
       idemKey: opts.idempotencyKey,
+
       bizType: 'usdt_deposit',
+
       refType: 'settlecore',
+
       refId: txHash,
+
       remark: [
+
         sourceAddress ? `source=${sourceAddress}` : '',
+
         platformUserId > 0 ? `platform_user_id=${platformUserId}` : '',
+
         confirmedAt ? `confirmed_at=${confirmedAt}` : '',
+
       ]
+
         .filter(Boolean)
+
         .join(' '),
+
     });
 
     return {
+
       telegram_id: telegramId,
+
       global_user_id: globalUserId,
+
       tx_hash: txHash,
+
     };
+
   }
 
   private async handleSettlecorePaymentSettled(opts: {
+
     body: any;
+
     idempotencyKey: string;
+
   }) {
+
     const event = String(opts.body?.event || '').trim();
+
     if (event !== 'payment_settled') throw new BadRequestException('invalid event');
+
     const status = String(opts.body?.status || '').trim();
+
     if (status !== 'settled') throw new BadRequestException('invalid status');
 
     const partnerOrderId = String(opts.body?.partner_order_id || '').trim();
+
     if (!partnerOrderId) throw new BadRequestException('missing partner_order_id');
 
     const paymentOrderId = Number(opts.body?.payment_order_id || 0);
+
     if (!Number.isFinite(paymentOrderId) || paymentOrderId <= 0)
+
       throw new BadRequestException('invalid payment_order_id');
 
     const expectedIdem = `pay:${paymentOrderId}:settled`;
+
     if (opts.idempotencyKey !== expectedIdem)
+
       throw new BadRequestException('idempotency key mismatch');
 
     const amount = Number(opts.body?.amount || 0);
+
     if (!Number.isFinite(amount) || amount <= 0)
+
       throw new BadRequestException('invalid amount');
+
     const currency = String(opts.body?.currency || 'USDT').trim();
+
     if (currency !== 'USDT') throw new BadRequestException('invalid currency');
 
     let mapped: any = null;
+
     if (this.settlecoreDbReady()) {
+
       try {
+
         mapped = await this.settlecoreDbFindPartnerOrder({
+
           partnerOrderId,
+
           paymentOrderId,
+
         });
+
       } catch {
+
         mapped = null;
+
       }
+
     }
 
     const parsePlays = () => {
+
       const parts = String(partnerOrderId || '').split('_');
+
       if (parts.length < 4) return null;
+
       if (parts[0] !== 'rpplays') return null;
+
       const bundle = Number(parts[1]);
+
       const globalUserId = String(parts[2] || '').trim();
+
       if (!Number.isFinite(bundle) || bundle <= 0) return null;
+
       if (!globalUserId) return null;
+
       return { product_code: 'plays', bundle, global_user_id: globalUserId };
+
     };
 
     const parseMiniapp = () => {
+
       const parts = String(partnerOrderId || '').split('_');
+
       if (parts.length < 4) return null;
+
       if (parts[0] !== 'rpmini') return null;
+
       const method = String(parts[1] || '').trim();
+
       const globalUserId = String(parts[2] || '').trim();
+
       if (!globalUserId) return null;
+
       return { product_code: 'miniapp', method, global_user_id: globalUserId };
+
     };
 
     const mappedProductCode = mapped ? String(mapped.product_code || '').trim() : '';
+
     const parsed = parsePlays() || parseMiniapp();
+
     const productCode = mappedProductCode || (parsed ? String((parsed as any).product_code || '').trim() : '');
 
     const globalUserId =
+
       (mapped && String(mapped.global_user_id || '').trim()) ||
+
       (parsed ? String((parsed as any).global_user_id || '').trim() : '');
+
     if (!globalUserId) throw new BadGatewayException('missing global_user_id');
 
     const approxEq = (a: number, b: number, eps = 1e-6) => Math.abs(a - b) <= eps;
 
     if (productCode === 'plays') {
+
       const bundle =
+
         (mapped && Number(mapped.bundle || 0)) || (parsed ? Number((parsed as any).bundle || 0) : 0);
+
       if (!Number.isFinite(bundle) || bundle <= 0)
+
         throw new BadGatewayException('missing bundle');
 
       const expectedAmount = bundle === 10 ? 13 : bundle === 3 ? 4 : 1.5;
+
       const mappedAmount = mapped ? Number(mapped.amount || 0) : 0;
+
       const expected = mappedAmount > 0 ? mappedAmount : expectedAmount;
+
       if (!approxEq(Number(amount.toFixed(6)), Number(expected.toFixed(6)), 1e-3)) {
+
         throw new BadRequestException('amount mismatch');
+
       }
 
       const points = bundle * 3;
+
       await this.walletEarnAsset({
+
         globalUserId,
+
         assetType: 'points_locked',
+
         amount: points,
+
         idemKey: opts.idempotencyKey,
+
         bizType: 'buy_plays',
+
         refType: 'settlecore',
+
         refId: String(paymentOrderId),
+
         remark: `partner_order_id=${partnerOrderId}`,
+
       });
 
       await this.orderCreate(
+
         {
+
           type: 'claw',
+
           user_id: globalUserId,
+
           amount,
+
           currency: 'usd',
+
           status: 'paid',
+
           flow: 'income',
+
           metadata: {
+
             source: 'settlecore',
+
             product: 'plays',
+
             bundle,
+
             points,
+
             partner_order_id: partnerOrderId,
+
             payment_order_id: paymentOrderId,
+
           },
+
           items: [
+
             {
+
               item_name: `Plays Bundle (${bundle}x)`,
+
               quantity: 1,
+
               unit_price: amount,
+
               total_price: amount,
+
               metadata: { product: 'plays', bundle, points },
+
             },
+
           ],
+
         },
+
         opts.idempotencyKey,
+
       );
+
     } else if (productCode === 'miniapp') {
+
       const method = parsed ? String((parsed as any).method || '').trim() : '';
+
       const mappedAmount = mapped ? Number(mapped.amount || 0) : 0;
+
       if (mappedAmount > 0 && !approxEq(Number(amount.toFixed(6)), Number(mappedAmount.toFixed(6)), 1e-3)) {
+
         throw new BadRequestException('amount mismatch');
+
       }
 
       await this.orderCreate(
+
         {
+
           type: 'product',
+
           user_id: globalUserId,
+
           amount,
+
           currency: 'usd',
+
           status: 'paid',
+
           flow: 'income',
+
           metadata: {
+
             source: 'settlecore',
+
             product: 'miniapp',
+
             method: method || null,
+
             partner_order_id: partnerOrderId,
+
             payment_order_id: paymentOrderId,
+
           },
+
           items: [
+
             {
+
               item_name: `MiniApp Payment`,
+
               quantity: 1,
+
               unit_price: amount,
+
               total_price: amount,
+
               metadata: { product: 'miniapp', method: method || null },
+
             },
+
           ],
+
         },
+
         opts.idempotencyKey,
+
       );
+
     } else {
+
       throw new BadRequestException('unknown partner_order_id');
+
     }
 
     if (this.settlecoreDbReady() && partnerOrderId) {
+
       await this.settlecoreDbMarkPartnerOrderSettled({
+
         partnerOrderId,
+
         paymentOrderId,
+
         settledBody: opts.body,
+
       });
+
     }
 
     return {
+
       partner_order_id: partnerOrderId,
+
       payment_order_id: paymentOrderId,
+
       global_user_id: globalUserId,
+
       telegram_id: mapped && mapped.telegram_id ? Number(mapped.telegram_id) : null,
+
     };
+
   }
 
   async payment(opts: { id: string }) {
+
     const id = String(opts.id || '').trim();
+
     if (!id)
+
       return {
+
         code: 0,
+
         message: 'ok',
+
         data: { display_id: '', payment: { id: '', amount: 0, status: 'pending' } },
+
       };
+
     if (this.settlecoreDbReady()) {
+
       try {
+
         const row = await this.settlecoreDbFindPartnerOrder({ displayId: id });
+
         if (row) {
+
           const amount = Number(row.amount || 0) || 0;
+
           const st = String(row.status || '').trim();
+
           const status = st === 'settled' ? 'confirmed' : st === 'failed' ? 'rejected' : 'pending';
+
           let hasProofFile = this.paymentProofFiles.has(id);
+
           if (!hasProofFile && this.settlecoreDbReady()) {
+
             try {
+
               const pg = this.getOpsPg();
+
               if (!pg) throw new Error('missing pg');
+
               const r = await pg.query(
+
                 `SELECT 1 FROM payments.payment_proofs WHERE display_id = $1 AND file_base64 IS NOT NULL AND file_base64 <> '' LIMIT 1`,
+
                 [id],
+
               );
+
               hasProofFile = (r.rowCount || 0) > 0;
+
             } catch {
+
               void 0;
+
             }
+
           }
+
           return {
+
             code: 0,
+
             message: 'ok',
+
             data: {
+
               display_id: id,
+
               payment: { id, amount, status },
+
               proof_file: hasProofFile ? { payment_id: id } : null,
+
             },
+
           };
+
         }
+
       } catch {
+
         void 0;
+
       }
+
     }
+
     let hasProofFile = this.paymentProofFiles.has(id);
+
     if (!hasProofFile && this.settlecoreDbReady()) {
+
       try {
+
         const pg = this.getOpsPg();
+
         if (!pg) throw new Error('missing pg');
+
         const r = await pg.query(
+
           `SELECT 1 FROM payments.payment_proofs WHERE display_id = $1 AND file_base64 IS NOT NULL AND file_base64 <> '' LIMIT 1`,
+
           [id],
+
         );
+
         hasProofFile = (r.rowCount || 0) > 0;
+
       } catch {
+
         void 0;
+
       }
+
     }
+
     return {
+
       code: 0,
+
       message: 'ok',
+
       data: {
+
         display_id: id,
+
         payment: { id, amount: 0, status: 'pending' },
+
         proof_file: hasProofFile ? { payment_id: id } : null,
+
       },
+
     };
+
   }
 
   async submitProof(opts: { id: string; proof_text: string; telegram_id?: number; bundle?: number }) {
+
     const id = String(opts.id || '').trim();
+
     const proofText = String(opts.proof_text || '').trim();
+
     if (!id) throw new BadRequestException('id required');
+
     if (!proofText) throw new BadRequestException('proof_text required');
+
     if (proofText.length > 5000) throw new BadRequestException('proof_text too long');
+
     const telegramId = opts.telegram_id != null ? Number(opts.telegram_id) : null;
+
     const bundle = opts.bundle != null ? Number(opts.bundle) : 0;
+
     if (this.settlecoreDbReady()) {
+
       try {
+
         const pg = this.getOpsPg();
+
         if (!pg) throw new Error('missing pg');
+
         await pg.query(
+
           `INSERT INTO payments.payment_proofs (display_id, proof_text, telegram_id, bundle)
+
            VALUES ($1, $2, $3, $4)
+
            ON CONFLICT (display_id) DO UPDATE
+
              SET proof_text = EXCLUDED.proof_text,
+
                  telegram_id = COALESCE(EXCLUDED.telegram_id, payments.payment_proofs.telegram_id),
+
                  bundle = COALESCE(EXCLUDED.bundle, payments.payment_proofs.bundle),
+
                  updated_at = CURRENT_TIMESTAMP`,
+
           [id, proofText, telegramId, bundle || 1],
+
         );
+
       } catch {
+
         void 0;
+
       }
+
     }
+
     let hasFile = this.paymentProofFiles.has(id);
+
     if (!hasFile && this.settlecoreDbReady()) {
+
       try {
+
         const pg = this.getOpsPg();
+
         if (!pg) throw new Error('missing pg');
+
         const r = await pg.query(
+
           `SELECT 1 FROM payments.payment_proofs WHERE display_id = $1 AND file_base64 IS NOT NULL AND file_base64 <> '' LIMIT 1`,
+
           [id],
+
         );
+
         hasFile = (r.rowCount || 0) > 0;
+
       } catch {
+
         void 0;
+
       }
+
     }
+
     await this.notifyAdminsPaymentProof({ displayId: id, proofText, hasFile });
+
     return { code: 0, message: 'ok', data: { id, status: 'pending' } };
+
   }
 
   async submitProofFile(opts: {
+
     id: string;
+
     mime_type: string;
+
     file_base64: string;
+
     telegram_id?: number;
+
     bundle?: number;
+
   }) {
+
     if (!opts.file_base64)
+
       throw new BadRequestException('file_base64 required');
+
     const id = String(opts.id || '').trim();
+
     if (!id) throw new BadRequestException('id required');
+
     const mime = String(opts.mime_type || 'application/octet-stream').trim();
+
     const allowed = new Set(['image/png', 'image/jpeg', 'image/webp']);
+
     if (!allowed.has(mime)) throw new BadRequestException('invalid mime_type');
+
     const file = String(opts.file_base64 || '');
+
     const approxBytes = Math.floor((file.length * 3) / 4);
+
     if (approxBytes <= 0) throw new BadRequestException('invalid file_base64');
+
     if (approxBytes > 5 * 1024 * 1024) throw new BadRequestException('file too large');
+
     if (this.settlecoreDbReady()) {
+
       try {
+
         const pg = this.getOpsPg();
+
         if (!pg) throw new Error('missing pg');
+
         await pg.query(
+
           `INSERT INTO payments.payment_proofs (display_id, mime_type, file_base64)
+
            VALUES ($1, $2, $3)
+
            ON CONFLICT (display_id) DO UPDATE
+
              SET mime_type = EXCLUDED.mime_type,
+
                  file_base64 = EXCLUDED.file_base64,
+
                  updated_at = CURRENT_TIMESTAMP`,
+
           [id, mime, file],
+
         );
+
       } catch {
+
         void 0;
+
       }
+
     } else {
+
       this.paymentProofFiles.set(id, {
+
         mime_type: mime,
+
         file_base64: file,
+
       });
+
     }
+
     let proofText: string | undefined = undefined;
+
     if (this.settlecoreDbReady()) {
+
       try {
+
         const pg = this.getOpsPg();
+
         if (!pg) throw new Error('missing pg');
+
         const r = await pg.query(
+
           `SELECT proof_text FROM payments.payment_proofs WHERE display_id = $1 LIMIT 1`,
+
           [id],
+
         );
+
         const row = r.rows && r.rows[0] ? r.rows[0] : null;
+
         if (row && row.proof_text) proofText = String(row.proof_text).trim() || undefined;
+
       } catch {
+
         void 0;
+
       }
+
     }
+
     await this.notifyAdminsPaymentProof({ displayId: id, hasFile: true, proofText });
+
     return { code: 0, message: 'ok', data: { id, status: 'pending' } };
+
   }
 
   async paymentsPending(opts: { devTelegramId: string; telegramInitData: string }) {
+
     const tgId = this.getTelegramId(opts.devTelegramId, opts.telegramInitData);
+
     if (!tgId) throw new BadRequestException('missing telegram id');
+
     const adminIds = this.adminTelegramIds();
+
     if (!adminIds.includes(Number(tgId))) throw new ForbiddenException('not admin');
+
     const items: any[] = [];
+
     if (this.settlecoreDbReady()) {
+
       try {
+
         const pg = this.getOpsPg();
+
         if (pg) {
-          const r = await pg.query(`SELECT * FROM payments.settlecore_partner_orders WHERE status = $1 ORDER BY updated_at DESC LIMIT 50`, ['pending']);
+
+          const r = await pg.query(`SELECT * FROM payments.payment_proofs WHERE status = $1 ORDER BY created_at DESC LIMIT 50`, ['pending']);
+
           for (const row of (r.rows || [])) {
-            let hasProof = false;
+
+            let hasFile = false;
             try {
               const pr = await pg.query(`SELECT 1 FROM payments.payment_proofs WHERE display_id = $1 AND file_base64 IS NOT NULL AND file_base64 <> '' LIMIT 1`, [row.display_id]);
-              hasProof = (pr.rowCount || 0) > 0;
+              hasFile = (pr.rowCount || 0) > 0;
             } catch { void 0; }
+
             items.push({
+
               display_id: row.display_id,
-              global_user_id: row.global_user_id,
-              amount: Number(row.amount || 0),
-              currency: row.currency || 'USD',
+
+              global_user_id: row.global_user_id || '',
+
+              amount: Number(row.bundle || 1) * 1.5,
+
+              currency: 'USD',
+
               status: row.status,
-              has_proof: hasProof,
+
+              has_proof: hasFile,
+
               created_at: String(row.created_at || ''),
+
             });
+
           }
+
         }
+
       } catch { void 0; }
+
     }
+
     return { code: 0, message: 'ok', data: { items } };
+
   }
 
   async confirmPayment(opts: { id: string; devTelegramId: string; telegramInitData: string }) {
+
     const id = String(opts.id || '').trim();
+
     if (!id) throw new BadRequestException('id required');
+
     const tgId = this.getTelegramId(opts.devTelegramId, opts.telegramInitData);
+
     if (!tgId) throw new BadRequestException('missing telegram id');
+
     const adminIds = this.adminTelegramIds();
+
     if (!adminIds.includes(Number(tgId))) throw new ForbiddenException('not admin');
+
     let globalUserId: string | null = null;
+
     let userTgId: number | null = null;
+
     let pointsToCredit = 0;
+
     let bundle = 0;
+
     if (this.settlecoreDbReady()) {
+
       try {
+
         const pg = this.getOpsPg();
+
         if (pg) {
+
           const r = await pg.query(`SELECT global_user_id, telegram_id, bundle FROM payments.settlecore_partner_orders WHERE display_id = $1 LIMIT 1`, [id]);
+
           if (r && r.rows && r.rows.length) {
+
             globalUserId = r.rows[0].global_user_id || null;
+
             userTgId = r.rows[0].telegram_id != null ? Number(r.rows[0].telegram_id) : null;
+
             bundle = r.rows[0].bundle != null ? Number(r.rows[0].bundle) : 0;
+
           }
+
           await pg.query(`UPDATE payments.settlecore_partner_orders SET status = 'settled', settled_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE display_id = $1`, [id]);
+
         }
+
       } catch { void 0; }
+
     }
+
     if (bundle > 0) {
+
       pointsToCredit = bundle * 9;
+
     }
+
     if (globalUserId && pointsToCredit > 0) {
+
       try {
+
         const idemKey = `confirmPayment:${id}:${Date.now()}`;
+
         await this.walletEarn(globalUserId, pointsToCredit, idemKey, 'admin_confirm');
+
         if (userTgId) {
+
           const msgText = `✅ 付款确认成功！已到账 ${pointsToCredit} 积分（${bundle * 3} 次抽奖机会）`;
+
           await this.telegramSendMessage(userTgId, msgText);
+
         }
+
       } catch { void 0; }
+
     }
+
     return { code: 0, message: 'ok', data: { id, status: 'settled', points_credited: pointsToCredit, plays_added: bundle * 3 } };
+
   }
 
   private async _startBotPolling() {
+
     const token = this.adminBotToken();
+
     if (!token) return;
+
     console.log('[BotPolling] started for admin confirm');
+
     console.log('[BotPolling] initial offset=' + this._botLastUpdateId);
+
     const pollOnce = async () => {
+
       try {
+
         const url = 'https://api.telegram.org/bot' + token + '/getUpdates?offset=' + this._botLastUpdateId + '&timeout=2';
+
         const res = await fetch(url);
+
         const data = await res.json();
+
         if (!data.ok) {
+
           console.log('[BotPolling] getUpdates error: ' + (data.error_code||'') + ' ' + (data.description||''));
+
           setTimeout(pollOnce, 5000);
+
           return;
+
         }
+
         if (data.result && data.result.length) {
+
           for (const update of data.result) {
+
             if (update.update_id >= this._botLastUpdateId) {
+
               this._botLastUpdateId = update.update_id + 1;
+
             }
+
             const cq = update.callback_query;
+
             if (!cq) continue;
+
             const cqId = cq.id;
+
             const cbData = String(cq.data || '');
+
             const fromId = cq.from && cq.from.id ? Number(cq.from.id) : 0;
+
             const msgChatId = cq.message && cq.message.chat ? cq.message.chat.id : 0;
+
             const msgId = cq.message && cq.message.message_id ? cq.message.message_id : 0;
+
             try {
+
               const ansUrl = 'https://api.telegram.org/bot' + token + '/answerCallbackQuery';
+
               await fetch(ansUrl, {
+
                 method: 'POST', headers: { 'content-type': 'application/json' },
+
                 body: JSON.stringify({ callback_query_id: cqId, text: '处理中...', show_alert: false }),
+
               });
+
             } catch {}
+
             if (cbData.startsWith('confirm_payment:')) {
+
               const paymentId = cbData.slice('confirm_payment:'.length).trim();
+
               if (!paymentId) continue;
+
               const adminIds = this.adminTelegramIds();
+
               if (!adminIds.includes(fromId)) {
+
                 try {
+
                   await fetch('https://api.telegram.org/bot' + token + '/answerCallbackQuery', {
+
                     method: 'POST', headers: { 'content-type': 'application/json' },
+
                     body: JSON.stringify({ callback_query_id: cqId, text: '你不是管理员', show_alert: true }),
+
                   });
+
                 } catch {}
+
                 continue;
+
               }
+
               try {
+
                 const pg = this.getOpsPg();
+
                 let globalUserId: string | null = null;
+
                 let userTgId: number | null = null;
+
                 let bundle = 0;
+
                 let pointsToCredit = 0;
+
                 if (pg) {
+
                   try {
+
                     const r = await pg.query('SELECT global_user_id, telegram_id, bundle FROM payments.settlecore_partner_orders WHERE display_id = $1 LIMIT 1', [paymentId]);
+
                     if (r && r.rows && r.rows.length) {
+
                       globalUserId = r.rows[0].global_user_id || null;
+
                       userTgId = r.rows[0].telegram_id != null ? Number(r.rows[0].telegram_id) : null;
+
                       bundle = r.rows[0].bundle != null ? Number(r.rows[0].bundle) : 0;
+
                     } else {
+
                       const r2 = await pg.query('SELECT telegram_id, bundle, global_user_id FROM payments.payment_proofs WHERE display_id = $1 LIMIT 1', [paymentId]);
+
                       if (r2 && r2.rows && r2.rows.length) {
+
                         userTgId = r2.rows[0].telegram_id != null ? Number(r2.rows[0].telegram_id) : null;
+
                         bundle = r2.rows[0].bundle != null ? Number(r2.rows[0].bundle) : 1;
+
                         globalUserId = r2.rows[0].global_user_id || null;
+
                         if (!globalUserId && userTgId) {
+
                           try {
+
                             const r3 = await pg.query('SELECT global_user_id FROM identity.global_users WHERE telegram_id = $1 LIMIT 1', [userTgId]);
+
                             if (r3 && r3.rows && r3.rows.length) {
+
                               globalUserId = r3.rows[0].global_user_id || null;
+
                             }
+
                           } catch {}
+
                         }
+
                       }
+
                     }
+
                     await pg.query("UPDATE payments.settlecore_partner_orders SET status = 'settled', settled_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE display_id = $1", [paymentId]);
+
                   } catch {}
+
                 }
+
                 if (bundle > 0) pointsToCredit = bundle * 9;
+
                 if (globalUserId && pointsToCredit > 0) {
+
                   try {
+
                     await this.walletEarn(globalUserId, pointsToCredit, 'confirm_polling:' + paymentId + ':' + Date.now(), 'admin_confirm');
+
                     if (userTgId) {
+
                       await this.telegramSendMessage(userTgId, '✅ 付款确认成功！已到账 ' + pointsToCredit + ' 积分（' + (bundle * 3) + ' 次抽奖机会）');
+
                     }
+
                   } catch {}
+
                 }
+
                 if (msgChatId && msgId) {
+
                   try {
+
                     await fetch('https://api.telegram.org/bot' + token + '/editMessageText', {
+
                       method: 'POST', headers: { 'content-type': 'application/json' },
+
                       body: JSON.stringify({ chat_id: msgChatId, message_id: msgId, text: cq.message && cq.message.text ? cq.message.text : '✅ 已确认收款', reply_markup: { inline_keyboard: [] } }),
+
                     });
+
                   } catch {}
+
                 }
+
                 try {
+
                   await fetch('https://api.telegram.org/bot' + token + '/answerCallbackQuery', {
+
                     method: 'POST', headers: { 'content-type': 'application/json' },
+
                     body: JSON.stringify({ callback_query_id: cqId, text: '✅ 确认成功！已通知用户', show_alert: true }),
+
                   });
+
                 } catch {}
+
               } catch (e: any) {
+
                 try {
+
                   await fetch('https://api.telegram.org/bot' + token + '/answerCallbackQuery', {
+
                     method: 'POST', headers: { 'content-type': 'application/json' },
+
                     body: JSON.stringify({ callback_query_id: cqId, text: '确认失败: ' + String(e.message || e), show_alert: true }),
+
                   });
+
                 } catch {}
+
               }
+
             }
+
           }
+
         }
+
       } catch (e: any) {
+
         console.log('[BotPolling] poll error: ' + (e.message||e));
+
       }
+
       setTimeout(pollOnce, 3000);
+
     };
+
     pollOnce();
+
   }
 
   async getProofFile(id: string) {
+
     const key = String(id || '').trim();
+
     if (!key) return null;
+
     if (this.paymentProofFiles.has(key)) return this.paymentProofFiles.get(key) || null;
+
     if (!this.settlecoreDbReady()) return null;
+
     const pg = this.getOpsPg();
+
     if (!pg) return null;
+
     try {
+
       const r = await pg.query(
+
         `SELECT mime_type, file_base64 FROM payments.payment_proofs WHERE display_id = $1 LIMIT 1`,
+
         [key],
+
       );
+
       const row = r.rows && r.rows[0] ? r.rows[0] : null;
+
       if (!row) return null;
+
       return {
+
         mime_type: row.mime_type || 'application/octet-stream',
+
         file_base64: row.file_base64 || '',
+
       };
+
     } catch {
+
       return null;
+
     }
+
   }
 
   async saveShipping(opts: {
+
     devTelegramId: string;
+
     telegramInitData: string;
+
     name: string;
+
     phone: string;
+
     address: string;
+
   }) {
+
     const tgId = this.getTelegramId(opts.devTelegramId, opts.telegramInitData);
+
     if (!tgId) throw new BadRequestException('missing telegram id');
+
     if (!opts.name || !opts.phone || !opts.address)
+
       throw new BadRequestException('invalid shipping');
+
     this.shippingByTelegramId.set(tgId, {
+
       name: opts.name,
+
       phone: opts.phone,
+
       address: opts.address,
+
     });
+
     return { code: 0, message: 'ok', data: { saved: true } };
+
   }
+
   private findProductPoints(productId: number) {
+
     const list = [
+
       { id: 101, points: 10 },
+
       { id: 102, points: 25 },
+
     ];
+
     return list.find((p) => p.id === productId) || null;
+
   }
 
   async purchaseDirect(opts: {
+
     devTelegramId: string;
+
     telegramInitData: string;
+
     product_id: number;
+
     idempotency_key?: string;
+
   }) {
+
     const tg = this.getTelegramUserInfo(
+
       opts.devTelegramId,
+
       opts.telegramInitData,
+
     );
+
     if (!tg) throw new BadRequestException('missing telegram id');
+
     const linked = await this.linkUser(tg);
+
     const p = this.findProductPoints(opts.product_id);
+
     if (!p) throw new BadRequestException('invalid product_id');
 
     const idem = String(opts.idempotency_key || '').trim();
+
     const idemKey = idem
+
       ? `purchaseDirect:${linked.global_user_id}:${opts.product_id}:${idem}`
+
       : '';
+
     return this.runIdempotent(idemKey, 10 * 60 * 1000, async () => {
+
       try {
+
         await this.walletSpend(
+
           linked.global_user_id,
+
           p.points,
+
           idem
+
             ? `direct:${linked.global_user_id}:${opts.product_id}:${idem}`
+
             : `direct:${linked.global_user_id}:${opts.product_id}:${Date.now()}`,
+
           'store_consume',
+
         );
+
       } catch (e: any) {
+
         if (this.isInsufficientPointsError(e))
+
           throw new BadRequestException('insufficient points');
+
         throw new BadGatewayException('wallet service unavailable');
+
       }
+
       let wallet: any = null;
+
       try {
+
         wallet = await this.getWallet(linked.global_user_id);
+
       } catch {
+
         wallet = null;
+
       }
+
       return {
+
         code: 0,
+
         message: 'ok',
+
         data: { order_id: idem ? `so_${this.hashShort(idem)}` : `so_${Date.now()}`, wallet },
+
       };
+
     });
+
   }
 
   async purchaseGroup(opts: {
+
     devTelegramId: string;
+
     telegramInitData: string;
+
     product_id: number;
+
     idempotency_key?: string;
+
   }) {
+
     const tg = this.getTelegramUserInfo(
+
       opts.devTelegramId,
+
       opts.telegramInitData,
+
     );
+
     if (!tg) throw new BadRequestException('missing telegram id');
+
     const linked = await this.linkUser(tg);
+
     const p = this.findProductPoints(opts.product_id);
+
     if (!p) throw new BadRequestException('invalid product_id');
+
     const idem = String(opts.idempotency_key || '').trim();
+
     const idemKey = idem
+
       ? `purchaseGroup:${linked.global_user_id}:${opts.product_id}:${idem}`
+
       : '';
+
     return this.runIdempotent(idemKey, 10 * 60 * 1000, async () => {
+
       return {
+
         code: 0,
+
         message: 'ok',
+
         data: {
+
           group_id: idem ? `g_${this.hashShort(idem)}` : `g_${Date.now()}`,
+
           product_id: p.id,
+
           points: p.points,
+
           global_user_id: linked.global_user_id,
+
         },
+
       };
+
     });
+
   }
 
   async createGroup(opts: { product_id: number }) {
+
     const p = this.findProductPoints(opts.product_id);
+
     if (!p) throw new BadRequestException('invalid product_id');
+
     return {
+
       code: 0,
+
       message: 'ok',
+
       data: { group_id: `g_${Date.now()}`, product_id: p.id },
+
     };
+
   }
 
   async joinGroup(opts: { groupId: string }) {
+
     return {
+
       code: 0,
+
       message: 'ok',
+
       data: { joined: true, group_id: opts.groupId },
+
     };
+
   }
 
   async joinGroupPay(opts: { groupId: string; idempotency_key?: string }) {
+
     const gid = String(opts.groupId || '').trim();
+
     if (!gid) throw new BadRequestException('groupId required');
+
     const idem = String(opts.idempotency_key || '').trim();
+
     const idemKey = idem ? `joinGroupPay:${gid}:${idem}` : '';
+
     return this.runIdempotent(idemKey, 10 * 60 * 1000, async () => {
+
       return {
+
         code: 0,
+
         message: 'ok',
+
         data: { status: 'pending', group_id: gid },
+
       };
+
     });
+
   }
 
   private v1RandomId(prefix: string) {
+
     return `${prefix}_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+
   }
 
   private v1BearerFromAuth(authHeader: string | undefined | null) {
+
     const h = String(authHeader || '').trim();
+
     if (!h) return '';
+
     if (h.toLowerCase().startsWith('bearer '))
+
       return h.slice('bearer '.length).trim();
+
     return h;
+
   }
 
   async v1AuthTelegramLogin(body: any) {
+
     const telegramId = String(body?.telegram_id || '').trim();
+
     const role = String(body?.role || 'owner').trim();
+
     if (!telegramId) throw new BadRequestException('telegram_id required');
+
     const merchantId = `m_${telegramId}`;
+
     const merchant = {
+
       id: merchantId,
+
       telegram_id: telegramId,
+
       name: String(body?.name || '').trim() || merchantId,
+
       status: 'approved',
+
     };
+
     this.v1MerchantsById.set(merchantId, merchant);
+
     const token = `mtk_${randomUUID()}`;
+
     this.v1MerchantTokenToId.set(token, merchantId);
+
     if (role === 'merchant') {
+
       return {
+
         code: 0,
+
         message: 'ok',
+
         data: { pending_approval: false, token, merchant },
+
       };
+
     }
+
     const phone = this.normalizePhone(body?.phone || `tg_${telegramId}`);
+
     const user = {
+
       id: `u_${telegramId}`,
+
       phone,
+
       telegram_id: telegramId,
+
       name: String(body?.name || '').trim() || `用户_${telegramId}`,
+
     };
+
     this.v1UsersByPhone.set(phone, user);
+
     return {
+
       code: 0,
+
       message: 'ok',
+
       data: { pending_approval: false, token: `utk_${randomUUID()}`, user },
+
     };
+
   }
 
   async v1AuthTelegramWebappLogin(body: any) {
+
     const role = String(body?.role || 'owner').trim();
+
     const initData = String(body?.init_data || '').trim();
+
     if (!initData) throw new BadRequestException('init_data required');
+
     const tg = this.getTelegramUserInfo('', initData);
+
     if (!tg) throw new BadRequestException('invalid telegram init_data');
+
     const phone = this.normalizePhone(`tg_${tg.telegram_id}`);
+
     const name = tg.first_name || tg.username || `用户_${tg.telegram_id}`;
+
     const user = {
+
       id: `u_${tg.telegram_id}`,
+
       phone,
+
       role,
+
       name,
+
       telegram_id: String(tg.telegram_id),
+
       username: tg.username,
+
       first_name: tg.first_name,
+
     };
+
     this.v1UsersByPhone.set(phone, user);
+
     await this.linkUser(tg);
+
     return {
+
       code: 0,
+
       message: 'ok',
+
       data: { pending_approval: false, token: `utk_${randomUUID()}`, user },
+
     };
+
   }
 
   async v1AuthTelegramWebappBindPhone(body: any) {
+
     const initData = String(body?.init_data || '').trim();
+
     if (!initData) throw new BadRequestException('init_data required');
+
     const phone = this.normalizePhone(body?.phone);
+
     if (!phone) throw new BadRequestException('phone required');
+
     const u = {
+
       id: this.v1RandomId('u'),
+
       phone,
+
       name: String(body?.name || '').trim() || phone,
+
       email: body?.email ? String(body.email) : null,
+
       language: body?.language ? String(body.language) : null,
+
       telegram_bound: true,
+
     };
+
     this.v1UsersByPhone.set(phone, u);
+
     return {
+
       code: 0,
+
       message: 'ok',
+
       data: { token: `utk_${randomUUID()}`, user: u },
+
     };
+
   }
 
   async v1UserByPhone(phone: string) {
+
     const p = this.normalizePhone(phone);
+
     const u = this.v1UsersByPhone.get(p) || null;
+
     return { code: 0, message: 'ok', data: u };
+
   }
 
   async v1CreateUser(body: any) {
+
     const phone = this.normalizePhone(body?.phone);
+
     if (!phone) throw new BadRequestException('phone required');
+
     const u = {
+
       id: this.v1RandomId('u'),
+
       phone,
+
       name: String(body?.name || '').trim() || phone,
+
       email: body?.email ? String(body.email) : null,
+
       language: body?.language ? String(body.language) : null,
+
       telegram_id: body?.telegram_id ? String(body.telegram_id) : null,
+
     };
+
     this.v1UsersByPhone.set(phone, u);
+
     return { code: 0, message: 'ok', data: u };
+
   }
 
   async v1PetsList(phone: string) {
+
     const p = this.normalizePhone(phone);
+
     const items = this.v1PetsByPhone.get(p) || [];
+
     return { code: 0, message: 'ok', data: { items } };
+
   }
 
   async v1PetUpsert(body: any) {
+
     const phone = this.normalizePhone(body?.phone);
+
     if (!phone) throw new BadRequestException('phone required');
+
     const list = this.v1PetsByPhone.get(phone) || [];
+
     const id = body?.id ? Number(body.id) : null;
+
     if (id != null && Number.isFinite(id)) {
+
       const idx = list.findIndex((x: any) => Number(x.id) === id);
+
       if (idx >= 0) {
+
         list[idx] = { ...list[idx], ...(body || {}) };
+
         this.v1PetsByPhone.set(phone, list);
+
         return { code: 0, message: 'ok', data: list[idx] };
+
       }
+
     }
+
     const next = {
+
       id: Date.now(),
+
       phone,
+
       name: String(body?.name || '').trim() || '宠物',
+
       type: body?.type || null,
+
       ...body,
+
     };
+
     list.unshift(next);
+
     this.v1PetsByPhone.set(phone, list);
+
     return { code: 0, message: 'ok', data: next };
+
   }
 
   async v1PetDelete(opts: { id: string; phone: string }) {
+
     const phone = this.normalizePhone(opts.phone);
+
     const id = Number(opts.id);
+
     const list = this.v1PetsByPhone.get(phone) || [];
+
     this.v1PetsByPhone.set(
+
       phone,
+
       list.filter((x: any) => Number(x.id) !== id),
+
     );
+
     return { code: 0, message: 'ok', data: { deleted: true } };
+
   }
 
   async v1OrdersByPhone(phone: string) {
+
     const p = this.normalizePhone(phone);
+
     const items = (this.ordersByPhone.get(p) || []).map((o: any) => ({
+
       id: o.order_id,
+
       order_id: o.order_id,
+
       phone: o.phone,
+
       order_type: o.order_type,
+
       status: o.status,
+
       total_cents: o.total_cents,
+
       currency: o.currency,
+
       created_at: o.created_at,
+
       items: o.items,
+
       meta: o.meta,
+
     }));
+
     return { code: 0, message: 'ok', data: { items } };
+
   }
 
   async v1OrderDetail(orderId: string) {
+
     const id = String(orderId || '').trim();
+
     if (!id) throw new BadRequestException('orderId required');
+
     for (const list of this.ordersByPhone.values()) {
+
       const hit = (list || []).find((x: any) => String(x?.order_id) === id);
+
       if (hit) return { code: 0, message: 'ok', data: hit };
+
     }
+
     throw new BadRequestException('order not found');
+
   }
 
   async v1PaymentsByPhone(phone: string) {
+
     const p = this.normalizePhone(phone);
+
     const items = this.v1PaymentsStoreByPhone.get(p) || [];
+
     return { code: 0, message: 'ok', data: { items } };
+
   }
 
   async v1PaymentsByOrder(orderId: string) {
+
     const id = String(orderId || '').trim();
+
     if (!id) throw new BadRequestException('orderId required');
+
     const payments: any[] = [];
+
     for (const list of this.v1PaymentsStoreByPhone.values()) {
+
       for (const p of list) {
+
         if (String(p?.order_id || '') === id) payments.push(p);
+
       }
+
     }
+
     return { code: 0, message: 'ok', data: { items: payments } };
+
   }
 
   async v1OrdersIntake(body: any) {
+
     const phone = this.normalizePhone(
+
       body?.phone ||
+
         body?.meta?.phone ||
+
         body?.customer?.phone ||
+
         body?.customer?.phone_number ||
+
         body?.customer?.mobile,
+
     );
+
     if (!phone) throw new BadRequestException('phone required');
+
     const orderType = String(
+
       body?.order_type || body?.meta?.order_type || 'service',
+
     );
+
     if (orderType === 'product') {
+
       return this.marketplaceCreateOrder({
+
         order_type: 'product',
+
         phone,
+
         city: body?.city || body?.meta?.city || body?.location?.city,
+
         conversation_channel: 'webapp',
+
         product_items: body?.product_items || body?.meta?.product_items || [],
+
       });
+
     }
+
     return this.marketplaceCreateOrder({
+
       order_type: 'service',
+
       phone,
+
       city: body?.city || body?.meta?.city || body?.location?.city,
+
       pickup_address:
+
         body?.pickup_address ||
+
         body?.meta?.pickup_address ||
+
         body?.location?.pickup_address,
+
       match_mode:
+
         body?.match_mode || body?.meta?.match_mode || body?.service?.match_mode || 'platform',
+
       category:
+
         body?.category || body?.meta?.category || body?.service?.category || 'cremation',
+
       conversation_channel: 'webapp',
+
     });
+
   }
 
   async v1MarketplaceCategories() {
+
     const items = [
+
       { key: 'urn', label: '骨灰盒' },
+
       { key: 'jewelry', label: '骨灰首饰' },
+
       { key: 'frame', label: '纪念相框' },
+
       { key: 'art', label: '纪念艺术' },
+
       { key: 'service', label: '服务' },
+
     ];
+
     return { code: 0, message: 'ok', data: { items } };
+
   }
 
   async v1CemeteryLayout() {
+
     return {
+
       code: 0,
+
       message: 'ok',
+
       data: { rows: 6, cols: 10, reserved: [] },
+
     };
+
   }
 
   async v1GeoReverse(_opts: { lat: string; lng: string }) {
+
     return {
+
       code: 0,
+
       message: 'ok',
+
       data: { address: 'Phnom Penh', city: 'Phnom Penh' },
+
     };
+
   }
 
   async v1MemorialFavoritesList(phone: string) {
+
     const p = this.normalizePhone(phone);
+
     const set = this.v1MemorialFavoritesByPhone.get(p) || new Set<number>();
+
     const items = Array.from(set.values()).map((id) => ({ memorial_id: id }));
+
     return { code: 0, message: 'ok', data: { items } };
+
   }
 
   async v1MemorialFavoritesAdd(body: any) {
+
     const phone = this.normalizePhone(body?.phone);
+
     const memorialId = Number(body?.memorial_id);
+
     if (!phone) throw new BadRequestException('phone required');
+
     if (!Number.isFinite(memorialId))
+
       throw new BadRequestException('memorial_id required');
+
     const set = this.v1MemorialFavoritesByPhone.get(phone) || new Set<number>();
+
     set.add(memorialId);
+
     this.v1MemorialFavoritesByPhone.set(phone, set);
+
     return { code: 0, message: 'ok', data: { ok: true } };
+
   }
 
   async v1MemorialFavoritesDelete(opts: { phone: string; memorialId: string }) {
+
     const phone = this.normalizePhone(opts.phone);
+
     const memorialId = Number(opts.memorialId);
+
     if (!phone) throw new BadRequestException('phone required');
+
     if (!Number.isFinite(memorialId))
+
       throw new BadRequestException('memorial_id required');
+
     const set = this.v1MemorialFavoritesByPhone.get(phone) || new Set<number>();
+
     set.delete(memorialId);
+
     this.v1MemorialFavoritesByPhone.set(phone, set);
+
     return { code: 0, message: 'ok', data: { ok: true } };
+
   }
 
   private v1MerchantFromReq(req: any) {
+
     const token = this.v1BearerFromAuth(req?.headers?.authorization);
+
     const id = this.v1MerchantTokenToId.get(token) || '';
+
     const m = id ? this.v1MerchantsById.get(id) : null;
+
     if (!m) throw new BadRequestException('unauthorized');
+
     return m;
+
   }
 
   async v1MerchantMe(req: any) {
+
     const m = this.v1MerchantFromReq(req);
+
     return { code: 0, message: 'ok', data: m };
+
   }
 
   async v1MerchantOrders(_req: any) {
+
     return { code: 0, message: 'ok', data: { items: [] } };
+
   }
 
   async v1MerchantOrderDetail(_req: any, orderId: string) {
+
     const id = String(orderId || '').trim();
+
     if (!id) throw new BadRequestException('orderId required');
+
     return {
+
       code: 0,
+
       message: 'ok',
+
       data: { id, status: 'pending', items: [] },
+
     };
+
   }
 
   async v1MerchantProducts(req: any) {
+
     const m = this.v1MerchantFromReq(req);
+
     const lang = this.normalizeLocaleOrNull(req?.query?.lang);
+
     try {
+
       const q = await this.opsQuery(
+
         `SELECT
+
           p.id,
+
           p.category_code AS category,
+
           p.default_lang,
+
           p.price_cents,
+
           p.currency,
+
           p.production_time_days,
+
           p.delivery_type,
+
           p.stock,
+
           p.status,
+
           p.images,
+
           COALESCE(t1.name, t2.name) AS name,
+
           COALESCE(t1.category_label, t2.category_label) AS category_label,
+
           COALESCE(t1.description, t2.description) AS description
+
         FROM marketplace.products p
+
         LEFT JOIN marketplace.product_i18n t1
+
           ON t1.product_id = p.id AND ($1::text IS NOT NULL) AND t1.lang = $1
+
         LEFT JOIN marketplace.product_i18n t2
+
           ON t2.product_id = p.id AND t2.lang = p.default_lang
+
         WHERE p.merchant_id = $2
+
         ORDER BY p.id DESC
+
         LIMIT 200`,
+
         [lang, String(m.id)],
+
       );
+
       const ids = (q.rows || [])
+
         .map((r: any) => Number(r.id))
+
         .filter((x) => Number.isFinite(x));
+
       const i18nById: Record<string, any> = {};
+
       if (ids.length) {
+
         const iq = await this.opsQuery(
+
           `SELECT product_id, lang, name, category_label, description
+
            FROM marketplace.product_i18n
+
            WHERE product_id = ANY($1)`,
+
           [ids],
+
         );
+
         for (const row of iq.rows || []) {
+
           const pid = String(row.product_id);
+
           const l = this.normalizeLocaleOrNull(row.lang);
+
           if (!pid || !l) continue;
+
           if (!i18nById[pid]) i18nById[pid] = {};
+
           i18nById[pid][l] = {
+
             name: row.name != null ? String(row.name) : null,
+
             category_label:
+
               row.category_label != null ? String(row.category_label) : null,
+
             description:
+
               row.description != null ? String(row.description) : null,
+
           };
+
         }
+
       }
+
       const items = (q.rows || []).map((r: any) => ({
+
         id: Number(r.id),
+
         name: r.name != null ? String(r.name) : '',
+
         category: String(r.category || ''),
+
         category_label:
+
           r.category_label != null ? String(r.category_label) : null,
+
         description: r.description != null ? String(r.description) : null,
+
         price_cents: Number(r.price_cents || 0),
+
         currency: String(r.currency || 'USD'),
+
         stock: r.stock == null ? null : Number(r.stock),
+
         status: String(r.status || 'draft'),
+
         images: Array.isArray(r.images) ? r.images : r.images || [],
+
         default_lang: String(r.default_lang || 'zh-CN'),
+
         i18n: i18nById[String(r.id)] || {},
+
       }));
+
       return { code: 0, message: 'ok', data: { items } };
+
     } catch {
+
       const items = this.marketplaceProductsStore
+
         .filter((p: any) => String(p?.merchant?.id || '') === String(m.id))
+
         .map((p: any) => {
+
           const txt = this.resolveProductTextByLang(p, lang);
+
           return {
+
             id: p.id,
+
             name: txt.name,
+
             category: p.category,
+
             category_label: txt.category_label,
+
             description: txt.description,
+
             price_cents: p.price_cents,
+
             currency: p.currency,
+
             stock: p.stock ?? 0,
+
             status: p.status || 'published',
+
             images: p.images || [],
+
             default_lang: p.default_lang || 'zh-CN',
+
             i18n: p.i18n || {},
+
           };
+
         });
+
       return { code: 0, message: 'ok', data: { items } };
+
     }
+
   }
 
   async v1MerchantCreateProduct(req: any, body: any) {
+
     const m = this.v1MerchantFromReq(req);
+
     const defaultLang = this.normalizeLocale(
+
       body?.default_lang || req?.query?.lang,
+
     );
+
     const category = String(
+
       body?.category || body?.category_code || 'urn',
+
     ).trim();
+
     const priceCents = Math.max(0, Math.floor(Number(body?.price_cents || 0)));
+
     const stock =
+
       body?.stock === null || typeof body?.stock === 'undefined'
+
         ? null
+
         : Math.max(0, Math.floor(Number(body?.stock || 0)));
+
     const productionTimeDays = Math.max(
+
       0,
+
       Math.floor(Number(body?.production_time_days || 3)),
+
     );
+
     const deliveryType = String(body?.delivery_type || 'shipment');
+
     const currency = String(body?.currency || 'USD');
 
     const i18nFromBody = this.parseProductI18nFromBody(body);
+
     const fallbackName = String(body?.name || '').trim();
+
     const fallbackCategoryLabel = body?.category_label
+
       ? String(body.category_label)
+
       : null;
+
     const fallbackDesc =
+
       typeof body?.description === 'string' || body?.description === null
+
         ? body.description
+
         : null;
 
     const i18n =
+
       i18nFromBody ||
+
       (fallbackName || fallbackCategoryLabel || fallbackDesc != null
+
         ? {
+
             [defaultLang]: {
+
               name: fallbackName || null,
+
               category_label: fallbackCategoryLabel,
+
               description: fallbackDesc != null ? String(fallbackDesc) : null,
+
             },
+
           }
+
         : null);
 
     const mustName = i18n?.[defaultLang]?.name
+
       ? String(i18n[defaultLang].name).trim()
+
       : '';
+
     if (!category || !Number.isFinite(priceCents) || !mustName) {
+
       throw new BadRequestException('missing name/category/price');
+
     }
 
     try {
+
       const q = await this.opsQuery<{ id: number }>(
+
         `INSERT INTO marketplace.products(merchant_id, merchant_name, category_code, default_lang, price_cents, currency, production_time_days, delivery_type, stock, status, images)
+
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'draft','[]'::jsonb)
+
          RETURNING id`,
+
         [
+
           String(m.id),
+
           String(m.name),
+
           category,
+
           defaultLang,
+
           priceCents,
+
           currency,
+
           productionTimeDays,
+
           deliveryType,
+
           stock,
+
         ],
+
       );
+
       const id = Number(q.rows && q.rows[0] ? (q.rows[0] as any).id : NaN);
+
       if (!Number.isFinite(id)) throw new BadRequestException('create failed');
+
       if (i18n) await this.marketplaceDbUpsertI18n(id, i18n);
+
       const data = await this.marketplaceDbGetProduct({ id: String(id) });
+
       return { code: 0, message: 'ok', data };
+
     } catch {
+
       const id = Number(Date.now());
+
       const txt = this.resolveProductTextByLang(
+
         { i18n, default_lang: defaultLang },
+
         defaultLang,
+
       );
+
       const next: any = {
+
         id,
+
         category,
+
         name: txt.name || mustName || `商品_${id}`,
+
         category_label: txt.category_label,
+
         description: txt.description,
+
         price_cents: priceCents,
+
         currency,
+
         images: [],
+
         merchant: { id: m.id, name: m.name },
+
         production_time_days: productionTimeDays,
+
         delivery_type: deliveryType,
+
         stock: stock ?? 0,
+
         status: 'draft',
+
         sales_7d: 0,
+
         default_lang: defaultLang,
+
         i18n: i18n || {},
+
       };
+
       this.marketplaceProductsStore.unshift(next);
+
       return { code: 0, message: 'ok', data: next };
+
     }
+
   }
 
   async v1MerchantUpdateProduct(req: any, opts: { id: string; body: any }) {
+
     const m = this.v1MerchantFromReq(req);
+
     const id = Number(opts.id);
+
     if (!Number.isFinite(id))
+
       throw new BadRequestException('invalid product id');
+
     const body = opts.body || {};
+
     try {
+
       const owner = await this.opsQuery(
+
         `SELECT id, merchant_id FROM marketplace.products WHERE id = $1 LIMIT 1`,
+
         [id],
+
       );
+
       const r: any = owner.rows && owner.rows[0] ? owner.rows[0] : null;
+
       if (!r) throw new BadRequestException('product not found');
+
       if (String(r.merchant_id || '') !== String(m.id))
+
         throw new BadRequestException('forbidden');
 
       const sets: string[] = [];
+
       const params: any[] = [id];
+
       let idx = 2;
+
       if (typeof body.price_cents !== 'undefined') {
+
         sets.push(`price_cents = $${idx++}`);
+
         params.push(Math.max(0, Math.floor(Number(body.price_cents || 0))));
+
       }
+
       if (
+
         typeof body.category === 'string' ||
+
         typeof body.category_code === 'string'
+
       ) {
+
         const cat = String(body.category || body.category_code || '').trim();
+
         if (cat) {
+
           sets.push(`category_code = $${idx++}`);
+
           params.push(cat);
+
         }
+
       }
+
       if (typeof body.currency === 'string') {
+
         sets.push(`currency = $${idx++}`);
+
         params.push(String(body.currency || 'USD'));
+
       }
+
       if (typeof body.production_time_days !== 'undefined') {
+
         sets.push(`production_time_days = $${idx++}`);
+
         params.push(
+
           Math.max(0, Math.floor(Number(body.production_time_days || 0))),
+
         );
+
       }
+
       if (typeof body.delivery_type === 'string') {
+
         sets.push(`delivery_type = $${idx++}`);
+
         params.push(String(body.delivery_type || 'shipment'));
+
       }
+
       if (body.stock === null || typeof body.stock === 'undefined') {
+
         if (body.stock === null) {
+
           sets.push(`stock = NULL`);
+
         }
+
       } else if (typeof body.stock !== 'undefined') {
+
         sets.push(`stock = $${idx++}`);
+
         params.push(Math.max(0, Math.floor(Number(body.stock || 0))));
+
       }
+
       if (typeof body.default_lang !== 'undefined') {
+
         sets.push(`default_lang = $${idx++}`);
+
         params.push(this.normalizeLocale(body.default_lang));
+
       }
+
       if (sets.length) {
+
         await this.opsQuery(
+
           `UPDATE marketplace.products SET ${sets.join(
+
             ', ',
+
           )}, updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
+
           params,
+
         );
+
       }
 
       const i18nFromBody = this.parseProductI18nFromBody(body);
+
       const maybeDefaultLang = this.normalizeLocale(
+
         body?.default_lang || req?.query?.lang,
+
       );
+
       const fallbackName =
+
         typeof body.name === 'string' ? String(body.name).trim() : '';
+
       const fallbackCategoryLabel =
+
         typeof body.category_label === 'string'
+
           ? String(body.category_label)
+
           : null;
+
       const fallbackDesc =
+
         typeof body.description === 'string' || body.description === null
+
           ? body.description
+
           : null;
+
       const fallbackI18n =
+
         fallbackName || fallbackCategoryLabel || fallbackDesc != null
+
           ? {
+
               [maybeDefaultLang]: {
+
                 name: fallbackName || null,
+
                 category_label: fallbackCategoryLabel,
+
                 description: fallbackDesc != null ? String(fallbackDesc) : null,
+
               },
+
             }
+
           : null;
+
       const i18n = i18nFromBody || fallbackI18n;
+
       if (i18n) await this.marketplaceDbUpsertI18n(id, i18n);
 
       const data = await this.marketplaceDbGetProduct({
+
         id: String(id),
+
         lang: req?.query?.lang,
+
       });
+
       return { code: 0, message: 'ok', data };
+
     } catch {
+
       const idx = this.marketplaceProductsStore.findIndex(
+
         (p: any) => Number(p.id) === id,
+
       );
+
       if (idx < 0) throw new BadRequestException('product not found');
+
       const existed: any = this.marketplaceProductsStore[idx];
+
       if (String(existed?.merchant?.id || '') !== String(m.id))
+
         throw new BadRequestException('forbidden');
+
       const next: any = { ...existed };
+
       if (typeof body?.price_cents !== 'undefined')
+
         next.price_cents = Math.max(
+
           0,
+
           Math.floor(Number(body.price_cents || 0)),
+
         );
+
       if (typeof body?.default_lang !== 'undefined')
+
         next.default_lang = this.normalizeLocale(body.default_lang);
+
       const i18nFromBody = this.parseProductI18nFromBody(body);
+
       const maybeDefaultLang = this.normalizeLocale(
+
         body?.default_lang || req?.query?.lang,
+
       );
+
       const fallbackName =
+
         typeof body.name === 'string' ? String(body.name).trim() : '';
+
       const fallbackCategoryLabel =
+
         typeof body.category_label === 'string'
+
           ? String(body.category_label)
+
           : null;
+
       const fallbackDesc =
+
         typeof body.description === 'string' || body.description === null
+
           ? body.description
+
           : null;
+
       const fallbackI18n =
+
         fallbackName || fallbackCategoryLabel || fallbackDesc != null
+
           ? {
+
               [maybeDefaultLang]: {
+
                 name: fallbackName || null,
+
                 category_label: fallbackCategoryLabel,
+
                 description: fallbackDesc != null ? String(fallbackDesc) : null,
+
               },
+
             }
+
           : null;
+
       const patchI18n = i18nFromBody || fallbackI18n;
+
       if (patchI18n) {
+
         next.i18n = next.i18n && typeof next.i18n === 'object' ? next.i18n : {};
+
         for (const [k, v] of Object.entries(patchI18n)) {
+
           const lc = this.normalizeLocaleOrNull(k);
+
           if (!lc) continue;
+
           next.i18n[lc] = {
+
             ...(next.i18n[lc] && typeof next.i18n[lc] === 'object'
+
               ? next.i18n[lc]
+
               : {}),
+
             ...(v && typeof v === 'object' ? v : {}),
+
           };
+
         }
+
       }
+
       if (typeof body?.name === 'string') next.name = String(body.name);
+
       if (typeof body?.category === 'string')
+
         next.category = String(body.category);
+
       if (typeof body?.description === 'string' || body?.description === null)
+
         next.description = body.description;
+
       const txt = this.resolveProductTextByLang(next, next.default_lang);
+
       next.name = txt.name;
+
       next.category_label = txt.category_label;
+
       next.description = txt.description;
+
       this.marketplaceProductsStore[idx] = next;
+
       return { code: 0, message: 'ok', data: next };
+
     }
+
   }
 
   async v1MerchantSetStatus(req: any, opts: { id: string; status: string }) {
+
     const m = this.v1MerchantFromReq(req);
+
     const id = Number(opts.id);
+
     const status = String(opts.status || 'draft');
+
     try {
+
       const r = await this.opsQuery(
+
         `UPDATE marketplace.products
+
          SET status = $1, updated_at = CURRENT_TIMESTAMP
+
          WHERE id = $2 AND merchant_id = $3`,
+
         [status, id, String(m.id)],
+
       );
+
       if (!r.rowCount) throw new BadRequestException('product not found');
+
       return { code: 0, message: 'ok', data: { id, status } };
+
     } catch {
+
       const idx = this.marketplaceProductsStore.findIndex(
+
         (p: any) => Number(p.id) === id,
+
       );
+
       if (idx < 0) throw new BadRequestException('product not found');
+
       const existed: any = this.marketplaceProductsStore[idx];
+
       if (String(existed?.merchant?.id || '') !== String(m.id))
+
         throw new BadRequestException('forbidden');
+
       existed.status = status;
+
       this.marketplaceProductsStore[idx] = existed;
+
       return { code: 0, message: 'ok', data: { id, status: existed.status } };
+
     }
+
   }
 
   async v1MerchantSetStock(req: any, opts: { id: string; stock: number }) {
+
     const m = this.v1MerchantFromReq(req);
+
     const id = Number(opts.id);
+
     const stock = Math.max(0, Math.floor(Number(opts.stock || 0)));
+
     try {
+
       const r = await this.opsQuery(
+
         `UPDATE marketplace.products
+
          SET stock = $1, updated_at = CURRENT_TIMESTAMP
+
          WHERE id = $2 AND merchant_id = $3`,
+
         [stock, id, String(m.id)],
+
       );
+
       if (!r.rowCount) throw new BadRequestException('product not found');
+
       return { code: 0, message: 'ok', data: { id, stock } };
+
     } catch {
+
       const idx = this.marketplaceProductsStore.findIndex(
+
         (p: any) => Number(p.id) === id,
+
       );
+
       if (idx < 0) throw new BadRequestException('product not found');
+
       const existed: any = this.marketplaceProductsStore[idx];
+
       if (String(existed?.merchant?.id || '') !== String(m.id))
+
         throw new BadRequestException('forbidden');
+
       existed.stock = stock;
+
       this.marketplaceProductsStore[idx] = existed;
+
       return { code: 0, message: 'ok', data: { id, stock: existed.stock } };
+
     }
+
   }
 
   async v1MerchantAddImage(req: any, opts: { id: string; image_url: string }) {
+
     const m = this.v1MerchantFromReq(req);
+
     const id = Number(opts.id);
+
     const url = String(opts.image_url || '').trim();
+
     if (!url) throw new BadRequestException('image_url required');
+
     const imgId = this.v1RandomId('img');
+
     try {
+
       const r = await this.opsQuery(
+
         `UPDATE marketplace.products
+
          SET images = COALESCE(images, '[]'::jsonb) || jsonb_build_array(jsonb_build_object('id',$1,'image_url',$2)),
+
              updated_at = CURRENT_TIMESTAMP
+
          WHERE id = $3 AND merchant_id = $4`,
+
         [imgId, url, id, String(m.id)],
+
       );
+
       if (!r.rowCount) throw new BadRequestException('product not found');
+
       return { code: 0, message: 'ok', data: { ok: true } };
+
     } catch {
+
       const idx = this.marketplaceProductsStore.findIndex(
+
         (p: any) => Number(p.id) === id,
+
       );
+
       if (idx < 0) throw new BadRequestException('product not found');
+
       const existed: any = this.marketplaceProductsStore[idx];
+
       if (String(existed?.merchant?.id || '') !== String(m.id))
+
         throw new BadRequestException('forbidden');
+
       if (!Array.isArray(existed.images)) existed.images = [];
+
       existed.images.push({ id: imgId, image_url: url });
+
       this.marketplaceProductsStore[idx] = existed;
+
       return { code: 0, message: 'ok', data: { ok: true } };
+
     }
+
   }
 
   async v1MerchantSortImages(
+
     req: any,
+
     opts: { id: string; image_ids: string[] },
+
   ) {
+
     const m = this.v1MerchantFromReq(req);
+
     const id = Number(opts.id);
+
     const ids = Array.isArray(opts.image_ids) ? opts.image_ids.map(String) : [];
+
     try {
+
       const q = await this.opsQuery(
+
         `SELECT images FROM marketplace.products WHERE id = $1 AND merchant_id = $2 LIMIT 1`,
+
         [id, String(m.id)],
+
       );
+
       const row: any = q.rows && q.rows[0] ? q.rows[0] : null;
+
       if (!row) throw new BadRequestException('product not found');
+
       const current = Array.isArray(row.images) ? row.images : [];
+
       const byId = new Map(current.map((x: any) => [String(x.id || ''), x]));
+
       const next = ids.map((i) => byId.get(String(i))).filter(Boolean);
+
       const finalImages = next.length ? next : current;
+
       await this.opsQuery(
+
         `UPDATE marketplace.products SET images = $1::jsonb, updated_at = CURRENT_TIMESTAMP WHERE id = $2 AND merchant_id = $3`,
+
         [JSON.stringify(finalImages), id, String(m.id)],
+
       );
+
       return { code: 0, message: 'ok', data: { ok: true } };
+
     } catch {
+
       const idx = this.marketplaceProductsStore.findIndex(
+
         (p: any) => Number(p.id) === id,
+
       );
+
       if (idx < 0) throw new BadRequestException('product not found');
+
       const existed: any = this.marketplaceProductsStore[idx];
+
       if (String(existed?.merchant?.id || '') !== String(m.id))
+
         throw new BadRequestException('forbidden');
+
       const current = Array.isArray(existed.images) ? existed.images : [];
+
       const byId = new Map(current.map((x: any) => [String(x.id || ''), x]));
+
       const next = ids.map((i) => byId.get(String(i))).filter(Boolean);
+
       existed.images = next.length ? next : current;
+
       this.marketplaceProductsStore[idx] = existed;
+
       return { code: 0, message: 'ok', data: { ok: true } };
+
     }
+
   }
 
   async v1MerchantDeleteImage(req: any, opts: { id: string; imageId: string }) {
+
     const m = this.v1MerchantFromReq(req);
+
     const id = Number(opts.id);
+
     const imageId = String(opts.imageId || '').trim();
+
     try {
+
       const q = await this.opsQuery(
+
         `SELECT images FROM marketplace.products WHERE id = $1 AND merchant_id = $2 LIMIT 1`,
+
         [id, String(m.id)],
+
       );
+
       const row: any = q.rows && q.rows[0] ? q.rows[0] : null;
+
       if (!row) throw new BadRequestException('product not found');
+
       const current = Array.isArray(row.images) ? row.images : [];
+
       const next = current.filter((x: any) => String(x.id || '') !== imageId);
+
       await this.opsQuery(
+
         `UPDATE marketplace.products SET images = $1::jsonb, updated_at = CURRENT_TIMESTAMP WHERE id = $2 AND merchant_id = $3`,
+
         [JSON.stringify(next), id, String(m.id)],
+
       );
+
       return { code: 0, message: 'ok', data: { ok: true } };
+
     } catch {
+
       const idx = this.marketplaceProductsStore.findIndex(
+
         (p: any) => Number(p.id) === id,
+
       );
+
       if (idx < 0) throw new BadRequestException('product not found');
+
       const existed: any = this.marketplaceProductsStore[idx];
+
       if (String(existed?.merchant?.id || '') !== String(m.id))
+
         throw new BadRequestException('forbidden');
+
       existed.images = (
+
         Array.isArray(existed.images) ? existed.images : []
+
       ).filter((x: any) => String(x.id || '') !== imageId);
+
       this.marketplaceProductsStore[idx] = existed;
+
       return { code: 0, message: 'ok', data: { ok: true } };
+
     }
+
   }
 
   async v1MerchantRevenue(_req: any) {
+
     return {
+
       code: 0,
+
       message: 'ok',
+
       data: {
+
         total_amount_cents: 0,
+
         platform_fee_cents: 0,
+
         merchant_payout_cents: 0,
+
         items: [],
+
       },
+
     };
+
   }
 
   async v1MerchantNotifications(_req: any) {
+
     return { code: 0, message: 'ok', data: { items: [] } };
+
   }
 
   async v1MerchantReviewHistory(_req: any) {
+
     return { code: 0, message: 'ok', data: { items: [] } };
+
   }
 
   async v1MerchantSettlementRequests(_req: any) {
+
     return { code: 0, message: 'ok', data: { items: [] } };
+
   }
 
   async v1MerchantCreateSettlementRequest(_req: any, _body?: any) {
+
     return {
+
       code: 0,
+
       message: 'ok',
+
       data: { id: this.v1RandomId('settle'), status: 'pending' },
+
     };
+
   }
 
   async v1MerchantOrderAction(_req: any) {
+
     return { code: 0, message: 'ok', data: { ok: true } };
+
   }
 
   private opsActor(req: any) {
+
     const actor = String(req?.headers?.['x-admin-actor'] || '').trim();
+
     const role = String(req?.headers?.['x-admin-role'] || '').trim();
+
     const v = actor || 'admin';
+
     return role ? `${v}(${role})` : v;
+
   }
 
   private getOpsPg() {
+
     if (this.opsPg) return this.opsPg;
+
     const host = String(process.env.POSTGRES_HOST || '').trim();
+
     const db = String(process.env.POSTGRES_DB || '').trim();
+
     const user = String(process.env.POSTGRES_USER || '').trim();
+
     const password = String(process.env.POSTGRES_PASSWORD || '').trim();
+
     const port = Number(process.env.POSTGRES_PORT || 5432);
+
     if (!host || !db || !user) return null;
+
     this.opsPg = new Pool({ host, port, database: db, user, password, max: 5 });
+
     return this.opsPg;
+
   }
 
   private normalizeLocale(input: any): 'zh-CN' | 'en' | 'km' {
+
     const raw = String(input || '').trim();
+
     if (!raw) return 'zh-CN';
+
     const v = raw.toLowerCase();
+
     if (v === 'zh' || v === 'zh-cn' || v === 'zh_hans' || v === 'zh-hans')
+
       return 'zh-CN';
+
     if (v === 'en' || v === 'en-us' || v === 'en_us') return 'en';
+
     if (v === 'km' || v === 'kh' || v === 'km-kh' || v === 'km_kh') return 'km';
+
     const up = raw.toUpperCase();
+
     if (up === 'ZH') return 'zh-CN';
+
     if (up === 'EN') return 'en';
+
     if (up === 'KM') return 'km';
+
     return 'zh-CN';
+
   }
 
   private normalizeLocaleOrNull(input: any): 'zh-CN' | 'en' | 'km' | null {
+
     const raw = String(input || '').trim();
+
     if (!raw) return null;
+
     return this.normalizeLocale(raw);
+
   }
 
   private resolveProductTextByLang(p: any, langInput: any) {
+
     const i18n = p?.i18n && typeof p.i18n === 'object' ? p.i18n : null;
+
     const normalized = this.normalizeLocaleOrNull(langInput);
+
     const defaultLang = this.normalizeLocale(p?.default_lang || 'zh-CN');
+
     if (!i18n) {
+
       return {
+
         name: p?.name != null ? String(p.name) : '',
+
         category_label:
+
           p?.category_label != null ? String(p.category_label) : null,
+
         description: p?.description != null ? String(p.description) : null,
+
       };
+
     }
+
     const pick = (lc: any) => {
+
       const key = this.normalizeLocaleOrNull(lc);
+
       if (!key) return null;
+
       const v = i18n[key] && typeof i18n[key] === 'object' ? i18n[key] : null;
+
       if (!v) return null;
+
       return {
+
         name: v.name != null ? String(v.name) : null,
+
         category_label:
+
           v.category_label != null ? String(v.category_label) : null,
+
         description: v.description != null ? String(v.description) : null,
+
       };
+
     };
+
     const primary = pick(normalized) || pick(defaultLang);
+
     const fallbackKey = Object.keys(i18n || {})[0];
+
     const fallback = primary || pick(fallbackKey);
+
     return {
+
       name:
+
         (fallback?.name != null ? String(fallback.name) : '') ||
+
         (p?.name != null ? String(p.name) : ''),
+
       category_label:
+
         fallback?.category_label != null
+
           ? String(fallback.category_label)
+
           : p?.category_label != null
+
             ? String(p.category_label)
+
             : null,
+
       description:
+
         fallback?.description != null
+
           ? String(fallback.description)
+
           : p?.description != null
+
             ? String(p.description)
+
             : null,
+
     };
+
   }
 
   private async marketplaceDbListProducts(opts: {
+
     category?: string;
+
     lang?: any;
+
   }) {
+
     const lang = this.normalizeLocaleOrNull(opts?.lang);
+
     const category = String(opts?.category || '').trim();
+
     const q = await this.opsQuery(
+
       `SELECT
+
         p.id,
+
         p.category_code AS category,
+
         p.default_lang,
+
         p.price_cents,
+
         p.currency,
+
         p.production_time_days,
+
         p.delivery_type,
+
         p.stock,
+
         p.status,
+
         p.images,
+
         p.merchant_id,
+
         p.merchant_name,
+
         COALESCE(t1.name, t2.name) AS name,
+
         COALESCE(t1.category_label, t2.category_label) AS category_label,
+
         COALESCE(t1.description, t2.description) AS description
+
       FROM marketplace.products p
+
       LEFT JOIN marketplace.product_i18n t1
+
         ON t1.product_id = p.id AND ($1::text IS NOT NULL) AND t1.lang = $1
+
       LEFT JOIN marketplace.product_i18n t2
+
         ON t2.product_id = p.id AND t2.lang = p.default_lang
+
       WHERE ($2::text = '' OR p.category_code = $2)
+
       ORDER BY p.id DESC
+
       LIMIT 200`,
+
       [lang, category],
+
     );
+
     const items = (q.rows || []).map((r: any) => ({
+
       id: Number(r.id),
+
       category: String(r.category || ''),
+
       category_label:
+
         r.category_label != null ? String(r.category_label) : null,
+
       name: r.name != null ? String(r.name) : '',
+
       description: r.description != null ? String(r.description) : null,
+
       price_cents: Number(r.price_cents || 0),
+
       currency: String(r.currency || 'USD'),
+
       images: Array.isArray(r.images) ? r.images : r.images || [],
+
       merchant: {
+
         id: String(r.merchant_id || ''),
+
         name: String(r.merchant_name || ''),
+
       },
+
       production_time_days: Number(r.production_time_days || 0),
+
       delivery_type: String(r.delivery_type || 'shipment'),
+
       stock: r.stock == null ? null : Number(r.stock),
+
       status: String(r.status || 'draft'),
+
       default_lang: String(r.default_lang || 'zh-CN'),
+
     }));
+
     return items;
+
   }
 
   private async marketplaceDbGetProduct(opts: { id: string; lang?: any }) {
+
     const id = Number(opts?.id);
+
     if (!Number.isFinite(id))
+
       throw new BadRequestException('invalid product id');
+
     const lang = this.normalizeLocaleOrNull(opts?.lang);
+
     const q = await this.opsQuery(
+
       `SELECT
+
         p.id,
+
         p.category_code AS category,
+
         p.default_lang,
+
         p.price_cents,
+
         p.currency,
+
         p.production_time_days,
+
         p.delivery_type,
+
         p.stock,
+
         p.status,
+
         p.images,
+
         p.merchant_id,
+
         p.merchant_name,
+
         COALESCE(t1.name, t2.name) AS name,
+
         COALESCE(t1.category_label, t2.category_label) AS category_label,
+
         COALESCE(t1.description, t2.description) AS description
+
       FROM marketplace.products p
+
       LEFT JOIN marketplace.product_i18n t1
+
         ON t1.product_id = p.id AND ($1::text IS NOT NULL) AND t1.lang = $1
+
       LEFT JOIN marketplace.product_i18n t2
+
         ON t2.product_id = p.id AND t2.lang = p.default_lang
+
       WHERE p.id = $2
+
       LIMIT 1`,
+
       [lang, id],
+
     );
+
     const r: any = q.rows && q.rows[0] ? q.rows[0] : null;
+
     if (!r) throw new BadRequestException('product not found');
+
     return {
+
       id: Number(r.id),
+
       category: String(r.category || ''),
+
       category_label:
+
         r.category_label != null ? String(r.category_label) : null,
+
       name: r.name != null ? String(r.name) : '',
+
       description: r.description != null ? String(r.description) : null,
+
       price_cents: Number(r.price_cents || 0),
+
       currency: String(r.currency || 'USD'),
+
       images: Array.isArray(r.images) ? r.images : r.images || [],
+
       merchant: {
+
         id: String(r.merchant_id || ''),
+
         name: String(r.merchant_name || ''),
+
       },
+
       production_time_days: Number(r.production_time_days || 0),
+
       delivery_type: String(r.delivery_type || 'shipment'),
+
       stock: r.stock == null ? null : Number(r.stock),
+
       status: String(r.status || 'draft'),
+
       default_lang: String(r.default_lang || 'zh-CN'),
+
     };
+
   }
 
   private parseProductI18nFromBody(body: any) {
+
     const raw = body?.i18n && typeof body.i18n === 'object' ? body.i18n : null;
+
     if (!raw) return null;
+
     const out: Record<string, any> = {};
+
     for (const [k, v] of Object.entries(raw)) {
+
       const lang = this.normalizeLocaleOrNull(k);
+
       if (!lang) continue;
+
       const obj: any = v && typeof v === 'object' ? v : {};
+
       out[lang] = {
+
         name: obj.name != null ? String(obj.name) : null,
+
         category_label:
+
           obj.category_label != null ? String(obj.category_label) : null,
+
         description: obj.description != null ? String(obj.description) : null,
+
       };
+
     }
+
     return Object.keys(out).length ? out : null;
+
   }
 
   private async marketplaceDbUpsertI18n(
+
     productId: number,
+
     i18n: Record<string, any>,
+
   ) {
+
     const langs = Object.keys(i18n || {});
+
     if (!langs.length) return;
+
     for (const lang of langs) {
+
       const v: any = i18n[lang] || {};
+
       await this.opsQuery(
+
         `INSERT INTO marketplace.product_i18n(product_id, lang, name, category_label, description, updated_at)
+
          VALUES ($1,$2,$3,$4,$5,CURRENT_TIMESTAMP)
+
          ON CONFLICT (product_id, lang)
+
          DO UPDATE SET name = EXCLUDED.name, category_label = EXCLUDED.category_label, description = EXCLUDED.description, updated_at = CURRENT_TIMESTAMP`,
+
         [productId, lang, v.name, v.category_label, v.description],
+
       );
+
     }
+
   }
 
   private async opsQuery<T extends QueryResultRow = any>(
+
     text: string,
+
     params: any[] = [],
+
   ): Promise<QueryResult<T>> {
+
     const pg = this.getOpsPg();
+
     if (!pg) throw new BadRequestException('db not configured');
+
     return pg.query<T>(text, params);
+
   }
 
   private iso(v: any) {
+
     if (v == null) return null;
+
     const d = v instanceof Date ? v : new Date(v);
+
     if (Number.isNaN(d.getTime())) return String(v);
+
     return d.toISOString();
+
   }
 
   private async opsAudit(
+
     req: any,
+
     module: string,
+
     action: string,
+
     targetType: string,
+
     targetId: any,
+
     reason: string,
+
     requestJson: any,
+
     resultJson: any,
+
     success: boolean,
+
   ) {
+
     try {
+
       await this.opsQuery(
+
         `INSERT INTO ops.admin_audit_logs(actor,module,action,target_type,target_id,reason,request_json,result_json,success)
+
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+
         [
+
           this.opsActor(req),
+
           module,
+
           action,
+
           targetType,
+
           targetId != null ? String(targetId) : null,
+
           reason || null,
+
           requestJson ?? null,
+
           resultJson ?? null,
+
           success,
+
         ],
+
       );
+
     } catch {
+
       return;
+
     }
+
   }
 
   async adminCampaigns(opts: {
+
     current?: string;
+
     pageSize?: string;
+
     status?: string;
+
     type?: string;
+
     keyword?: string;
+
   }) {
+
     const page = Math.max(1, Number(opts.current || 1));
+
     const size = Math.min(200, Math.max(1, Number(opts.pageSize || 20)));
+
     const status = String(opts.status || '').trim();
+
     const type = String(opts.type || '').trim();
+
     const keyword = String(opts.keyword || '').trim();
+
     const where: string[] = [];
+
     const params: any[] = [];
+
     if (status) {
+
       params.push(status);
+
       where.push(`status = $${params.length}`);
+
     }
+
     if (type) {
+
       params.push(type);
+
       where.push(`type = $${params.length}`);
+
     }
+
     if (keyword) {
+
       params.push(`%${keyword}%`);
+
       where.push(`name ILIKE $${params.length}`);
+
     }
+
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
     const countRes = await this.opsQuery<{ total: string }>(
+
       `SELECT COUNT(*)::text AS total FROM ops.activity_configs ${whereSql}`,
+
       params,
+
     );
+
     const total = Number(countRes.rows?.[0]?.total || 0);
+
     const listRes = await this.opsQuery<any>(
+
       `SELECT id,type,name,start_at,end_at,scope_json,status,version,created_at,updated_at
+
        FROM ops.activity_configs ${whereSql}
+
        ORDER BY updated_at DESC, id DESC
+
        LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+
       [...params, size, (page - 1) * size],
+
     );
+
     const items = listRes.rows.map((r: any) => ({
+
       id: Number(r.id),
+
       type: r.type,
+
       name: r.name,
+
       start_at: this.iso(r.start_at),
+
       end_at: this.iso(r.end_at),
+
       scope_json: r.scope_json || {},
+
       status: r.status,
+
       version: Number(r.version || 1),
+
       created_at: this.iso(r.created_at),
+
       updated_at: this.iso(r.updated_at),
+
     }));
+
     return {
+
       code: 0,
+
       message: 'ok',
+
       data: { items, total, current: page, pageSize: size },
+
     };
+
   }
 
   async adminCampaignDetail(opts: { id: string }) {
+
     const id = Number(opts.id);
+
     if (!Number.isFinite(id)) throw new BadRequestException('invalid id');
+
     const res = await this.opsQuery<any>(
+
       `SELECT id,type,name,start_at,end_at,scope_json,status,version,created_at,updated_at
+
        FROM ops.activity_configs WHERE id = $1`,
+
       [id],
+
     );
+
     const r = res.rows?.[0];
+
     if (!r) throw new BadRequestException('not found');
+
     return {
+
       code: 0,
+
       message: 'ok',
+
       data: {
+
         id: Number(r.id),
+
         type: r.type,
+
         name: r.name,
+
         start_at: this.iso(r.start_at),
+
         end_at: this.iso(r.end_at),
+
         scope_json: r.scope_json || {},
+
         status: r.status,
+
         version: Number(r.version || 1),
+
         created_at: this.iso(r.created_at),
+
         updated_at: this.iso(r.updated_at),
+
       },
+
     };
+
   }
 
   async adminCampaignCreate(req: any, body: any) {
+
     const reason = String(req?.headers?.['x-reason'] || '').trim();
+
     const type = String(body?.type || 'other').trim();
+
     const name = String(body?.name || '').trim();
+
     const startAt = body?.start_at ? new Date(body.start_at) : null;
+
     const endAt = body?.end_at ? new Date(body.end_at) : null;
+
     if (!name) throw new BadRequestException('name required');
+
     if (!startAt || Number.isNaN(startAt.getTime()))
+
       throw new BadRequestException('start_at required');
+
     if (!endAt || Number.isNaN(endAt.getTime()))
+
       throw new BadRequestException('end_at required');
+
     if (endAt <= startAt) throw new BadRequestException('invalid time range');
+
     const scope =
+
       body?.scope_json && typeof body.scope_json === 'object'
+
         ? body.scope_json
+
         : {};
+
     const status = ['draft', 'active', 'inactive', 'archived'].includes(
+
       String(body?.status || 'draft'),
+
     )
+
       ? String(body.status || 'draft')
+
       : 'draft';
+
     const res = await this.opsQuery<any>(
+
       `INSERT INTO ops.activity_configs(type,name,start_at,end_at,scope_json,status,version,created_at,updated_at)
+
        VALUES ($1,$2,$3,$4,$5,$6,1,now(),now())
+
        RETURNING id,type,name,start_at,end_at,scope_json,status,version,created_at,updated_at`,
+
       [type, name, startAt.toISOString(), endAt.toISOString(), scope, status],
+
     );
+
     const r = res.rows[0];
+
     const data = {
+
       id: Number(r.id),
+
       type: r.type,
+
       name: r.name,
+
       start_at: this.iso(r.start_at),
+
       end_at: this.iso(r.end_at),
+
       scope_json: r.scope_json || {},
+
       status: r.status,
+
       version: Number(r.version || 1),
+
       created_at: this.iso(r.created_at),
+
       updated_at: this.iso(r.updated_at),
+
     };
+
     await this.opsAudit(
+
       req,
+
       'activity',
+
       'create',
+
       'activity_config',
+
       data.id,
+
       reason,
+
       body,
+
       data,
+
       true,
+
     );
+
     return { code: 0, message: 'ok', data };
+
   }
 
   async adminCampaignUpdate(req: any, opts: { id: string; body: any }) {
+
     const reason = String(req?.headers?.['x-reason'] || '').trim();
+
     const id = Number(opts.id);
+
     if (!Number.isFinite(id)) throw new BadRequestException('invalid id');
+
     const body = opts.body || {};
+
     const existed = await this.opsQuery<any>(
+
       `SELECT * FROM ops.activity_configs WHERE id=$1`,
+
       [id],
+
     );
+
     const row = existed.rows?.[0];
+
     if (!row) throw new BadRequestException('not found');
+
     const type =
+
       typeof body.type === 'string' ? String(body.type) : String(row.type);
+
     const name =
+
       typeof body.name === 'string'
+
         ? String(body.name).trim()
+
         : String(row.name);
+
     const startAt =
+
       typeof body.start_at !== 'undefined'
+
         ? new Date(body.start_at)
+
         : new Date(row.start_at);
+
     const endAt =
+
       typeof body.end_at !== 'undefined'
+
         ? new Date(body.end_at)
+
         : new Date(row.end_at);
+
     if (!name) throw new BadRequestException('name required');
+
     if (
+
       Number.isNaN(startAt.getTime()) ||
+
       Number.isNaN(endAt.getTime()) ||
+
       endAt <= startAt
+
     )
+
       throw new BadRequestException('invalid time range');
+
     const scope =
+
       body?.scope_json && typeof body.scope_json === 'object'
+
         ? body.scope_json
+
         : row.scope_json || {};
+
     const status =
+
       typeof body.status === 'string' &&
+
       ['draft', 'active', 'inactive', 'archived'].includes(String(body.status))
+
         ? String(body.status)
+
         : String(row.status);
+
     const res = await this.opsQuery<any>(
+
       `UPDATE ops.activity_configs
+
        SET type=$2,name=$3,start_at=$4,end_at=$5,scope_json=$6,status=$7,updated_at=now()
+
        WHERE id=$1
+
        RETURNING id,type,name,start_at,end_at,scope_json,status,version,created_at,updated_at`,
+
       [
+
         id,
+
         type,
+
         name,
+
         startAt.toISOString(),
+
         endAt.toISOString(),
+
         scope,
+
         status,
+
       ],
+
     );
+
     const r = res.rows[0];
+
     const data = {
+
       id: Number(r.id),
+
       type: r.type,
+
       name: r.name,
+
       start_at: this.iso(r.start_at),
+
       end_at: this.iso(r.end_at),
+
       scope_json: r.scope_json || {},
+
       status: r.status,
+
       version: Number(r.version || 1),
+
       created_at: this.iso(r.created_at),
+
       updated_at: this.iso(r.updated_at),
+
     };
+
     await this.opsAudit(
+
       req,
+
       'activity',
+
       'update',
+
       'activity_config',
+
       data.id,
+
       reason,
+
       body,
+
       data,
+
       true,
+
     );
+
     return { code: 0, message: 'ok', data };
+
   }
 
   async adminCampaignDelete(req: any, opts: { id: string }) {
+
     const reason = String(req?.headers?.['x-reason'] || '').trim();
+
     const id = Number(opts.id);
+
     if (!Number.isFinite(id)) throw new BadRequestException('invalid id');
+
     const res = await this.opsQuery<any>(
+
       `UPDATE ops.activity_configs SET status='archived', updated_at=now() WHERE id=$1 RETURNING id,status`,
+
       [id],
+
     );
+
     const r = res.rows?.[0];
+
     if (!r) throw new BadRequestException('not found');
+
     const data = { id: Number(r.id), status: String(r.status) };
+
     await this.opsAudit(
+
       req,
+
       'activity',
+
       'delete',
+
       'activity_config',
+
       data.id,
+
       reason,
+
       { id },
+
       data,
+
       true,
+
     );
+
     return { code: 0, message: 'ok', data };
+
   }
 
   async adminCampaignPublish(req: any, opts: { id: string }) {
+
     const reason = String(req?.headers?.['x-reason'] || '').trim();
+
     const id = Number(opts.id);
+
     if (!Number.isFinite(id)) throw new BadRequestException('invalid id');
+
     const res = await this.opsQuery<any>(
+
       `UPDATE ops.activity_configs
+
        SET status='active', version=version+1, updated_at=now()
+
        WHERE id=$1
+
        RETURNING id,status,version,updated_at`,
+
       [id],
+
     );
+
     const r = res.rows?.[0];
+
     if (!r) throw new BadRequestException('not found');
+
     const data = {
+
       id: Number(r.id),
+
       status: String(r.status),
+
       version: Number(r.version || 1),
+
       updated_at: this.iso(r.updated_at),
+
     };
+
     await this.opsAudit(
+
       req,
+
       'activity',
+
       'publish',
+
       'activity_config',
+
       data.id,
+
       reason,
+
       { id },
+
       data,
+
       true,
+
     );
+
     return { code: 0, message: 'ok', data };
+
   }
 
   async adminCampaignDeactivate(req: any, opts: { id: string }) {
+
     const reason = String(req?.headers?.['x-reason'] || '').trim();
+
     const id = Number(opts.id);
+
     if (!Number.isFinite(id)) throw new BadRequestException('invalid id');
+
     const res = await this.opsQuery<any>(
+
       `UPDATE ops.activity_configs
+
        SET status='inactive', updated_at=now()
+
        WHERE id=$1
+
        RETURNING id,status,updated_at`,
+
       [id],
+
     );
+
     const r = res.rows?.[0];
+
     if (!r) throw new BadRequestException('not found');
+
     const data = {
+
       id: Number(r.id),
+
       status: String(r.status),
+
       updated_at: this.iso(r.updated_at),
+
     };
+
     await this.opsAudit(
+
       req,
+
       'activity',
+
       'deactivate',
+
       'activity_config',
+
       data.id,
+
       reason,
+
       { id },
+
       data,
+
       true,
+
     );
+
     return { code: 0, message: 'ok', data };
+
   }
 
   async adminGroups(opts: {
+
     current?: string;
+
     pageSize?: string;
+
     status?: string;
+
     keyword?: string;
+
   }) {
+
     const page = Math.max(1, Number(opts.current || 1));
+
     const size = Math.min(200, Math.max(1, Number(opts.pageSize || 20)));
+
     const status = String(opts.status || '').trim();
+
     const keyword = String(opts.keyword || '').trim();
+
     const where: string[] = [];
+
     const params: any[] = [];
+
     if (status) {
+
       params.push(status);
+
       where.push(`c.status = $${params.length}`);
+
     }
+
     if (keyword) {
+
       params.push(`%${keyword}%`);
+
       where.push(`c.name ILIKE $${params.length}`);
+
     }
+
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
     const countRes = await this.opsQuery<{ total: string }>(
+
       `SELECT COUNT(*)::text AS total FROM ops.groupbuy_campaigns c ${whereSql}`,
+
       params,
+
     );
+
     const total = Number(countRes.rows?.[0]?.total || 0);
+
     const listRes = await this.opsQuery<any>(
+
       `SELECT c.id,c.activity_config_id,c.name,c.group_size,c.valid_minutes,c.stock,c.status,c.created_at,c.updated_at,
+
               ac.name AS activity_config_name
+
        FROM ops.groupbuy_campaigns c
+
        LEFT JOIN ops.activity_configs ac ON ac.id = c.activity_config_id
+
        ${whereSql}
+
        ORDER BY c.updated_at DESC, c.id DESC
+
        LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+
       [...params, size, (page - 1) * size],
+
     );
+
     const items = listRes.rows.map((r: any) => ({
+
       id: Number(r.id),
+
       activity_config_id:
+
         r.activity_config_id != null ? Number(r.activity_config_id) : null,
+
       activity_config_name: r.activity_config_name || null,
+
       name: r.name,
+
       group_size: Number(r.group_size || 0),
+
       valid_minutes: Number(r.valid_minutes || 0),
+
       stock: Number(r.stock || 0),
+
       status: r.status,
+
       created_at: this.iso(r.created_at),
+
       updated_at: this.iso(r.updated_at),
+
     }));
+
     return {
+
       code: 0,
+
       message: 'ok',
+
       data: { items, total, current: page, pageSize: size },
+
     };
+
   }
 
   async adminGroupDetail(opts: { id: string }) {
+
     const id = Number(opts.id);
+
     if (!Number.isFinite(id)) throw new BadRequestException('invalid id');
+
     const res = await this.opsQuery<any>(
+
       `SELECT c.id,c.activity_config_id,c.name,c.group_size,c.valid_minutes,c.stock,c.status,c.created_at,c.updated_at,
+
               ac.name AS activity_config_name
+
        FROM ops.groupbuy_campaigns c
+
        LEFT JOIN ops.activity_configs ac ON ac.id = c.activity_config_id
+
        WHERE c.id = $1`,
+
       [id],
+
     );
+
     const r = res.rows?.[0];
+
     if (!r) throw new BadRequestException('not found');
+
     return {
+
       code: 0,
+
       message: 'ok',
+
       data: {
+
         id: Number(r.id),
+
         activity_config_id:
+
           r.activity_config_id != null ? Number(r.activity_config_id) : null,
+
         activity_config_name: r.activity_config_name || null,
+
         name: r.name,
+
         group_size: Number(r.group_size || 0),
+
         valid_minutes: Number(r.valid_minutes || 0),
+
         stock: Number(r.stock || 0),
+
         status: r.status,
+
         created_at: this.iso(r.created_at),
+
         updated_at: this.iso(r.updated_at),
+
       },
+
     };
+
   }
 
   async adminGroupCreate(req: any, body: any) {
+
     const reason = String(req?.headers?.['x-reason'] || '').trim();
+
     const name = String(body?.name || '').trim();
+
     const activityConfigId =
+
       body?.activity_config_id != null ? Number(body.activity_config_id) : null;
+
     const groupSize = Math.max(2, Math.floor(Number(body?.group_size || 2)));
+
     const validMinutes = Math.max(
+
       5,
+
       Math.floor(Number(body?.valid_minutes || 60)),
+
     );
+
     const stock = Math.max(0, Math.floor(Number(body?.stock || 0)));
+
     const status = ['draft', 'active', 'inactive', 'archived'].includes(
+
       String(body?.status || 'draft'),
+
     )
+
       ? String(body.status || 'draft')
+
       : 'draft';
+
     if (!name) throw new BadRequestException('name required');
+
     if (activityConfigId != null && !Number.isFinite(activityConfigId))
+
       throw new BadRequestException('invalid activity_config_id');
+
     const res = await this.opsQuery<any>(
+
       `INSERT INTO ops.groupbuy_campaigns(activity_config_id,name,group_size,valid_minutes,stock,status,created_at,updated_at)
+
        VALUES ($1,$2,$3,$4,$5,$6,now(),now())
+
        RETURNING id,activity_config_id,name,group_size,valid_minutes,stock,status,created_at,updated_at`,
+
       [activityConfigId, name, groupSize, validMinutes, stock, status],
+
     );
+
     const r = res.rows[0];
+
     const data = {
+
       id: Number(r.id),
+
       activity_config_id:
+
         r.activity_config_id != null ? Number(r.activity_config_id) : null,
+
       name: r.name,
+
       group_size: Number(r.group_size || 0),
+
       valid_minutes: Number(r.valid_minutes || 0),
+
       stock: Number(r.stock || 0),
+
       status: r.status,
+
       created_at: this.iso(r.created_at),
+
       updated_at: this.iso(r.updated_at),
+
     };
+
     await this.opsAudit(
+
       req,
+
       'groupbuy',
+
       'create',
+
       'groupbuy_campaign',
+
       data.id,
+
       reason,
+
       body,
+
       data,
+
       true,
+
     );
+
     return { code: 0, message: 'ok', data };
+
   }
 
   async adminGroupUpdate(req: any, opts: { id: string; body: any }) {
+
     const reason = String(req?.headers?.['x-reason'] || '').trim();
+
     const id = Number(opts.id);
+
     if (!Number.isFinite(id)) throw new BadRequestException('invalid id');
+
     const body = opts.body || {};
+
     const existed = await this.opsQuery<any>(
+
       `SELECT * FROM ops.groupbuy_campaigns WHERE id=$1`,
+
       [id],
+
     );
+
     const row = existed.rows?.[0];
+
     if (!row) throw new BadRequestException('not found');
+
     const name =
+
       typeof body.name === 'string'
+
         ? String(body.name).trim()
+
         : String(row.name);
+
     const activityConfigId =
+
       typeof body.activity_config_id !== 'undefined'
+
         ? body.activity_config_id != null
+
           ? Number(body.activity_config_id)
+
           : null
+
         : row.activity_config_id;
+
     const groupSize =
+
       typeof body.group_size !== 'undefined'
+
         ? Math.max(2, Math.floor(Number(body.group_size || 2)))
+
         : Number(row.group_size || 2);
+
     const validMinutes =
+
       typeof body.valid_minutes !== 'undefined'
+
         ? Math.max(5, Math.floor(Number(body.valid_minutes || 60)))
+
         : Number(row.valid_minutes || 60);
+
     const stock =
+
       typeof body.stock !== 'undefined'
+
         ? Math.max(0, Math.floor(Number(body.stock || 0)))
+
         : Number(row.stock || 0);
+
     const status =
+
       typeof body.status === 'string' &&
+
       ['draft', 'active', 'inactive', 'archived'].includes(String(body.status))
+
         ? String(body.status)
+
         : String(row.status);
+
     if (!name) throw new BadRequestException('name required');
+
     if (activityConfigId != null && !Number.isFinite(Number(activityConfigId)))
+
       throw new BadRequestException('invalid activity_config_id');
+
     const res = await this.opsQuery<any>(
+
       `UPDATE ops.groupbuy_campaigns
+
        SET activity_config_id=$2,name=$3,group_size=$4,valid_minutes=$5,stock=$6,status=$7,updated_at=now()
+
        WHERE id=$1
+
        RETURNING id,activity_config_id,name,group_size,valid_minutes,stock,status,created_at,updated_at`,
+
       [id, activityConfigId, name, groupSize, validMinutes, stock, status],
+
     );
+
     const r = res.rows[0];
+
     const data = {
+
       id: Number(r.id),
+
       activity_config_id:
+
         r.activity_config_id != null ? Number(r.activity_config_id) : null,
+
       name: r.name,
+
       group_size: Number(r.group_size || 0),
+
       valid_minutes: Number(r.valid_minutes || 0),
+
       stock: Number(r.stock || 0),
+
       status: r.status,
+
       created_at: this.iso(r.created_at),
+
       updated_at: this.iso(r.updated_at),
+
     };
+
     await this.opsAudit(
+
       req,
+
       'groupbuy',
+
       'update',
+
       'groupbuy_campaign',
+
       data.id,
+
       reason,
+
       body,
+
       data,
+
       true,
+
     );
+
     return { code: 0, message: 'ok', data };
+
   }
 
   async adminGroupDelete(req: any, opts: { id: string }) {
+
     const reason = String(req?.headers?.['x-reason'] || '').trim();
+
     const id = Number(opts.id);
+
     if (!Number.isFinite(id)) throw new BadRequestException('invalid id');
+
     const res = await this.opsQuery<any>(
+
       `UPDATE ops.groupbuy_campaigns SET status='archived', updated_at=now() WHERE id=$1 RETURNING id,status`,
+
       [id],
+
     );
+
     const r = res.rows?.[0];
+
     if (!r) throw new BadRequestException('not found');
+
     const data = { id: Number(r.id), status: String(r.status) };
+
     await this.opsAudit(
+
       req,
+
       'groupbuy',
+
       'delete',
+
       'groupbuy_campaign',
+
       data.id,
+
       reason,
+
       { id },
+
       data,
+
       true,
+
     );
+
     return { code: 0, message: 'ok', data };
+
   }
 
   async adminGroupActivate(req: any, opts: { id: string }) {
+
     const reason = String(req?.headers?.['x-reason'] || '').trim();
+
     const id = Number(opts.id);
+
     if (!Number.isFinite(id)) throw new BadRequestException('invalid id');
+
     const res = await this.opsQuery<any>(
+
       `UPDATE ops.groupbuy_campaigns SET status='active', updated_at=now() WHERE id=$1 RETURNING id,status,updated_at`,
+
       [id],
+
     );
+
     const r = res.rows?.[0];
+
     if (!r) throw new BadRequestException('not found');
+
     const data = {
+
       id: Number(r.id),
+
       status: String(r.status),
+
       updated_at: this.iso(r.updated_at),
+
     };
+
     await this.opsAudit(
+
       req,
+
       'groupbuy',
+
       'activate',
+
       'groupbuy_campaign',
+
       data.id,
+
       reason,
+
       { id },
+
       data,
+
       true,
+
     );
+
     return { code: 0, message: 'ok', data };
+
   }
 
   async adminGroupDeactivate(req: any, opts: { id: string }) {
+
     const reason = String(req?.headers?.['x-reason'] || '').trim();
+
     const id = Number(opts.id);
+
     if (!Number.isFinite(id)) throw new BadRequestException('invalid id');
+
     const res = await this.opsQuery<any>(
+
       `UPDATE ops.groupbuy_campaigns SET status='inactive', updated_at=now() WHERE id=$1 RETURNING id,status,updated_at`,
+
       [id],
+
     );
+
     const r = res.rows?.[0];
+
     if (!r) throw new BadRequestException('not found');
+
     const data = {
+
       id: Number(r.id),
+
       status: String(r.status),
+
       updated_at: this.iso(r.updated_at),
+
     };
+
     await this.opsAudit(
+
       req,
+
       'groupbuy',
+
       'deactivate',
+
       'groupbuy_campaign',
+
       data.id,
+
       reason,
+
       { id },
+
       data,
+
       true,
+
     );
+
     return { code: 0, message: 'ok', data };
+
   }
 
   async adminReferrals(opts: {
+
     current?: string;
+
     pageSize?: string;
+
     status?: string;
+
     keyword?: string;
+
   }) {
+
     const page = Math.max(1, Number(opts.current || 1));
+
     const size = Math.min(200, Math.max(1, Number(opts.pageSize || 20)));
+
     const status = String(opts.status || '').trim();
+
     const keyword = String(opts.keyword || '').trim();
+
     const where: string[] = [];
+
     const params: any[] = [];
+
     if (status) {
+
       params.push(status);
+
       where.push(`status = $${params.length}`);
+
     }
+
     if (keyword) {
+
       params.push(`%${keyword}%`);
+
       where.push(`name ILIKE $${params.length}`);
+
     }
+
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
     const countRes = await this.opsQuery<{ total: string }>(
+
       `SELECT COUNT(*)::text AS total FROM ops.distribution_rules ${whereSql}`,
+
       params,
+
     );
+
     const total = Number(countRes.rows?.[0]?.total || 0);
+
     const listRes = await this.opsQuery<any>(
+
       `SELECT id,name,level_count,commission_json,settle_cycle,status,created_at,updated_at
+
        FROM ops.distribution_rules ${whereSql}
+
        ORDER BY updated_at DESC, id DESC
+
        LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+
       [...params, size, (page - 1) * size],
+
     );
+
     const items = listRes.rows.map((r: any) => ({
+
       id: Number(r.id),
+
       name: r.name,
+
       level_count: Number(r.level_count || 0),
+
       commission_json: r.commission_json || {},
+
       settle_cycle: r.settle_cycle,
+
       status: r.status,
+
       created_at: this.iso(r.created_at),
+
       updated_at: this.iso(r.updated_at),
+
     }));
+
     return {
+
       code: 0,
+
       message: 'ok',
+
       data: { items, total, current: page, pageSize: size },
+
     };
+
   }
 
   async adminReferralDetail(opts: { id: string }) {
+
     const id = Number(opts.id);
+
     if (!Number.isFinite(id)) throw new BadRequestException('invalid id');
+
     const res = await this.opsQuery<any>(
+
       `SELECT id,name,level_count,commission_json,settle_cycle,status,created_at,updated_at FROM ops.distribution_rules WHERE id=$1`,
+
       [id],
+
     );
+
     const r = res.rows?.[0];
+
     if (!r) throw new BadRequestException('not found');
+
     return {
+
       code: 0,
+
       message: 'ok',
+
       data: {
+
         id: Number(r.id),
+
         name: r.name,
+
         level_count: Number(r.level_count || 0),
+
         commission_json: r.commission_json || {},
+
         settle_cycle: r.settle_cycle,
+
         status: r.status,
+
         created_at: this.iso(r.created_at),
+
         updated_at: this.iso(r.updated_at),
+
       },
+
     };
+
   }
 
   async adminReferralCreate(req: any, body: any) {
+
     const reason = String(req?.headers?.['x-reason'] || '').trim();
+
     const name = String(body?.name || '').trim();
+
     if (!name) throw new BadRequestException('name required');
+
     const levelCount = Math.max(
+
       1,
+
       Math.min(10, Math.floor(Number(body?.level_count || 1))),
+
     );
+
     const settleCycle = ['daily', 'weekly', 'monthly'].includes(
+
       String(body?.settle_cycle || 'weekly'),
+
     )
+
       ? String(body.settle_cycle || 'weekly')
+
       : 'weekly';
+
     const commission =
+
       body?.commission_json && typeof body.commission_json === 'object'
+
         ? body.commission_json
+
         : {};
+
     const status = ['draft', 'active', 'inactive', 'archived'].includes(
+
       String(body?.status || 'draft'),
+
     )
+
       ? String(body.status || 'draft')
+
       : 'draft';
+
     const res = await this.opsQuery<any>(
+
       `INSERT INTO ops.distribution_rules(name,level_count,commission_json,settle_cycle,status,created_at,updated_at)
+
        VALUES ($1,$2,$3,$4,$5,now(),now())
+
        RETURNING id,name,level_count,commission_json,settle_cycle,status,created_at,updated_at`,
+
       [name, levelCount, commission, settleCycle, status],
+
     );
+
     const r = res.rows[0];
+
     const data = {
+
       id: Number(r.id),
+
       name: r.name,
+
       level_count: Number(r.level_count || 0),
+
       commission_json: r.commission_json || {},
+
       settle_cycle: r.settle_cycle,
+
       status: r.status,
+
       created_at: this.iso(r.created_at),
+
       updated_at: this.iso(r.updated_at),
+
     };
+
     await this.opsAudit(
+
       req,
+
       'distribution',
+
       'create',
+
       'distribution_rule',
+
       data.id,
+
       reason,
+
       body,
+
       data,
+
       true,
+
     );
+
     return { code: 0, message: 'ok', data };
+
   }
 
   async adminReferralUpdate(req: any, opts: { id: string; body: any }) {
+
     const reason = String(req?.headers?.['x-reason'] || '').trim();
+
     const id = Number(opts.id);
+
     if (!Number.isFinite(id)) throw new BadRequestException('invalid id');
+
     const body = opts.body || {};
+
     const existed = await this.opsQuery<any>(
+
       `SELECT * FROM ops.distribution_rules WHERE id=$1`,
+
       [id],
+
     );
+
     const row = existed.rows?.[0];
+
     if (!row) throw new BadRequestException('not found');
+
     const name =
+
       typeof body.name === 'string'
+
         ? String(body.name).trim()
+
         : String(row.name);
+
     if (!name) throw new BadRequestException('name required');
+
     const levelCount =
+
       typeof body.level_count !== 'undefined'
+
         ? Math.max(1, Math.min(10, Math.floor(Number(body.level_count || 1))))
+
         : Number(row.level_count || 1);
+
     const settleCycle =
+
       typeof body.settle_cycle !== 'undefined' &&
+
       ['daily', 'weekly', 'monthly'].includes(String(body.settle_cycle))
+
         ? String(body.settle_cycle)
+
         : String(row.settle_cycle);
+
     const commission =
+
       body?.commission_json && typeof body.commission_json === 'object'
+
         ? body.commission_json
+
         : row.commission_json || {};
+
     const status =
+
       typeof body.status === 'string' &&
+
       ['draft', 'active', 'inactive', 'archived'].includes(String(body.status))
+
         ? String(body.status)
+
         : String(row.status);
+
     const res = await this.opsQuery<any>(
+
       `UPDATE ops.distribution_rules
+
        SET name=$2,level_count=$3,commission_json=$4,settle_cycle=$5,status=$6,updated_at=now()
+
        WHERE id=$1
+
        RETURNING id,name,level_count,commission_json,settle_cycle,status,created_at,updated_at`,
+
       [id, name, levelCount, commission, settleCycle, status],
+
     );
+
     const r = res.rows[0];
+
     const data = {
+
       id: Number(r.id),
+
       name: r.name,
+
       level_count: Number(r.level_count || 0),
+
       commission_json: r.commission_json || {},
+
       settle_cycle: r.settle_cycle,
+
       status: r.status,
+
       created_at: this.iso(r.created_at),
+
       updated_at: this.iso(r.updated_at),
+
     };
+
     await this.opsAudit(
+
       req,
+
       'distribution',
+
       'update',
+
       'distribution_rule',
+
       data.id,
+
       reason,
+
       body,
+
       data,
+
       true,
+
     );
+
     return { code: 0, message: 'ok', data };
+
   }
 
   async adminReferralDelete(req: any, opts: { id: string }) {
+
     const reason = String(req?.headers?.['x-reason'] || '').trim();
+
     const id = Number(opts.id);
+
     if (!Number.isFinite(id)) throw new BadRequestException('invalid id');
+
     const res = await this.opsQuery<any>(
+
       `UPDATE ops.distribution_rules SET status='archived', updated_at=now() WHERE id=$1 RETURNING id,status`,
+
       [id],
+
     );
+
     const r = res.rows?.[0];
+
     if (!r) throw new BadRequestException('not found');
+
     const data = { id: Number(r.id), status: String(r.status) };
+
     await this.opsAudit(
+
       req,
+
       'distribution',
+
       'delete',
+
       'distribution_rule',
+
       data.id,
+
       reason,
+
       { id },
+
       data,
+
       true,
+
     );
+
     return { code: 0, message: 'ok', data };
+
   }
 
   async adminReferralActivate(req: any, opts: { id: string }) {
+
     const reason = String(req?.headers?.['x-reason'] || '').trim();
+
     const id = Number(opts.id);
+
     if (!Number.isFinite(id)) throw new BadRequestException('invalid id');
+
     const res = await this.opsQuery<any>(
+
       `UPDATE ops.distribution_rules SET status='active', updated_at=now() WHERE id=$1 RETURNING id,status,updated_at`,
+
       [id],
+
     );
+
     const r = res.rows?.[0];
+
     if (!r) throw new BadRequestException('not found');
+
     const data = {
+
       id: Number(r.id),
+
       status: String(r.status),
+
       updated_at: this.iso(r.updated_at),
+
     };
+
     await this.opsAudit(
+
       req,
+
       'distribution',
+
       'activate',
+
       'distribution_rule',
+
       data.id,
+
       reason,
+
       { id },
+
       data,
+
       true,
+
     );
+
     return { code: 0, message: 'ok', data };
+
   }
 
   async adminReferralDeactivate(req: any, opts: { id: string }) {
+
     const reason = String(req?.headers?.['x-reason'] || '').trim();
+
     const id = Number(opts.id);
+
     if (!Number.isFinite(id)) throw new BadRequestException('invalid id');
+
     const res = await this.opsQuery<any>(
+
       `UPDATE ops.distribution_rules SET status='inactive', updated_at=now() WHERE id=$1 RETURNING id,status,updated_at`,
+
       [id],
+
     );
+
     const r = res.rows?.[0];
+
     if (!r) throw new BadRequestException('not found');
+
     const data = {
+
       id: Number(r.id),
+
       status: String(r.status),
+
       updated_at: this.iso(r.updated_at),
+
     };
+
     await this.opsAudit(
+
       req,
+
       'distribution',
+
       'deactivate',
+
       'distribution_rule',
+
       data.id,
+
       reason,
+
       { id },
+
       data,
+
       true,
+
     );
+
     return { code: 0, message: 'ok', data };
+
   }
 
   async adminDistributors(opts: {
+
     current?: string;
+
     pageSize?: string;
+
     status?: string;
+
     subjectType?: string;
+
     keyword?: string;
+
   }) {
+
     const page = Math.max(1, Number(opts.current || 1));
+
     const size = Math.min(200, Math.max(1, Number(opts.pageSize || 20)));
+
     const status = String(opts.status || '').trim();
+
     const subjectType = String(opts.subjectType || '').trim();
+
     const keyword = String(opts.keyword || '').trim();
+
     const where: string[] = [];
+
     const params: any[] = [];
+
     if (status) {
+
       params.push(status);
+
       where.push(`status = $${params.length}`);
+
     }
+
     if (subjectType) {
+
       params.push(subjectType);
+
       where.push(`subject_type = $${params.length}`);
+
     }
+
     if (keyword) {
+
       params.push(`%${keyword}%`);
+
       where.push(`subject_id ILIKE $${params.length}`);
+
     }
+
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
     const countRes = await this.opsQuery<{ total: string }>(
+
       `SELECT COUNT(*)::text AS total FROM ops.distributors ${whereSql}`,
+
       params,
+
     );
+
     const total = Number(countRes.rows?.[0]?.total || 0);
+
     const listRes = await this.opsQuery<any>(
+
       `SELECT id,subject_type,subject_id,level,status,created_at
+
        FROM ops.distributors ${whereSql}
+
        ORDER BY id DESC
+
        LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+
       [...params, size, (page - 1) * size],
+
     );
+
     const items = listRes.rows.map((r: any) => ({
+
       id: Number(r.id),
+
       subject_type: r.subject_type,
+
       subject_id: r.subject_id,
+
       level: Number(r.level || 1),
+
       status: r.status,
+
       created_at: this.iso(r.created_at),
+
     }));
+
     return {
+
       code: 0,
+
       message: 'ok',
+
       data: { items, total, current: page, pageSize: size },
+
     };
+
   }
 
   async adminDistributorUpsert(req: any, body: any) {
+
     const reason = String(req?.headers?.['x-reason'] || '').trim();
+
     const subjectType = String(body?.subject_type || '').trim();
+
     const subjectId = String(body?.subject_id || '').trim();
+
     const level = Math.max(
+
       1,
+
       Math.min(10, Math.floor(Number(body?.level || 1))),
+
     );
+
     const status = ['active', 'disabled'].includes(
+
       String(body?.status || 'active'),
+
     )
+
       ? String(body.status || 'active')
+
       : 'active';
+
     if (!subjectType || !subjectId)
+
       throw new BadRequestException('subject required');
+
     const res = await this.opsQuery<any>(
+
       `INSERT INTO ops.distributors(subject_type,subject_id,level,status)
+
        VALUES ($1,$2,$3,$4)
+
        ON CONFLICT (subject_type,subject_id) DO UPDATE
+
        SET level=EXCLUDED.level, status=EXCLUDED.status
+
        RETURNING id,subject_type,subject_id,level,status,created_at`,
+
       [subjectType, subjectId, level, status],
+
     );
+
     const r = res.rows[0];
+
     const data = {
+
       id: Number(r.id),
+
       subject_type: r.subject_type,
+
       subject_id: r.subject_id,
+
       level: Number(r.level || 1),
+
       status: r.status,
+
       created_at: this.iso(r.created_at),
+
     };
+
     await this.opsAudit(
+
       req,
+
       'distribution',
+
       'upsert_distributor',
+
       'distributor',
+
       data.id,
+
       reason,
+
       body,
+
       data,
+
       true,
+
     );
+
     return { code: 0, message: 'ok', data };
+
   }
 
   async adminRewards(opts: {
+
     current?: string;
+
     pageSize?: string;
+
     status?: string;
+
     subjectType?: string;
+
     keyword?: string;
+
     ruleId?: string;
+
   }) {
+
     const page = Math.max(1, Number(opts.current || 1));
+
     const size = Math.min(200, Math.max(1, Number(opts.pageSize || 20)));
+
     const status = String(opts.status || '').trim();
+
     const subjectType = String(opts.subjectType || '').trim();
+
     const keyword = String(opts.keyword || '').trim();
+
     const ruleId = String(opts.ruleId || '').trim();
+
     const where: string[] = [];
+
     const params: any[] = [];
+
     if (status) {
+
       params.push(status);
+
       where.push(`g.status = $${params.length}`);
+
     }
+
     if (subjectType) {
+
       params.push(subjectType);
+
       where.push(`g.subject_type = $${params.length}`);
+
     }
+
     if (keyword) {
+
       params.push(`%${keyword}%`);
+
       where.push(`g.subject_id ILIKE $${params.length}`);
+
     }
+
     if (ruleId) {
+
       const rid = Number(ruleId);
+
       if (Number.isFinite(rid)) {
+
         params.push(rid);
+
         where.push(`g.rule_id = $${params.length}`);
+
       }
+
     }
+
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
     const countRes = await this.opsQuery<{ total: string }>(
+
       `SELECT COUNT(*)::text AS total FROM ops.reward_grants g ${whereSql}`,
+
       params,
+
     );
+
     const total = Number(countRes.rows?.[0]?.total || 0);
+
     const listRes = await this.opsQuery<any>(
+
       `SELECT g.id,g.rule_id,g.subject_type,g.subject_id,g.amount,g.status,g.note,g.created_at,
+
               r.name AS rule_name
+
        FROM ops.reward_grants g
+
        LEFT JOIN ops.reward_rules r ON r.id = g.rule_id
+
        ${whereSql}
+
        ORDER BY g.id DESC
+
        LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+
       [...params, size, (page - 1) * size],
+
     );
+
     const items = listRes.rows.map((r: any) => ({
+
       id: Number(r.id),
+
       rule_id: r.rule_id != null ? Number(r.rule_id) : null,
+
       rule_name: r.rule_name || null,
+
       subject_type: r.subject_type,
+
       subject_id: r.subject_id,
+
       amount: Number(r.amount || 0),
+
       status: r.status,
+
       note: r.note || null,
+
       created_at: this.iso(r.created_at),
+
     }));
+
     return {
+
       code: 0,
+
       message: 'ok',
+
       data: { items, total, current: page, pageSize: size },
+
     };
+
   }
 
   async adminRewardCreate(req: any, body: any) {
+
     const reason = String(req?.headers?.['x-reason'] || '').trim();
+
     const ruleId = body?.rule_id != null ? Number(body.rule_id) : null;
+
     const subjectType = String(body?.subject_type || '').trim();
+
     const subjectId = String(body?.subject_id || '').trim();
+
     const amount = Number(body?.amount);
+
     const note = String(body?.note || '').trim();
+
     if (!subjectType || !subjectId)
+
       throw new BadRequestException('subject required');
+
     if (!Number.isFinite(amount) || amount <= 0)
+
       throw new BadRequestException('invalid amount');
+
     if (!note) throw new BadRequestException('note required');
+
     if (ruleId != null && !Number.isFinite(ruleId))
+
       throw new BadRequestException('invalid rule_id');
+
     const res = await this.opsQuery<any>(
+
       `INSERT INTO ops.reward_grants(rule_id,subject_type,subject_id,amount,status,note,created_at)
+
        VALUES ($1,$2,$3,$4,'granted',$5,now())
+
        RETURNING id,rule_id,subject_type,subject_id,amount,status,note,created_at`,
+
       [ruleId, subjectType, subjectId, amount, note],
+
     );
+
     const r = res.rows[0];
+
     const data = {
+
       id: Number(r.id),
+
       rule_id: r.rule_id != null ? Number(r.rule_id) : null,
+
       subject_type: r.subject_type,
+
       subject_id: r.subject_id,
+
       amount: Number(r.amount || 0),
+
       status: r.status,
+
       note: r.note || null,
+
       created_at: this.iso(r.created_at),
+
     };
+
     await this.opsAudit(
+
       req,
+
       'reward',
+
       'grant',
+
       'reward_grant',
+
       data.id,
+
       reason,
+
       body,
+
       data,
+
       true,
+
     );
+
     return { code: 0, message: 'ok', data };
+
   }
 
   async adminRewardRevoke(req: any, opts: { id: string }) {
+
     const reason = String(req?.headers?.['x-reason'] || '').trim();
+
     const id = Number(opts.id);
+
     if (!Number.isFinite(id)) throw new BadRequestException('invalid id');
+
     const res = await this.opsQuery<any>(
+
       `UPDATE ops.reward_grants SET status='revoked' WHERE id=$1 RETURNING id,status`,
+
       [id],
+
     );
+
     const r = res.rows?.[0];
+
     if (!r) throw new BadRequestException('not found');
+
     const data = { id: Number(r.id), status: String(r.status) };
+
     await this.opsAudit(
+
       req,
+
       'reward',
+
       'revoke',
+
       'reward_grant',
+
       data.id,
+
       reason,
+
       { id },
+
       data,
+
       true,
+
     );
+
     return { code: 0, message: 'ok', data };
+
   }
 
   async adminRewardRules(opts: {
+
     current?: string;
+
     pageSize?: string;
+
     status?: string;
+
     keyword?: string;
+
   }) {
+
     const page = Math.max(1, Number(opts.current || 1));
+
     const size = Math.min(200, Math.max(1, Number(opts.pageSize || 20)));
+
     const status = String(opts.status || '').trim();
+
     const keyword = String(opts.keyword || '').trim();
+
     const where: string[] = [];
+
     const params: any[] = [];
+
     if (status) {
+
       params.push(status);
+
       where.push(`status = $${params.length}`);
+
     }
+
     if (keyword) {
+
       params.push(`%${keyword}%`);
+
       where.push(`name ILIKE $${params.length}`);
+
     }
+
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
     const countRes = await this.opsQuery<{ total: string }>(
+
       `SELECT COUNT(*)::text AS total FROM ops.reward_rules ${whereSql}`,
+
       params,
+
     );
+
     const total = Number(countRes.rows?.[0]?.total || 0);
+
     const listRes = await this.opsQuery<any>(
+
       `SELECT id,name,reward_type,reward_value,trigger_json,budget_cap,status,created_at,updated_at
+
        FROM ops.reward_rules ${whereSql}
+
        ORDER BY updated_at DESC, id DESC
+
        LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+
       [...params, size, (page - 1) * size],
+
     );
+
     const items = listRes.rows.map((r: any) => ({
+
       id: Number(r.id),
+
       name: r.name,
+
       reward_type: r.reward_type,
+
       reward_value: Number(r.reward_value || 0),
+
       trigger_json: r.trigger_json || {},
+
       budget_cap: r.budget_cap != null ? Number(r.budget_cap) : null,
+
       status: r.status,
+
       created_at: this.iso(r.created_at),
+
       updated_at: this.iso(r.updated_at),
+
     }));
+
     return {
+
       code: 0,
+
       message: 'ok',
+
       data: { items, total, current: page, pageSize: size },
+
     };
+
   }
 
   async adminRewardRuleCreate(req: any, body: any) {
+
     const reason = String(req?.headers?.['x-reason'] || '').trim();
+
     const name = String(body?.name || '').trim();
+
     if (!name) throw new BadRequestException('name required');
+
     const rewardType = ['cash', 'coupon', 'points', 'other'].includes(
+
       String(body?.reward_type || 'cash'),
+
     )
+
       ? String(body.reward_type || 'cash')
+
       : 'cash';
+
     const rewardValue = Number(body?.reward_value);
+
     if (!Number.isFinite(rewardValue) || rewardValue <= 0)
+
       throw new BadRequestException('invalid reward_value');
+
     const trigger =
+
       body?.trigger_json && typeof body.trigger_json === 'object'
+
         ? body.trigger_json
+
         : {};
+
     const budgetCap =
+
       typeof body?.budget_cap !== 'undefined' && body.budget_cap !== null
+
         ? Number(body.budget_cap)
+
         : null;
+
     const status = ['draft', 'active', 'inactive', 'archived'].includes(
+
       String(body?.status || 'draft'),
+
     )
+
       ? String(body.status || 'draft')
+
       : 'draft';
+
     const res = await this.opsQuery<any>(
+
       `INSERT INTO ops.reward_rules(name,reward_type,reward_value,trigger_json,budget_cap,status,created_at,updated_at)
+
        VALUES ($1,$2,$3,$4,$5,$6,now(),now())
+
        RETURNING id,name,reward_type,reward_value,trigger_json,budget_cap,status,created_at,updated_at`,
+
       [name, rewardType, rewardValue, trigger, budgetCap, status],
+
     );
+
     const r = res.rows[0];
+
     const data = {
+
       id: Number(r.id),
+
       name: r.name,
+
       reward_type: r.reward_type,
+
       reward_value: Number(r.reward_value || 0),
+
       trigger_json: r.trigger_json || {},
+
       budget_cap: r.budget_cap != null ? Number(r.budget_cap) : null,
+
       status: r.status,
+
       created_at: this.iso(r.created_at),
+
       updated_at: this.iso(r.updated_at),
+
     };
+
     await this.opsAudit(
+
       req,
+
       'reward',
+
       'create_rule',
+
       'reward_rule',
+
       data.id,
+
       reason,
+
       body,
+
       data,
+
       true,
+
     );
+
     return { code: 0, message: 'ok', data };
+
   }
 
   async adminRewardRuleUpdate(req: any, opts: { id: string; body: any }) {
+
     const reason = String(req?.headers?.['x-reason'] || '').trim();
+
     const id = Number(opts.id);
+
     if (!Number.isFinite(id)) throw new BadRequestException('invalid id');
+
     const body = opts.body || {};
+
     const existed = await this.opsQuery<any>(
+
       `SELECT * FROM ops.reward_rules WHERE id=$1`,
+
       [id],
+
     );
+
     const row = existed.rows?.[0];
+
     if (!row) throw new BadRequestException('not found');
+
     const name =
+
       typeof body.name === 'string'
+
         ? String(body.name).trim()
+
         : String(row.name);
+
     if (!name) throw new BadRequestException('name required');
+
     const rewardType =
+
       typeof body.reward_type !== 'undefined' &&
+
       ['cash', 'coupon', 'points', 'other'].includes(String(body.reward_type))
+
         ? String(body.reward_type)
+
         : String(row.reward_type);
+
     const rewardValue =
+
       typeof body.reward_value !== 'undefined'
+
         ? Number(body.reward_value)
+
         : Number(row.reward_value);
+
     if (!Number.isFinite(rewardValue) || rewardValue <= 0)
+
       throw new BadRequestException('invalid reward_value');
+
     const trigger =
+
       body?.trigger_json && typeof body.trigger_json === 'object'
+
         ? body.trigger_json
+
         : row.trigger_json || {};
+
     const budgetCap =
+
       typeof body?.budget_cap !== 'undefined'
+
         ? body.budget_cap !== null
+
           ? Number(body.budget_cap)
+
           : null
+
         : row.budget_cap != null
+
           ? Number(row.budget_cap)
+
           : null;
+
     const status =
+
       typeof body.status === 'string' &&
+
       ['draft', 'active', 'inactive', 'archived'].includes(String(body.status))
+
         ? String(body.status)
+
         : String(row.status);
+
     const res = await this.opsQuery<any>(
+
       `UPDATE ops.reward_rules
+
        SET name=$2,reward_type=$3,reward_value=$4,trigger_json=$5,budget_cap=$6,status=$7,updated_at=now()
+
        WHERE id=$1
+
        RETURNING id,name,reward_type,reward_value,trigger_json,budget_cap,status,created_at,updated_at`,
+
       [id, name, rewardType, rewardValue, trigger, budgetCap, status],
+
     );
+
     const r = res.rows[0];
+
     const data = {
+
       id: Number(r.id),
+
       name: r.name,
+
       reward_type: r.reward_type,
+
       reward_value: Number(r.reward_value || 0),
+
       trigger_json: r.trigger_json || {},
+
       budget_cap: r.budget_cap != null ? Number(r.budget_cap) : null,
+
       status: r.status,
+
       created_at: this.iso(r.created_at),
+
       updated_at: this.iso(r.updated_at),
+
     };
+
     await this.opsAudit(
+
       req,
+
       'reward',
+
       'update_rule',
+
       'reward_rule',
+
       data.id,
+
       reason,
+
       body,
+
       data,
+
       true,
+
     );
+
     return { code: 0, message: 'ok', data };
+
   }
 
   async adminRewardRuleActivate(
+
     req: any,
+
     opts: { id: string; status: 'active' | 'inactive' },
+
   ) {
+
     const reason = String(req?.headers?.['x-reason'] || '').trim();
+
     const id = Number(opts.id);
+
     if (!Number.isFinite(id)) throw new BadRequestException('invalid id');
+
     const next = opts.status === 'active' ? 'active' : 'inactive';
+
     const res = await this.opsQuery<any>(
+
       `UPDATE ops.reward_rules SET status=$2, updated_at=now() WHERE id=$1 RETURNING id,status,updated_at`,
+
       [id, next],
+
     );
+
     const r = res.rows?.[0];
+
     if (!r) throw new BadRequestException('not found');
+
     const data = {
+
       id: Number(r.id),
+
       status: String(r.status),
+
       updated_at: this.iso(r.updated_at),
+
     };
+
     await this.opsAudit(
+
       req,
+
       'reward',
+
       next === 'active' ? 'activate_rule' : 'deactivate_rule',
+
       'reward_rule',
+
       data.id,
+
       reason,
+
       { id },
+
       data,
+
       true,
+
     );
+
     return { code: 0, message: 'ok', data };
+
   }
 
   async adminRiskBlacklist(opts: {
+
     current?: string;
+
     pageSize?: string;
+
     status?: string;
+
     subjectType?: string;
+
     keyword?: string;
+
   }) {
+
     const page = Math.max(1, Number(opts.current || 1));
+
     const size = Math.min(200, Math.max(1, Number(opts.pageSize || 20)));
+
     const status = String(opts.status || '').trim();
+
     const subjectType = String(opts.subjectType || '').trim();
+
     const keyword = String(opts.keyword || '').trim();
+
     const where: string[] = [];
+
     const params: any[] = [];
+
     if (status) {
+
       params.push(status);
+
       where.push(`status = $${params.length}`);
+
     }
+
     if (subjectType) {
+
       params.push(subjectType);
+
       where.push(`subject_type = $${params.length}`);
+
     }
+
     if (keyword) {
+
       params.push(`%${keyword}%`);
+
       where.push(`subject_id ILIKE $${params.length}`);
+
     }
+
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
     const countRes = await this.opsQuery<{ total: string }>(
+
       `SELECT COUNT(*)::text AS total FROM ops.blacklist_entries ${whereSql}`,
+
       params,
+
     );
+
     const total = Number(countRes.rows?.[0]?.total || 0);
+
     const listRes = await this.opsQuery<any>(
+
       `SELECT id,subject_type,subject_id,reason,expires_at,status,created_at
+
        FROM ops.blacklist_entries ${whereSql}
+
        ORDER BY id DESC
+
        LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+
       [...params, size, (page - 1) * size],
+
     );
+
     const items = listRes.rows.map((r: any) => ({
+
       id: Number(r.id),
+
       subject_type: r.subject_type,
+
       subject_id: r.subject_id,
+
       reason: r.reason,
+
       expires_at: this.iso(r.expires_at),
+
       status: r.status,
+
       created_at: this.iso(r.created_at),
+
     }));
+
     return {
+
       code: 0,
+
       message: 'ok',
+
       data: { items, total, current: page, pageSize: size },
+
     };
+
   }
 
   async adminRiskBlacklistCreate(req: any, body: any) {
+
     const reasonHeader = String(req?.headers?.['x-reason'] || '').trim();
+
     const subjectType = String(body?.subject_type || '').trim();
+
     const subjectId = String(body?.subject_id || '').trim();
+
     const reason = String(body?.reason || '').trim();
+
     const expiresAt = body?.expires_at ? new Date(body.expires_at) : null;
+
     if (!subjectType || !subjectId)
+
       throw new BadRequestException('subject required');
+
     if (!reason) throw new BadRequestException('reason required');
+
     if (expiresAt && Number.isNaN(expiresAt.getTime()))
+
       throw new BadRequestException('invalid expires_at');
+
     const res = await this.opsQuery<any>(
+
       `INSERT INTO ops.blacklist_entries(subject_type,subject_id,reason,expires_at,status,created_at)
+
        VALUES ($1,$2,$3,$4,'active',now())
+
        RETURNING id,subject_type,subject_id,reason,expires_at,status,created_at`,
+
       [
+
         subjectType,
+
         subjectId,
+
         reason,
+
         expiresAt ? expiresAt.toISOString() : null,
+
       ],
+
     );
+
     const r = res.rows[0];
+
     const data = {
+
       id: Number(r.id),
+
       subject_type: r.subject_type,
+
       subject_id: r.subject_id,
+
       reason: r.reason,
+
       expires_at: this.iso(r.expires_at),
+
       status: r.status,
+
       created_at: this.iso(r.created_at),
+
     };
+
     await this.opsAudit(
+
       req,
+
       'blacklist',
+
       'create',
+
       'blacklist_entry',
+
       data.id,
+
       reasonHeader,
+
       body,
+
       data,
+
       true,
+
     );
+
     return { code: 0, message: 'ok', data };
+
   }
 
   async adminRiskBlacklistUpdate(req: any, opts: { id: string; body: any }) {
+
     const reasonHeader = String(req?.headers?.['x-reason'] || '').trim();
+
     const id = Number(opts.id);
+
     if (!Number.isFinite(id)) throw new BadRequestException('invalid id');
+
     const body = opts.body || {};
+
     const existed = await this.opsQuery<any>(
+
       `SELECT * FROM ops.blacklist_entries WHERE id=$1`,
+
       [id],
+
     );
+
     const row = existed.rows?.[0];
+
     if (!row) throw new BadRequestException('not found');
+
     const reason =
+
       typeof body.reason === 'string'
+
         ? String(body.reason).trim()
+
         : String(row.reason);
+
     if (!reason) throw new BadRequestException('reason required');
+
     const expiresAt =
+
       typeof body.expires_at !== 'undefined'
+
         ? body.expires_at
+
           ? new Date(body.expires_at)
+
           : null
+
         : row.expires_at
+
           ? new Date(row.expires_at)
+
           : null;
+
     if (expiresAt && Number.isNaN(expiresAt.getTime()))
+
       throw new BadRequestException('invalid expires_at');
+
     const status =
+
       typeof body.status === 'string' &&
+
       ['active', 'removed', 'expired'].includes(String(body.status))
+
         ? String(body.status)
+
         : String(row.status);
+
     const res = await this.opsQuery<any>(
+
       `UPDATE ops.blacklist_entries
+
        SET reason=$2, expires_at=$3, status=$4
+
        WHERE id=$1
+
        RETURNING id,subject_type,subject_id,reason,expires_at,status,created_at`,
+
       [id, reason, expiresAt ? expiresAt.toISOString() : null, status],
+
     );
+
     const r = res.rows[0];
+
     const data = {
+
       id: Number(r.id),
+
       subject_type: r.subject_type,
+
       subject_id: r.subject_id,
+
       reason: r.reason,
+
       expires_at: this.iso(r.expires_at),
+
       status: r.status,
+
       created_at: this.iso(r.created_at),
+
     };
+
     await this.opsAudit(
+
       req,
+
       'blacklist',
+
       'update',
+
       'blacklist_entry',
+
       data.id,
+
       reasonHeader,
+
       body,
+
       data,
+
       true,
+
     );
+
     return { code: 0, message: 'ok', data };
+
   }
 
   async adminRiskBlacklistDelete(req: any, opts: { id: string }) {
+
     const reasonHeader = String(req?.headers?.['x-reason'] || '').trim();
+
     const id = Number(opts.id);
+
     if (!Number.isFinite(id)) throw new BadRequestException('invalid id');
+
     const res = await this.opsQuery<any>(
+
       `UPDATE ops.blacklist_entries SET status='removed' WHERE id=$1 RETURNING id,status`,
+
       [id],
+
     );
+
     const r = res.rows?.[0];
+
     if (!r) throw new BadRequestException('not found');
+
     const data = { id: Number(r.id), status: String(r.status) };
+
     await this.opsAudit(
+
       req,
+
       'blacklist',
+
       'remove',
+
       'blacklist_entry',
+
       data.id,
+
       reasonHeader,
+
       { id },
+
       data,
+
       true,
+
     );
+
     return { code: 0, message: 'ok', data };
+
   }
 
   async adminRiskBlacklistCheck(body: any) {
+
     const subjectType = String(body?.subject_type || '').trim();
+
     const subjectId = String(body?.subject_id || '').trim();
+
     if (!subjectType || !subjectId)
+
       throw new BadRequestException('subject required');
+
     const res = await this.opsQuery<any>(
+
       `SELECT id,reason,expires_at,status
+
        FROM ops.blacklist_entries
+
        WHERE subject_type=$1 AND subject_id=$2 AND status='active'
+
        ORDER BY id DESC LIMIT 1`,
+
       [subjectType, subjectId],
+
     );
+
     const hit = res.rows?.[0] || null;
+
     const now = new Date();
+
     const expired = hit?.expires_at ? new Date(hit.expires_at) < now : false;
+
     const matched = Boolean(hit) && !expired;
+
     return {
+
       code: 0,
+
       message: 'ok',
+
       data: {
+
         matched,
+
         entry: hit
+
           ? {
+
               id: Number(hit.id),
+
               reason: hit.reason,
+
               expires_at: this.iso(hit.expires_at),
+
               status: hit.status,
+
               expired,
+
             }
+
           : null,
+
       },
+
     };
+
   }
 
   async adminAudit(opts: {
+
     current?: string;
+
     pageSize?: string;
+
     module?: string;
+
     action?: string;
+
     success?: string;
+
     keyword?: string;
+
   }) {
+
     const page = Math.max(1, Number(opts.current || 1));
+
     const size = Math.min(200, Math.max(1, Number(opts.pageSize || 20)));
+
     const module = String(opts.module || '').trim();
+
     const action = String(opts.action || '').trim();
+
     const success = String(opts.success || '').trim();
+
     const keyword = String(opts.keyword || '').trim();
+
     const where: string[] = [];
+
     const params: any[] = [];
+
     if (module) {
+
       params.push(module);
+
       where.push(`module = $${params.length}`);
+
     }
+
     if (action) {
+
       params.push(action);
+
       where.push(`action = $${params.length}`);
+
     }
+
     if (success) {
+
       const s = success === 'true' ? true : success === 'false' ? false : null;
+
       if (s != null) {
+
         params.push(s);
+
         where.push(`success = $${params.length}`);
+
       }
+
     }
+
     if (keyword) {
+
       params.push(`%${keyword}%`);
+
       where.push(
+
         `(actor ILIKE $${params.length} OR target_id ILIKE $${params.length} OR reason ILIKE $${params.length})`,
+
       );
+
     }
+
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
     const countRes = await this.opsQuery<{ total: string }>(
+
       `SELECT COUNT(*)::text AS total FROM ops.admin_audit_logs ${whereSql}`,
+
       params,
+
     );
+
     const total = Number(countRes.rows?.[0]?.total || 0);
+
     const listRes = await this.opsQuery<any>(
+
       `SELECT id,actor,module,action,target_type,target_id,reason,success,created_at
+
        FROM ops.admin_audit_logs ${whereSql}
+
        ORDER BY id DESC
+
        LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+
       [...params, size, (page - 1) * size],
+
     );
+
     const items = listRes.rows.map((r: any) => ({
+
       id: Number(r.id),
+
       actor: r.actor,
+
       module: r.module,
+
       action: r.action,
+
       target_type: r.target_type || null,
+
       target_id: r.target_id || null,
+
       reason: r.reason || null,
+
       success: Boolean(r.success),
+
       created_at: this.iso(r.created_at),
+
     }));
+
     return {
+
       code: 0,
+
       message: 'ok',
+
       data: { items, total, current: page, pageSize: size },
+
     };
+
   }
 
   // --- Support AI Proxy ---
+
   async supportChat(payload: { global_user_id?: string; globalUserId?: string; question: string }) {
+
     const globalUserId = String(payload?.global_user_id || payload?.globalUserId || '').trim();
+
     if (!globalUserId || !payload?.question) {
+
       throw new BadRequestException('global_user_id and question are required');
+
     }
 
     try {
+
       // 1. Fetch user context (profile & tags) to give AI context
+
       const profileRes = await axios.get(
+
         `${this.identityBase()}/identity/profile/${globalUserId}`,
+
         { headers: { authorization: `Bearer ${this.INTERNAL_TOKEN}` } },
+
       );
+
       const context = profileRes.data?.data || {};
 
       // 2. Call AI Orchestrator
+
       const aiRes = await axios.post(
+
         `${this.AI_ORCHESTRATOR_URL}/ai/support/chat`,
+
         { global_user_id: globalUserId, question: payload.question, context },
+
         { headers: { authorization: `Bearer ${this.INTERNAL_TOKEN}` } },
+
       );
-      
+
       return aiRes.data;
+
     } catch (error: any) {
+
       console.error('supportChat proxy error:', error?.response?.data || error.message);
+
       return {
+
         code: 0,
+
         data: {
+
           response_text: "I'm currently unable to process your request perfectly, but I'm here for you. How can I help?",
+
           suggested_buttons: []
+
         },
+
         message: 'fallback'
+
       };
+
     }
+
   }
 
   // --- Care System Proxy ---
+
   async carePlan(payload: { global_user_id?: string; globalUserId?: string }) {
+
     try {
+
       const globalUserId = String(payload?.global_user_id || payload?.globalUserId || '').trim();
+
       if (!globalUserId) throw new BadRequestException('global_user_id required');
+
       // 1. Fetch user profile from identity-service
+
       const profileRes = await axios.get(
+
         `${this.identityBase()}/identity/profile/${globalUserId}`,
+
         { headers: { authorization: `Bearer ${this.INTERNAL_TOKEN}` } },
+
       );
+
       const profile = profileRes.data?.data || {};
 
       // 2. Call AI Orchestrator to generate plan
+
       const aiRes = await axios.post(
+
         `${this.AI_ORCHESTRATOR_URL}/ai/care/plan`,
+
         { global_user_id: globalUserId, profile },
+
         { headers: { authorization: `Bearer ${this.INTERNAL_TOKEN}` } },
+
       );
-      
+
       return aiRes.data;
+
     } catch (error: any) {
+
       // Fallback if AI or Identity fails
+
       console.error('carePlan proxy error:', error?.response?.data || error.message);
+
       return {
+
         code: 0,
+
         data: {
+
           plan: ['Joint Support & Mobility', 'Kidney Care & Hydration', 'Premium Digestive Health'],
+
           recommendedPack: { id: 'care_pack_senior', name: 'Senior Care Pack (Monthly)', price: 29.00 }
+
         },
+
         message: 'success (fallback)'
+
       };
+
     }
+
   }
 
   async careSubscribe(payload: { globalUserId: string, planId: string }) {
+
     if (!payload?.globalUserId) {
+
       throw new BadRequestException('globalUserId is required for subscription');
+
     }
-    
+
     const idemKey = `careSubscribe:${payload.globalUserId}:${payload.planId || 'default'}:${randomUUID()}`
 
     // Deduct from wallet first (points-based wallet)
+
     try {
+
       await this.walletSpend(payload.globalUserId, 29, idemKey, 'care_subscription')
+
     } catch (error: any) {
+
       throw new BadGatewayException(error?.response?.data?.message || 'Insufficient funds or wallet service error');
+
     }
 
     // Create Order in Order Service
+
     try {
+
       const orderRes = await axios.post(
+
         `${this.ORDER_SERVICE_URL}/orders`,
+
         {
+
           type: 'service',
+
           user_id: payload.globalUserId,
+
           amount: 29.0,
+
           currency: 'usd',
+
           status: 'paid',
+
           flow: 'expense',
+
           items: [{ item_name: 'Senior Care Pack (Monthly)', quantity: 1, unit_price: 29.00, total_price: 29.00 }]
+
         },
+
         { headers: { authorization: `Bearer ${this.INTERNAL_TOKEN}` } },
+
       );
-      
+
       return {
+
         code: 0,
+
         data: {
+
           subscription_id: orderRes.data?.data?.order_id || `sub_${randomUUID()}`,
+
           status: 'active',
+
           next_billing_date: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+
         },
+
         message: 'Subscribed successfully'
+
       };
+
     } catch (error: any) {
+
       console.error('careSubscribe order error:', error?.response?.data || error.message);
+
       // Even if order creation fails, return success to user since wallet deducted (in real system we'd use sagas)
+
       return {
+
         code: 0,
+
         data: { subscription_id: `sub_${randomUUID()}`, status: 'active', next_billing_date: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString() },
+
         message: 'Subscribed successfully'
+
       };
+
     }
+
   }
 
   // --- Bridge System Proxy ---
+
   async bridgeCreate(payload: any) {
+
     try {
+
       const globalUserId = String(payload?.global_user_id || payload?.globalUserId || '').trim();
+
       if (!globalUserId) throw new BadRequestException('global_user_id required');
+
       const toBot = String(payload?.to_bot || payload?.target_bot || payload?.targetBot || 'rainbowpaw_bot').trim();
+
       const scene = String(payload?.scene || 'aftercare').trim();
+
       const extraData = payload?.extra_data && typeof payload.extra_data === 'object' ? payload.extra_data : payload?.extraData && typeof payload.extraData === 'object' ? payload.extraData : undefined;
+
       const ttlMinutes = payload?.ttl_minutes != null ? Number(payload.ttl_minutes) : payload?.ttlMinutes != null ? Number(payload.ttlMinutes) : 60;
 
       const res = await axios.post(
+
         `${this.bridgeBase()}/bridge/generate-link`,
+
         {
+
           global_user_id: globalUserId,
+
           from_bot: String(payload?.from_bot || payload?.fromBot || 'claw_bot'),
+
           to_bot: toBot,
+
           scene,
+
           ...(extraData ? { extra_data: extraData } : {}),
+
           ttl_minutes: Number.isFinite(ttlMinutes) && ttlMinutes > 0 ? ttlMinutes : 60,
+
         },
+
         { headers: { authorization: `Bearer ${this.INTERNAL_TOKEN}` } },
+
       );
+
       const deep = res.data?.data?.deep_link || res.data?.data?.link;
+
       const token = res.data?.data?.token;
+
       return { code: 0, message: 'ok', data: { token, link: deep, deep_link: deep } };
+
     } catch (error: any) {
+
       throw new BadGatewayException(error?.response?.data || error.message);
+
     }
+
   }
 
   async clawRecycleWithUser(opts: {
+
     devTelegramId: string;
+
     telegramInitData: string;
+
     play_id?: string;
+
     origin_points?: number | null;
+
     idempotency_key?: string;
+
   }) {
+
     try {
+
       const tg = this.getTelegramUserInfo(
+
         opts.devTelegramId,
+
         opts.telegramInitData,
+
       );
+
       if (!tg) throw new BadRequestException('missing telegram id');
+
       const linked = await this.linkUser(tg);
+
       return await this.clawRecycle({
+
         global_user_id: linked.global_user_id,
+
         play_id: opts.play_id,
+
         origin_points: opts.origin_points,
+
         idempotency_key: opts.idempotency_key,
+
       });
+
     } catch (error: any) {
+
       throw new BadGatewayException(error?.response?.data || error.message);
+
     }
+
   }
 
-
   async bridgeResolve(payload: { token: string }) {
+
     try {
+
       const res = await axios.get(
+
         `${this.bridgeBase()}/bridge/deep-link/${payload.token}?consume=true`,
+
         { headers: { authorization: `Bearer ${this.INTERNAL_TOKEN}` } },
+
       );
+
       return res.data;
+
     } catch (error: any) {
+
       throw new BadGatewayException(error?.response?.data || error.message);
+
     }
+
   }
 
   // --- Wallet Proxy ---
+
   async walletWithdraw(payload: any, idempotencyKey: string) {
+
     try {
+
       const res = await axios.post(
+
         `${this.WALLET_SERVICE_URL}/wallet/withdraw`,
+
         {
+
           global_user_id: payload.globalUserId,
+
           points_cashable_amount: Number(payload.points || 0),
+
           method: payload.method || 'usdt',
+
           account_info: payload.account_info || {},
+
         },
+
         {
+
           headers: {
+
             authorization: `Bearer ${this.INTERNAL_TOKEN}`,
+
             'x-idempotency-key': idempotencyKey || `withdraw_${randomUUID()}`,
+
           },
+
         },
+
       );
+
       return res.data;
+
     } catch (error: any) {
+
       throw new BadGatewayException(error?.response?.data || error.message);
+
     }
+
   }
 
   // --- Memorial System Proxy ---
+
   async memorialList(payload: { globalUserId: string }) {
+
     try {
+
       const url = payload.globalUserId 
+
         ? `${this.SERVICE_SERVICE_URL}/memorial/list?global_user_id=${payload.globalUserId}`
+
         : `${this.SERVICE_SERVICE_URL}/memorial/list`;
+
       const res = await axios.get(url, { headers: { authorization: `Bearer ${this.INTERNAL_TOKEN}` } });
+
       return res.data;
+
     } catch (error: any) {
+
       console.error('memorialList error:', error?.message);
+
       // Fallback
+
       return { code: 0, data: { pages: [] }, message: 'fallback' };
+
     }
+
   }
 
   async memorialDetail(id: string) {
+
     try {
+
       const res = await axios.get(
+
         `${this.SERVICE_SERVICE_URL}/memorial/${id}`,
+
         { headers: { authorization: `Bearer ${this.INTERNAL_TOKEN}` } }
+
       );
+
       return res.data;
+
     } catch (error: any) {
+
       console.error('memorialDetail error:', error?.message);
+
       throw new BadGatewayException('Failed to fetch memorial detail');
+
     }
+
   }
 
   async memorialLightCandle(payload: { globalUserId: string, memorialId: string }) {
+
     try {
+
       const res = await axios.post(
+
         `${this.SERVICE_SERVICE_URL}/memorial/${payload.memorialId}/candle`,
+
         { global_user_id: payload.globalUserId },
+
         { headers: { authorization: `Bearer ${this.INTERNAL_TOKEN}` } }
+
       );
+
       return res.data;
+
     } catch (error: any) {
+
       console.error('memorialLightCandle error:', error?.message);
+
       throw new BadGatewayException('Failed to light candle');
+
     }
+
   }
 
   // --- Service System Proxy ---
+
   async serviceList() {
+
     try {
+
       const res = await axios.get(
+
         `${this.SERVICE_SERVICE_URL}/services/list`,
+
         { headers: { authorization: `Bearer ${this.INTERNAL_TOKEN}` } }
+
       );
+
       return res.data;
+
     } catch (error: any) {
+
       console.error('serviceList error:', error?.message);
+
       return { code: 0, data: { items: [] }, message: 'fallback' };
+
     }
+
   }
 
   async serviceBook(payload: { globalUserId: string, serviceType: string, time: string }) {
+
     try {
+
       const res = await axios.post(
+
         `${this.SERVICE_SERVICE_URL}/services/book`,
+
         { 
+
           global_user_id: payload.globalUserId,
+
           service_id: payload.serviceType, // mapping type to ID for now
+
           scheduled_time: payload.time
+
         },
+
         { headers: { authorization: `Bearer ${this.INTERNAL_TOKEN}` } }
+
       );
+
       const bookingId = res.data?.data?.booking_id;
+
       await this.notifyAdminsOrderCreated({
+
         orderId: String(bookingId || ''),
+
         orderType: 'aftercare_booking',
+
         phone: undefined,
+
         totalUsd: undefined,
+
         city: undefined,
+
         pickupAddress: undefined,
+
         source: 'service_book',
+
       }).catch(() => null);
+
       return res.data;
+
     } catch (error: any) {
+
       console.error('serviceBook error:', error?.message);
+
       throw new BadGatewayException('Failed to book service');
+
     }
+
   }
 
   // --- Claw System Proxy ---
+
   async clawPlay(payload: { global_user_id: string; idempotency_key?: string }) {
+
     try {
+
       const globalUserId = String(payload?.global_user_id || '').trim();
+
       if (!globalUserId) throw new BadRequestException('global_user_id required');
+
       const idemKey = String(payload?.idempotency_key || '').trim() || `clawPlay:${globalUserId}:${Date.now()}:${randomUUID()}`;
 
       // 1. Check user profile and active pool
+
       const poolRes = await axios.get(
+
         `${this.CLAW_SERVICE_URL}/claw/pool/active`,
+
         { headers: { authorization: `Bearer ${this.INTERNAL_TOKEN}` } }
+
       );
+
       const activePool = poolRes.data?.data?.pool;
+
       if (!activePool) throw new BadRequestException('No active claw pool');
 
       const costPointsRaw = Number(activePool.cost_points || 0);
+
       const costPoints = Number.isFinite(costPointsRaw) ? costPointsRaw : 3;
 
       // 2. Deduct wallet points (skip if free)
+
       let spend: any = null;
+
       if (costPoints > 0) {
+
         spend = await this.walletSpend(globalUserId, costPoints, `${idemKey}:spend`, 'claw_play');
+
       }
 
       // 3. Play the claw
+
       let playRes: any;
+
       try {
+
         playRes = await axios.post(
+
           `${this.CLAW_SERVICE_URL}/claw/play`,
+
           { global_user_id: globalUserId, pool_id: activePool.pool_id },
+
           { headers: { authorization: `Bearer ${this.INTERNAL_TOKEN}`, 'x-idempotency-key': idemKey } }
+
         );
+
       } catch (e: any) {
+
         try {
+
           await this.walletEarnAsset({
+
             globalUserId,
+
             assetType: 'points_locked',
+
             amount: costPoints,
+
             idemKey: `${idemKey}:refund`,
+
             bizType: 'claw_play_refund',
+
             refType: 'gateway',
+
             refId: idemKey,
+
             remark: 'refund claw play due to claw service failure',
+
           });
+
         } catch {
+
           void 0;
+
         }
+
         throw e;
+
       }
-      
+
       const reward = playRes.data?.data?.reward;
 
       // 4. Report to Risk Service
+
       axios.post(`${this.RISK_SERVICE_URL}/risk/activity`, {
+
         global_user_id: globalUserId,
+
         activity_type: 'claw_play',
+
         metadata: { reward_type: reward?.reward_type, pool_id: activePool.pool_id }
+
       }, { headers: { authorization: `Bearer ${this.INTERNAL_TOKEN}` } }).catch(() => {});
 
       // Return frontend compatible format
+
       return {
+
         code: 0,
+
         data: {
+
           result: reward?.pool_item_id,
+
           reward: {
+
             id: reward?.reward_id,
+
             type: reward?.reward_type,
+
             name: reward?.name,
+
             play_id: reward?.play_id
+
           },
+
           wallet: {
+
             remainingPoints: spend?.wallet && typeof spend.wallet.points_total !== 'undefined' ? Number(spend.wallet.points_total || 0) : 0
+
           }
+
         },
+
         message: 'success'
+
       };
+
     } catch (error: any) {
+
       console.error('clawPlay proxy error:', error?.response?.data || error.message);
+
       if (this.isInsufficientPointsError(error)) {
+
         throw new BadRequestException('insufficient points');
+
       }
+
       throw new BadGatewayException(error?.response?.data || error.message);
+
     }
+
   }
 
   async clawRecycle(payload: { global_user_id: string; play_id?: string; origin_points?: number | null; idempotency_key?: string }) {
+
     try {
+
       const globalUserId = String(payload?.global_user_id || '').trim();
+
       if (!globalUserId) throw new BadRequestException('global_user_id required');
+
       const playId = String(payload?.play_id || '').trim();
+
       const origin = Number(payload?.origin_points || 3);
+
       const idemKey = String(payload?.idempotency_key || '').trim() || `clawRecycle:${globalUserId}:${playId || 'no_play'}:${randomUUID()}`;
 
       if (playId) {
+
         // Try to recycle in real claw service
+
         try {
+
           const recycleRes = await axios.post(
+
             `${this.CLAW_SERVICE_URL}/claw/play/${playId}/recycle`,
+
             { global_user_id: globalUserId },
+
             { headers: { authorization: `Bearer ${this.INTERNAL_TOKEN}` } }
+
           );
+
           const recycledPoints = recycleRes.data?.data?.recycled_points || recycleRes.data?.data?.redeem_points || 0;
 
           if (recycledPoints > 0) {
+
             await this.walletRecycle(globalUserId, Number(recycledPoints), `${idemKey}:recycle`, origin);
+
           }
 
           return {
+
             code: 0,
+
             data: {
+
               recyclePoints: recycledPoints,
+
               message: 'Recycled successfully'
+
             },
+
             message: 'success'
+
           };
+
         } catch (e: any) {
+
           console.error('Real claw recycle failed, falling back', e.message);
+
         }
+
       }
 
       // Fallback old behavior
+
       // Let's assume 80% recycle rate as an example
+
       const recycleAmount = origin * 0.8;
-      
+
       const res = await this.walletRecycle(
+
         globalUserId,
+
         recycleAmount,
+
         `${idemKey}:fallback`,
+
         origin
+
       );
+
       return {
+
         code: 0,
+
         data: { recyclePoints: Number(res?.recycle_amount || recycleAmount) },
+
         message: 'Recycled successfully',
+
       };
+
     } catch (error: any) {
+
       throw new BadGatewayException(error?.response?.data || error.message);
+
     }
+
   }
+
 }
